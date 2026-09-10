@@ -544,7 +544,12 @@ def technique_for_command(command: str) -> str:
     low = command.lower()
     if not any(m in low for m in _MIDAS_CMD_MARKERS):
         return ""
-    toks = set(re.split(r"[^a-z0-9]+", low))
+    # Strip file extensions before tokenizing: an extension is not a technique.
+    # Without this, `midas_ff_report.py --out report.pdf` yields BOTH 'ff' and
+    # 'pdf', reads as ambiguous, and injects nothing — silently dropping the FF
+    # methodology on exactly the commands that write a report. Only the dotted
+    # suffix is removed, so '/data/scan_ff/param.txt' still resolves to ff-hedm.
+    toks = set(re.split(r"[^a-z0-9]+", re.sub(r"\.[a-z0-9]{1,5}\b", " ", low)))
 
     # Explicit scan-mode wins (midas-pipeline run --scan-mode ff|pf|nf|auto).
     m = re.search(r"scan[-_ ]?mode[=\s]+([a-z]+)", low)
@@ -564,8 +569,14 @@ def technique_for_command(command: str) -> str:
 
 # APS beamline identifiers as written in the scope/halt prose: 1-ID, 1-ID-E,
 # 6-ID-C, 17-BM, 8-ID-E, 20-ID, 20-D-E, 25-ID, 11-ID … The station segment is
-# ID, BM, or a bare D (e.g. 20-D-E), optionally followed by a station letter.
-_BEAMLINE_RE = re.compile(r"\b(\d{1,2}-(?:ID|BM|D)(?:-[A-Za-z])?)\b")
+# ID or BM (optionally + a station letter), or a D that MUST carry one (20-D-E).
+#
+# The bare-D case requires its station letter to keep dimensionality prose out:
+# "a 2-D voxel grid", "a 3-D map", "one 1-D pattern" all match \d-D otherwise,
+# and a capsule then silently declares itself scoped to a nonexistent beamline.
+# That was live: pf-hedm claimed {2-D, 3-D} and xrd-ct {2-D}, so scope_conflict
+# blocked every pf-hedm tool at any configured APEXA_BEAMLINE.
+_BEAMLINE_RE = re.compile(r"\b(\d{1,2}-(?:(?:ID|BM)(?:-[A-Za-z])?|D-[A-Za-z]))\b")
 
 
 def scope_beamlines(technique: str) -> set:

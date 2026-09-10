@@ -10449,7 +10449,13 @@ async def compute_pair_distribution(
         if output_file:
             cargs += ["--out", output_file]
         out = _run_capability_runner(cargs, timeout=600)
-        return format_result({"tool": "compute_pair_distribution", **out})
+        # Bridge to the technique capsule (apexa_agents._maybe_capsule_msg
+        # precedence 1). The tool NAME carries no capsule token — 'pdf' does not
+        # appear in 'compute_pair_distribution' — so without this the PDF
+        # methodology (normalization refinement, the sigma trap, the low-r
+        # first-peak trap) would never inject on the one tool that needs it.
+        return format_result({"tool": "compute_pair_distribution",
+                              "capsule_technique": "pdf", **out})
     except Exception as e:
         return format_result({"tool": "compute_pair_distribution",
                               "status": "error", "error": str(e)})
