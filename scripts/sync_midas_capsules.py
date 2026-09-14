@@ -46,7 +46,20 @@ PIN_FILE = CAPSULES_DIR / "_pin.json"
 # technique is vendored automatically the next time this runs.
 CAPSULE_MARKERS = ("README.md", "ENVELOPE.md")
 # Only vendor text; skip binary assets (images live in manuals/assets/).
-TEXT_SUFFIXES = (".md", ".txt")
+#
+# ``.py`` is included for the capsules' own executable gates -- currently
+# ``calibrate-integrate/floorcheck.py``, which that doc set's install gate
+# declares mandatory ("Exit non-zero means stop. These are not conveniences.")
+# and which is *behavioural*, deliberately not a version check.
+#
+# Without it the gate shipped only inside a MIDAS git checkout, so on the
+# deployment the MIDAS developer actually recommends -- pip midas-suite, no repo
+# clone -- the docs mandated a check that was not present. Observed on copland:
+# `python manuals/calibrate-integrate/floorcheck.py` -> No such file or directory.
+#
+# These are not indexed into RAG (index_capsule walks named .md files only), so
+# this ships the gate without putting code into the knowledge base.
+TEXT_SUFFIXES = (".md", ".txt", ".py")
 
 
 def _detect_midas(explicit: str | None) -> Path | None:

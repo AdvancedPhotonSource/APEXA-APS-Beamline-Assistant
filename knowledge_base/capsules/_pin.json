@@ -2,10 +2,10 @@
   "midas_commit": "0882810a43f9368971166fb0fe370b0ed240b30c",
   "midas_remote": "https://github.com/marinerhemant/MIDAS.git",
   "source_dir": "/Users/b324240/Git/MIDAS/manuals",
-  "synced_at": "2026-09-14T20:37:41+00:00",
+  "synced_at": "2026-09-14T20:51:49+00:00",
   "techniques": {
     "calibrate-integrate": {
-      "n_files": 7,
+      "n_files": 8,
       "files": {
         "DIAGNOSIS.md": "40ddfbca7b32d93508982e6142df98a04e2cce6ce5464c410fcb29eaec1120a3",
         "ENVELOPE.md": "b3cd444517d747fb776d585dc901aa1e53d17f1ef87111685b80f7dd69c6755f",
@@ -13,6 +13,7 @@
         "LAB_NOTEBOOK.md": "40e46e8af05eb954456948efdcb693a28fb95bac77e0d5efc86332c834cbcd85",
         "README.md": "6d67b3eb6065c32430bac158e7b79c6661c12838ede6672b5d1faa5c7f94d8b1",
         "RUNBOOK.md": "74943cd0de7d8fa421911e7048711408277f005c83675d61dedb7265c185e46c",
+        "floorcheck.py": "e66d47d11dc8c5a0586324856707a37d09d15ac2adc51955d4df4029ea2a56dc",
         "phase-4-calibrate.md": "556ea9cc0cafd533dbc3cd502caef6832093662c5b2632896770e3d890a515a6"
       }
     },
