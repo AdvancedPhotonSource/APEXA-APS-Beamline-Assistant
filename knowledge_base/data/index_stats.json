@@ -2,8 +2,8 @@
   "papers": 10,
   "logbooks": 15,
   "books": 0,
-  "capsules": 8,
-  "total_chunks": 1178,
+  "capsules": 11,
+  "total_chunks": 1421,
   "papers_with_bib": 10,
   "collection_name": "hedm_knowledge",
   "embedding_model": "nomic-ai/nomic-embed-text-v1.5"
