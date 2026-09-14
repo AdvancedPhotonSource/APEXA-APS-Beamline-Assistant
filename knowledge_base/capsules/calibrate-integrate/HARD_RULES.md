@@ -123,7 +123,8 @@
    (`packages/midas_calibrate_v2/midas_calibrate_v2/forward/distortion.py:49`).
    On that frame even `"radial"` was not enough and `"none"` was required: 181 µε
    diverging → 72 µε. **Check, do not assume:** run the azimuth gate
-   (`.../pipelines/diagnostics.py:281`), refine the largest block that passes,
+   (`azimuth_coverage_gate`, `.../pipelines/diagnostics.py:586`), refine the largest
+   block that passes,
    and confirm the loop settles.
 
    A second calibrant does **not** help here. Both powders illuminate the same
@@ -135,7 +136,10 @@
    outermost ring, ρ stays small and the high powers collapse: at ρ_max = 0.32,
    ρ⁶ is 1e-03 and `iso_R4` / `iso_R6` came back with 1σ of 0.9 to 15 on
    coefficients of order 1e-03, railed at their bounds. `calibrate()` derives a
-   sane value; a *template* may not. Gate: `.../pipelines/diagnostics.py:401`.
+   sane value; a *template* may not. It fails in the other direction too: `ρ_max`
+   far above 1 means `RhoD` sits below the outer ring, which in practice means it
+   was given in pixels (LAB_NOTEBOOK §17). Gate: `rho_d_scaling_gate`
+   (`.../pipelines/diagnostics.py:706`).
 
 13. **A ring table is crystallography, not a measurement of this exposure.**
    Weak, vignetted or grainy rings still produce a centroid per η bin, and those
@@ -145,5 +149,34 @@
    scales with `EtaBinSize`: a fully-covered ring carried 13 fits at 5° bins and
    ~36 at 2° on the same frame. Read the distribution off `ring_quality()` rather
    than copying a threshold.
+
+14. **Not every automated seeder in this package is equally reliable — verify
+   `seed_method`, don't assume it.** `midas_calibrate_v2.pipelines.first_time.
+   first_time_calibrate` ships its own internal seed (a simplified Hough vote).
+   On a real, heavily-masked Pilatus CdTe frame (8.26 % of pixels are gaps) it
+   matched only 3 of 37 detected ring arcs and converged 45–60× over the
+   `strain_cap` default, confirmed wrong by a ring overlay drifting visibly off
+   the real rings at larger radius. `midas_calibrate_v2.seed.auto_seed.make_seed`
+   — the seeder `autocalibrate_pv`/`calibrate()` use — converged cleanly on the
+   *identical* image. Both are equally "from scratch" (zero operator input); they
+   are not equally trustworthy on every detector. Check `result.seed_method` and
+   treat anything other than `"make_seed"` as unverified.
+   (`packages/midas_calibrate_v2/midas_calibrate_v2/pipelines/first_time.py`,
+   `.../seed/auto_seed.py`.)
+
+15. **A correct seed does not guarantee a correct refinement — the pipeline
+   entry point matters independently.** Feeding `first_time_calibrate` the
+   *identical* good `make_seed` output (same BC/Lsd to the pixel/micron) still
+   diverged into a bad basin on the frame in rule 14 — strain 5960–8752 µε,
+   beam centre drifting ~20 px from its own seed across repeated runs.
+   `midas_calibrate_v2.pipelines.auto.calibrate()`, given the same seed (or
+   self-seeding the same way when no seed is passed), stayed within ~1 px of it
+   and converged to 199 µε. The seed was never the problem in that comparison;
+   the multi-stage LM sequence inside `first_time_calibrate` was. **The
+   validated, from-scratch entry point for a single monolithic-or-tiled image is
+   `calibrate()` (or `autocalibrate_four_stage`, phase-4-calibrate.md) — not
+   `first_time_calibrate`.** A "from scratch, zero seed" calibration is not
+   verified by that property alone; it still needs the ring-overlay and gate
+   checks above run against whichever pipeline actually produced it.
 
 ---

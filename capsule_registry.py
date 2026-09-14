@@ -376,8 +376,26 @@ def signatures(technique: str) -> List[Dict]:
 
 
 def hard_rules(technique: str) -> List[Dict]:
-    """The numbered 'Hard rules' list -> [{n, text}] (full item text)."""
-    return _numbered_items(_section(spine(technique), "hard rules"))
+    """The numbered 'Hard rules' list -> [{n, text}] (full item text).
+
+    Read from the spine, falling back to a sibling ``HARD_RULES.md``. Upstream
+    now splits the rules out of the spine for some capsules (calibrate-integrate,
+    pdf); without the fallback those return [] and the JIT injection carries a
+    spine with no rules at all — a silent loss of exactly the must-never-violate
+    content, on the two capsules most used at a beamline.
+    """
+    items = _numbered_items(_section(spine(technique), "hard rules"))
+    if items:
+        return items
+    t = _canon(technique)
+    if not t:
+        return []
+    try:
+        doc = (CAPSULES_DIR / t / "HARD_RULES.md").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    # The whole file is the rules list; prefer a 'hard rules' section if it has one.
+    return _numbered_items(_section(doc, "hard rules") or doc)
 
 
 def traps(technique: str) -> List[Dict]:

@@ -1,18 +1,18 @@
 {
-  "midas_commit": "de76908bd55c0dadd012f73de1c80ea50a7ed124",
+  "midas_commit": "0882810a43f9368971166fb0fe370b0ed240b30c",
   "midas_remote": "https://github.com/marinerhemant/MIDAS.git",
   "source_dir": "/Users/b324240/Git/MIDAS/manuals",
-  "synced_at": "2026-08-31T15:26:07+00:00",
+  "synced_at": "2026-09-14T20:37:41+00:00",
   "techniques": {
     "calibrate-integrate": {
       "n_files": 7,
       "files": {
-        "DIAGNOSIS.md": "ac44b18c1df1f137f0036d1b76f6dfd41866bffa62f522d0b7f72f2de6905e87",
-        "ENVELOPE.md": "911a5dcc2cce162083578e720f605a29ed44ed7f286a544e4b4dbd22107556a0",
-        "HARD_RULES.md": "c241b3dfd17ad5f7249ab34754de735071330a5e83bc142a4131a60a84bc4b10",
-        "LAB_NOTEBOOK.md": "36c6afd165570e248dcef3586dff334e7368889900aaa0ac8225455d763bfd46",
-        "README.md": "d21fddd4d585b2df63fa71bcbd29a67ea7e0ae181dd1d9869af98303ea84a230",
-        "RUNBOOK.md": "e914dc4c7b306138d6a4468b7a9e7e9d56d534fd92239ccae76866925cb8ee34",
+        "DIAGNOSIS.md": "40ddfbca7b32d93508982e6142df98a04e2cce6ce5464c410fcb29eaec1120a3",
+        "ENVELOPE.md": "b3cd444517d747fb776d585dc901aa1e53d17f1ef87111685b80f7dd69c6755f",
+        "HARD_RULES.md": "f6f0cf02d63640b2abab4ac74dd68cec55cb6c5217a73fe4eac00d263d8a152f",
+        "LAB_NOTEBOOK.md": "40e46e8af05eb954456948efdcb693a28fb95bac77e0d5efc86332c834cbcd85",
+        "README.md": "6d67b3eb6065c32430bac158e7b79c6661c12838ede6672b5d1faa5c7f94d8b1",
+        "RUNBOOK.md": "74943cd0de7d8fa421911e7048711408277f005c83675d61dedb7265c185e46c",
         "phase-4-calibrate.md": "556ea9cc0cafd533dbc3cd502caef6832093662c5b2632896770e3d890a515a6"
       }
     },
@@ -23,7 +23,7 @@
         "ENVELOPE.md": "2aa019b08dccec9d05d780bb815b3517457807ab8b033d0890732c8cf7af8983",
         "INSTRUMENT.md": "326936b252558fff4f6dbfa121eda8348d358e0ecbf939d53a62d7a622015b7c",
         "LAB_NOTEBOOK.md": "94c2915a7e2e18f72ec097f75b820d9ef75fc0fb45ffcc391693a6a5e7d456c5",
-        "README.md": "9826708f47199109bcf7de560c292f6a31ef2ec70de8ea06762f78bead84239d",
+        "README.md": "c69589c3eaf02216a1e7106c87f779079ad746062d7416f5d49eecbfba5325a3",
         "RUNBOOK.md": "27eb837184c58727bcb18d8ffef11a46768fae8bb33adf6e55a519ba4a2d00d9",
         "phase-0-survey.md": "e538eec3b9ff7f2c60bdc34b2d77458bfcb41bee3105db1ac2a64e9cc752ebbf",
         "phase-1-geometry.md": "1825c4edc291b60098c2e0d00e43eb0f59188a0c7950801c258ba8cd96e458ad",
@@ -33,37 +33,56 @@
         "phase-5-report.md": "a4cc4ea44b9c5d2c9e3cb927f1093be6c7b90f50f4f7a58643b54e8f8432ca0f"
       }
     },
+    "defect": {
+      "n_files": 13,
+      "files": {
+        "DIAGNOSIS.md": "ef5c0915933dcde7f41ee2646e2183437d4239de0fc4389daca48a6a52f36b31",
+        "ENVELOPE.md": "cd1dc413088109fb97795d125663a5577a7d919c9100008dca48e1573c80dc04",
+        "LAB_NOTEBOOK.md": "8dad0bb3556220c2b0b8ac380e51b3170bb14e5a35f56f1bbc67e6c7366e5323",
+        "README.md": "3d918dd287edaaf7a337e62aacb3b99c68d8eecd7ed5dc23e85948863904d9ad",
+        "RUNBOOK.md": "f90ecf111a80450eca4129c360784cd81960f14e960c7d4c159bc4d6489b108e",
+        "phase-0-survey.md": "c650432044c5dd224feeda81609fb03c264f1c130dc63f64346695a88bd337da",
+        "phase-1-ingest.md": "fb755a92c1a77c3df6db6c0822387fa16462d011c0234bf094b87f7cb8d03fc6",
+        "phase-2-index.md": "d579dfb4ea0ad2f1cc93062de2a8cfb8a5d03afed9c678e8f45c252a8c77542b",
+        "phase-3-classify.md": "0feafb15e7f74a4dc384459e0ed6e49f6a3ff61012bf8f58918bde08e85c1472",
+        "phase-4-rods.md": "1d7ee93f34f6740ab6b201fdc574a61c64dda6d7c434603fe2d6952dcb9bf124",
+        "phase-5-asterism.md": "a03e7600f8b2813d7ce4f4e452f9471a2bd021a457f6886f356a7958646f9a15",
+        "phase-6-mechanics.md": "92a4b66733c773a39a67b77ee828f1a235b67e25eb574177c1ce914409a17eb9",
+        "phase-7-report.md": "62a9fd3ee1afd28876c98f338ca8adf9a73b7bbecf27a78887f99d96e1ddee93"
+      }
+    },
     "dfxm": {
       "n_files": 12,
       "files": {
-        "DIAGNOSIS.md": "badf55648b478ced05a615bb92df03f71c4a9de9b5e56a5f3b2b0930dca07527",
-        "ENVELOPE.md": "c25c9b23e0a8ae7b9d59a52e9c8fb89bdd08bcbe9da1029f925445dea5587e89",
-        "LAB_NOTEBOOK.md": "6135844d788e41316e34ccaac0c21da249c30281beb18ead12ced3fc7aa9c80a",
-        "README.md": "0e72a54c4b50aa76e686de96af69f2147226545e776f6adcd7c7e249c2cadb51",
-        "RUNBOOK.md": "929b6e0af6ac64e7602a541249ea30d0c794b50c69f8dbb2c33f2a703a219c00",
+        "DIAGNOSIS.md": "e7d1c0ab99735e69e2bc7467aed7a9033232f9a242eaa046d6570019bd1dbe1b",
+        "ENVELOPE.md": "6a000b48d837b16790afc95919f4af850f423a8d413150ae87a959733bbb9fa8",
+        "LAB_NOTEBOOK.md": "e45974b4cc23c204c1fbb841223cfca11ed3b8bfd52ae14f94ce5d41eeebd64f",
+        "README.md": "211cee463b8f877fade5f0ee539c0094dd6e63334c82028ae8a26a6a93269655",
+        "RUNBOOK.md": "a095b6608a2e7da858e274e5f9c978c6542422074966a1a187e694eb6fdf7154",
         "SURVEY_TEMPLATE.md": "0150849663d5607b78d4d22a4898c9d5644b3f397ab3bc66a696982835822c3f",
         "phase-0-survey.md": "ecaaa6f239cc88d4f7032a09df5cf891d5ee3495930f35464c4e9a70053dc2f5",
         "phase-1-configure.md": "edc1c93a6b60491a5f579e3cf9f626472e069e44fa6acfb501019f617c78fefe",
-        "phase-2-reduce.md": "c66e010845eb32b79942eeee88fff54a64180abedc6e6a5b0afb8f492979f09c",
+        "phase-2-reduce.md": "c8eeadd8b3915e2b17b277719a8534967c1ebc705c9e4d9ec460e720bbf2bbdd",
         "phase-3-multireflection.md": "a00311cb397b3050f118cba5cc87a3b41c2a7cf83b7ee7ba59a5b5fe333c3d75",
         "phase-4-analyse.md": "4fb54c1308a2f1055d5e3cec6dfa49fb029852661eed665e40abade40b55108b",
         "phase-5-report.md": "5931b28e45e19b7f43c0ae779e67786b03f307828a79fc0612abd451dbb01963"
       }
     },
     "ff-hedm": {
-      "n_files": 11,
+      "n_files": 12,
       "files": {
         "C_REFERENCE.md": "c1be08bf2426b22aee9e8f28359ac7435c5376a3ad776164a30fa265751a7f25",
-        "DIAGNOSIS.md": "6acd18988124fadf559347eae2088394e9f0d89377393496fed3716f1aa31fee",
-        "ENVELOPE.md": "168cf180adfa20596fbae7db32622934ad8ab8414871f1421f05fffb8413b6a6",
-        "LAB_NOTEBOOK.md": "4234cb482dc21b6b40844b81d0d2392b811374aaa3e01135f405d6224529de27",
-        "README.md": "f2095ed4a135689492eca5cde97dd920a98c58b487bdeb05a8b13f00418a58fd",
-        "RUNBOOK.md": "584895c72e0290f83270b56403f84088c07a33172aca22a2efa9271d2220ac10",
+        "DIAGNOSIS.md": "2a6030d1257bf094664e27b6f90493e04349e5f01848ba0d1e7dff62e9641e79",
+        "ENVELOPE.md": "ef803bd77dd17d4c557a2704493dfec3d6065c2aa8b708cd4a508e38e2c776c9",
+        "LAB_NOTEBOOK.md": "d7c3856c2e206f9e06c7f137de6c77ebb9521b363af9c18023bccfad8b19d8a8",
+        "README.md": "caa1493f486bce743fc848a7c9d3e81dda5e65fbbf77150dee2cf266a5ee7dc7",
+        "RUNBOOK.md": "a043811512cc9e20c777d9bca42b6d14d1197582c9d60d6896182f3ba214dd9e",
         "phase-0-survey.md": "406bbadf5b75a869bd3e632429ed8cb6b16b6308328dbe20ee53737456f9c276",
-        "phase-1-geometry.md": "e742d03ed8dc45f1bf2c23bc82f75f1882f0e2fe26b6d33603dc821489429511",
-        "phase-2-configure.md": "780d0399ceceb9e63de2d3d14cda21e1ba05505234fae068716faf88c1c9069f",
-        "phase-3-run.md": "3b48f40c5215ce50b1b3563f96c8056d4ed85a65158759054b20d373b82ce7e8",
-        "phase-4-read-report.md": "3a52a87cac7d1dad10d19052956644ac58f3ddd64650d870b66c715a0f26ccf2"
+        "phase-1-geometry.md": "0491183cb420369be39dd2d76158c0b1c42dfbabc4fca593dff0e3f306d34dab",
+        "phase-2-configure.md": "a3ff5a4ca012e676916c9122d881a8d1c4955dd5c78947015f7d9e56e1a1c511",
+        "phase-3-run.md": "7a611d7bffa5f4cac642c4ddf791d1fa2d99aa4557dca2578c4fce9a989458bd",
+        "phase-4-read-report.md": "a89f0f5a731c328baf377589030494f20e4d2ff80f71ab65dba74b8d9de1c02e",
+        "phase-5-trust.md": "79bb60bf74f00d7542426c4ea375ac0ad58fb09648fa8b72ad6af5a042b5c2ac"
       }
     },
     "nf-hedm": {
@@ -80,7 +99,20 @@
         "phase-2-frames.md": "29fe55fac22f52a4f3e691f703e8128ca9d547b531e8004b1352be2d01228587",
         "phase-3-geometry.md": "c265473ec85db77b423c1f40faa28b5a8afeb220c67da53f978bc5b365ae6507",
         "phase-4-run.md": "5260cccd6bf8f01811c4df1ae87066787095a2a42249c15542b4da9d4a2e4816",
-        "phase-5-read-report.md": "fa524b960e354fe46758e8c062f817b7944ff18b622371fc3cb80237020cdc38"
+        "phase-5-read-report.md": "f2f21be4a6a213909fd8eec8619347c15f17e13533dd4117109a7dbd6f5144ab"
+      }
+    },
+    "pdf": {
+      "n_files": 8,
+      "files": {
+        "DIAGNOSIS.md": "f65c7a8f635029a4e72ae072babe8b6881d9d29f91cb0fb2feaacc4dce52ea8f",
+        "ENVELOPE.md": "523fbf47c09ee94ab8a9a97883d03ea1b87d4e925b5b8211987a78f1904638f5",
+        "HARD_RULES.md": "94416772e93c08307f1070c9c5ef71cee47506009bb9a402712d7657c19aa5c1",
+        "LAB_NOTEBOOK.md": "f70c8c8dd665b9ab04fd384cb0c1ce0369c522c9e2a56050af68be5cd44dc88c",
+        "README.md": "ae8210dde1632a42dcc50bb698051ec85fccdedd898f72aab7adb6c007add612",
+        "RUNBOOK.md": "efc328db4517ee3f3c3206aac31267edc03f346d7479705fcfe285a9249cd786",
+        "phase-5-sq-gr.md": "18aa8761ed9192a3b886f3fbcc8438086cb3c58b2ad2fb567a347fbb93040784",
+        "phase-6-model.md": "aecde2d42ce920d38b4821ddbbfeeb1f70a29e03c68f207e600283a91c5e9d53"
       }
     },
     "pf-hedm": {
@@ -91,7 +123,7 @@
         "INSTRUMENT.md": "03e872c18f3fbefa5ecc794e27eef40523a70e248220e5b761349f1c073bb5e2",
         "LAB_NOTEBOOK.md": "2fbd71313dc9fbbcb37fa9f1eb873f05601bbfdb92f5aec107cc0b99a4f622d4",
         "PF_PARAMETERS.md": "14d27e1601c5ef4aa8a654abfd0afc772995ac9113fac6c621848ee546b7aae7",
-        "README.md": "faef1186643bfa7fed12722900def5eb1ec23b474cb04fc535ee6c1da0614477",
+        "README.md": "27d3f39a336b13d2905b3e1699af8e8e63f12ca2af86303d215c715fefe0e8a3",
         "RUNBOOK.md": "d3eb1e94f3b957282e3bb9746d8692b504b0afd12ebfb4caa4792c745e24831c",
         "phase-0-survey.md": "8d96f0cc88595841b8811fbde12b5cb4dcd1f89d1dcbc608a84afa48bc14a61f",
         "phase-1-geometry.md": "0fc375747e1f737aaa8b6d65d3efa96d88f0377c5336c2562644a11210dfd636",
@@ -104,14 +136,26 @@
         "phase-7-validation.md": "1138cfda53857491540007be62f9acb428201171f5e1a8ae90c67aae2214b6c3"
       }
     },
+    "solve-cell": {
+      "n_files": 7,
+      "files": {
+        "ENVELOPE.md": "34eeda21d8fda895b61823698226164be367b0558f09404081cfc977512d4b99",
+        "PACKAGE_NOTES.md": "4cc8f5717ca9ff3950f0b37030a823d4a2e5e5df6211aeb201df3cfb36d8d442",
+        "README.md": "e52603222f2befbfc7f665b5d9ca0438f099beaa732cfa732df26d7fb4f4290e",
+        "phase-1-geometry.md": "210df6b5f2eb9cb6f605156250f6763b4c7a1e1918c19f56dc5ea9da1670748f",
+        "phase-2-lattice.md": "793de8e2ee66a61151a0f45205991cef267f383ff6ee40a4c74529fb82318117",
+        "phase-3-refine.md": "548044699607068adb908113a914bfc4d4def3cbcab874aa549738bc1f52e454",
+        "phase-4-phase-id.md": "3acdee490a38288daef584e34ec7927224d272370a3636c70d04bbe9535aee77"
+      }
+    },
     "tomo": {
       "n_files": 6,
       "files": {
-        "COORDINATES.md": "a3db4f0868a206c94c5ea08beeba401d9e19922416aba28fbd92336779ef87c2",
-        "DIAGNOSIS.md": "d6a5525ea8dd5a3cb32443dc6646e445447863dd4273887869869eba265bb68c",
+        "COORDINATES.md": "ad949cd9b4ae00ff7a31fc6d04ed14c0ad5614f2b04ef9f299797766a0b306d7",
+        "DIAGNOSIS.md": "26e1605365833853ff42caffc58e3eaec9e91523c7eeda5a838147baf586a8be",
         "ENVELOPE.md": "ffa121a7394333133d6b211468d5991a2846376efc446fab08a79c6ffd77baf0",
-        "LAB_NOTEBOOK.md": "d0cef709b3f4383660e26ea5c772d03ee73d43ef0f7b4e14156c25c3fc34a446",
-        "README.md": "cdef8097501ab2f31493cff23702691168ca718fbc8639f27fdf3773380d0753",
+        "LAB_NOTEBOOK.md": "e699f5899f9574bb74e8c7e1ef9af4c70c8f395241aec9a6fc59c42a387275a3",
+        "README.md": "69d351b06267d19471f858fcdbc14c107ab00492aed929d4b6555754f05d7cf5",
         "RUNBOOK.md": "30456cdaccad50a26667b1157f20f65ce4346d2e1cc1ed677c3721d46c7bc2a8"
       }
     },
@@ -122,7 +166,7 @@
         "DIAGNOSIS.md": "484942b96a6686445f170520a50a45f97ca9205ae52bb51f8e026fe0cf0ef013",
         "ENVELOPE.md": "b51cfc3f448314441f15104b2f95d4217263be24869c39c8486cdddaa68c09b9",
         "LAB_NOTEBOOK.md": "1d3f92400f9433b891b21634a4f84e7c66947cc57587d29aa8121062c723b600",
-        "README.md": "ca80a6fd8df86940bdc1265c263d8c076f52cf29251c1474a1a7a011d59eb6e6",
+        "README.md": "28bc43078f54b36f6bef12d2fbc39a6cbf1bc8e610e7e232efe5f7686bc985ff",
         "RUNBOOK.md": "736bb7d0c44e1a9575a30f588eb524fdf012abc3305ec5f4998dc726d1842ea9",
         "phase-0-survey.md": "3f3e1a0cd0fd89c91a8dce9ebfd8ec0141f768c5f98b93671a77b5c400e17e46",
         "phase-1-geometry.md": "400c5aba76e6ee16fb89c3305b2147d26c4c7751d8d7849126d2af3199910dd2",

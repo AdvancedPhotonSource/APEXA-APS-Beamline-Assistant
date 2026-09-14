@@ -1,315 +1,282 @@
-# PDF / total scattering — I(Q) → S(Q) → G(r) with a propagated 1σ, and a model fit that earns it
+# PDF / total-scattering runbook — area-detector frames to S(Q), G(r) and a model
 
-Total scattering and the pair distribution function: from an integrated 1-D pattern (or
-detector frames) to the reduced PDF *G(r)*, its 1σ band, and — where the data support it —
-a small-box, multi-phase, core-shell, joint SAXS+PDF or RMC structural model. Driven by
-**`midas-pdf`**, a deliberately thin Faber-Ziman layer over `midas-calibrate-v2`,
-`midas-integrate-v2` and `midas-hkls`.
+**Use this to reduce high-energy total-scattering frames to a pair distribution function and
+fit a model to it.** Give:
 
-This is the **spine** of the PDF doc set — the one file meant to stay loaded. It carries the
-scope gate, the install gate, the order of operations, the hard rules and the halt
-conditions. The procedure lives in the phase files; the index below says which holds what.
+```
+Data folder:   <ABSOLUTE PATH>      # sample, calibrant, empty container, air frames
+Samples:       <composition, density or packing, container geometry — per frame>
+Energy or λ:   <keV or Å — or "find it": the tabulated K edge of the mono foil>
+```
 
-**Path conventions.** `$MIDAS` is the root of whichever MIDAS checkout you are working in
-(on a beamline host, `~s1iduser/opt/MIDAS_canonical`). `$ANALYSIS` is a campaign working
-directory that is **not** in this repo — a `$ANALYSIS/...` path is provenance, not a link.
+Everything else is worked out. **Sample facts are inputs you state, not outputs you tune**
+(hard rule 15). If they are unknown, say so in the report.
 
-> **Honesty about depth — read this before you trust any number below.**
-> The far-field and near-field doc sets encode years of beamtime. **This one encodes none.**
-> There is **no APS PDF campaign behind this capsule**: every rule here is traceable to the
-> `midas-pdf` source, its README, its module docstrings, or to a **measured probe of APEXA's
-> own tool path** run on synthetic data (`LAB_NOTEBOOK.md` §1, 2026-09-10). Nothing here has
-> been checked against a real total-scattering dataset reduced by a PDF specialist, and the
-> convention question (Faber-Ziman vs Keen; which of S/F/G/g/T/R to report) is explicitly
-> flagged upstream as *unsettled, to be agreed with the experimental collaborators*
-> (`packages/midas_pdf/dev/PLAN.md`, cited in the package README §Conventions).
-> **Treat every G(r) amplitude this capsule helps produce as provisional until a specialist
-> has seen it.** Peak *positions* are far more robust than peak *amplitudes* — say which you
-> are quoting. This file is meant to grow as real PDF beamtimes are run.
+**Two companions.** This spine carries the gates and the order. The reduction code is in
+[`phase-5-sq-gr.md`](phase-5-sq-gr.md), and the modelling recipes are in
+[`phase-6-model.md`](phase-6-model.md). [`LAB_NOTEBOOK.md`](LAB_NOTEBOOK.md) holds the evidence,
+including the claims from an earlier analysis of the same beamtime that did not survive.
+
+Citations are `path:line` **relative to the repository root**. `$ANALYSIS/...` is provenance
+(see the end of this file).
 
 ---
 
-### The doc set — what to read when
+## Order of operations — not optional
 
-| File | Holds | Read it |
-|---|---|---|
-| **`README.md`** (this) | scope + install gate, the order, hard rules, halt conditions, traps | always, and keep loaded |
-| `phase-0-survey.md` | is it total scattering? Q range, composition, the σ column, the calibration | first, before promising anything |
-| `phase-1-normalize.md` | Faber-Ziman S(Q): composition, ⟨f⟩²/⟨f²⟩, Compton, ions, corrections | before any transform |
-| `phase-2-refine.md` | fitting scale / background / ρ₀ against model-free physics — **not optional** | always, between normalize and transform |
-| `phase-3-transform.md` | windowed sine FT → G(r) + σ; Q_max, window, termination ripple, r-grid | to produce the PDF |
-| `phase-4-model.md` | small-box, multi-phase, core-shell, joint SAXS/SANS, RMC, model comparison | only if phase 2 converged |
-| `phase-5-report.md` | which function you are reporting, σ provenance, what to label provisional | at the end |
-| `PARAMETERS.md` | every knob: `midas-pdf` API defaults and the CLI surface | when configuring |
-| `ENVELOPE.md` | what a PDF **can** determine and what it cannot | **before promising an answer** |
-| `DIAGNOSIS.md` | symptom → discriminating test → cause → lever | **when something looks wrong** |
-| `RUNBOOK.md` | **VOLATILE** — where it runs, installed versions, current pick-up point | at session start, re-verify live |
-| `LAB_NOTEBOOK.md` | the evidence ledger — thin, and honest about being thin | before re-opening any question |
+§0 scope gate → §1 install gate → §2 survey → §3 geometry hand-off → §4 integrate with
+corrections → [§5 reduce to S(Q), G(r)](phase-5-sq-gr.md) → §6 verify → [§7 model](phase-6-model.md).
 
-`Q` is in Å⁻¹, `r` in Å, wavelength in Å throughout. `ρ₀` is the atomic number density
-(atoms Å⁻³). Contract: `~/opt/beamreport/DOCS_SPEC.md` §6 (separate repo, not under `$MIDAS`).
+Each gate invalidates everything after it, and each failure downstream of it **still produces a
+plausible curve**:
+- an uncorrected profile gives a G(r) with a clean-looking low-r spike;
+- a missing `RhoD` gives an empty or absurd integration;
+- an unverified Q scale shifts every peak by hundreds of ppm.
 
----
+The halt conditions (§8) apply throughout, and [`HARD_RULES.md`](HARD_RULES.md) applies to every
+phase.
 
-## STOP — read this before touching anything
+## §0. Scope gate — read before touching data
 
-**Scope.** X-ray **total scattering** on a powder-like or amorphous sample: one integrated
-one-dimensional pattern per state, taken to high Q, normalized to a Faber-Ziman S(Q) and
-sine-transformed to a reduced PDF G(r). Handled through `midas_pdf` on top of `midas_integrate_v2`. This doc
-set does **not** cover 3D-ΔPDF of single-crystal diffuse scattering — a different measurement
-and a different reconstruction, explicitly excluded by the package (`deltapdf.py` module
-docstring). It also does not cover neutron total scattering: the Compton/recoil treatment
-here is X-ray-specific (rule 5). **No beamline scope is asserted.** This capsule has no
-campaign behind it, so it names no station and will never block a tool on a beamline
-mismatch — record the station you run it at in `RUNBOOK.md` and `LAB_NOTEBOOK.md` so the
-next session inherits it.
+Everything here was measured on **one beamtime**:
+- **Detector and beam:** 1-ID-E, Varex 2880² at 150 µm, 180-frame sums, Ta K edge 67.4164 keV
+  (λ 0.183908 Å), Lsd 470 mm.
+- **Coverage:** the beam centre sits **at the detector's left edge**, so azimuthal coverage is
+  175°.
+- **Frames:** CeO2, Ni powder in carbon black, liquid IPA, empty Kapton capillary, air.
 
-### When to stop and come back with a question
+[`ENVELOPE.md`](ENVELOPE.md) records what has and has not been exercised.
 
-**"Get back to me if you get stuck" does not fire here.** PDF's failure modes finish and
-look right: an unnormalized pattern still transforms into a smooth, plausible G(r) with peaks
-in believable places; a dropped σ column still yields a `sigma_G` field, full of zeros; a
-Fourier termination ripple at low r is still reported as a "first peak". In every case the
-run succeeds and returns numbers.
-
-So the trigger is not confusion. **Halt on these named conditions, whether or not anything
-seems wrong:**
-
-| Condition | Why you cannot decide it yourself |
+| you have | do |
 |---|---|
-| you are about to report a **G(r) amplitude, coordination number, or ρ₀** from a chain whose S(Q) was never refined to ⟨S⟩→1 | the amplitude is wrong by whatever the scale error is — measured at **2.75×** on APEXA's default path (Notebook §1b); positions survive, amplitudes do not (§2) |
-| the tool returned a **`sigma_G` that is all zeros** and you are about to quote a σ, a χ², or a "significant" Δ-PDF feature | no uncertainty was propagated; a zeros array is not a measurement of zero (§0, Notebook §1a) |
-| the **composition is not known independently** of the diffraction data | ⟨f⟩² and ⟨f²⟩ are built from it; a guessed composition silently rescales S(Q) and puts a spurious slope in G(r) (§1) |
-| the sample contains **ionic species whose form factors matter** (low-Q, light+heavy mix, oxides) | `midas_hkls` **silently maps `Ni2+`→neutral `Ni`**; the error is 5–20 % at low Q and it does not raise (§1) |
-| you are asked for a **first-shell coordination number** | it is an integral under a peak, so it inherits the full amplitude-scale error *and* the ρ₀ you did not independently measure (ENVELOPE) |
-| you are about to call a **Δ-PDF feature "significant"** and the two states were not measured under the same normalization, Q_max, window and r-grid | σ²(ΔG)=σ²_a+σ²_b assumes independent states on a common grid; anything else makes the n-σ test meaningless (§4) |
-| you want a **Placzek correction** because you have used neutron total-scattering software | for X-rays it is subsumed by the Breit-Dirac recoil factor already applied; the residual is ~10⁻¹² (rule 5). Applying one anyway is a real bias, not a no-op |
-| the pattern's **Q_max is below ~15 Å⁻¹** and you are asked to resolve distinct near-neighbour shells | real-space resolution is set by Q_max; below that, shells merge and no window choice recovers them (ENVELOPE) |
-| you are about to **compare a G(r) against a published one** (PDFgetX3 / PDFgetN / GudrunX / PDFgui) without pinning both conventions | the S/F/G/g/T/R family differ by additive and multiplicative r-terms; the same data plots four different ways (rule 7, `conventions.py`) |
-| an **RMC or a many-parameter small-box fit converged** and you are about to present the structure | RMC fits noise readily; without a model-comparison criterion (WAIC/LOO) and a stated parameter count, "it fits" is not evidence (§4) |
-| this is the **first real PDF dataset** run through APEXA at a beamline | this capsule is package-grounded only. Say so, keep the reduction, and get a PDF specialist to look before it leaves the room |
-| this document and the tree **disagree** | report it; do not work around it |
+| high-energy (≳ 60 keV) area-detector frames: sample, empty container, air, and a calibrant at the same distance | continue |
+| no calibrant frame at the sample distance | **stop** — a geometry cannot be invented; see `calibrate-integrate` |
+| no empty-container or air frame | **stop and ask** — container and background subtraction are impossible, and every S(Q) check will fail for that reason |
+| a different detector or energy | continue, but re-derive every number: the *procedure* transfers, the *values* do not |
+| spotty or single-crystal rings | **stop** — `ff-hedm` or `pf-hedm` |
+| a time series (Δ-PDF against a baseline), SAXS/SANS joint refinement, anomalous or neutron data | **not exercised — stop and ask** |
 
-When you halt, say which row fired, what you measured, and what you would need to proceed.
-Finish everything not blocked by it first.
-
-### Hard rules
-
-1. **Normalization is a fit, not a guess — run phase 2 before you believe any amplitude.**
-   `refine_normalization` fits `scale`, a polynomial background `b(Q)=Σ c_j (Q/Q_max)^j` and
-   optionally ρ₀ by L-BFGS against two **model-free** constraints: ⟨S(Q)⟩→1 over the high-Q
-   tail, and G(r) = −4πρ₀r below the nearest-neighbour distance (where g(r)=0, so the reduced
-   PDF is exactly that straight line). This is the step PDFgetX3 and Gudrun leave to hand
-   twiddling, and it is the one `midas-pdf` exists to make an optimization. Skipping it is
-   the single largest error source in this pipeline: measured **S(Q) mean 2.75, min 1.23**
-   on an unrefined run that produced a perfectly smooth-looking G(r) (Notebook §1b).
-
-2. **σ is carried or it is absent — never inferred.** Every arrow in this chain is a torch
-   op carrying a 1σ, and the analytic band is validated against a Monte-Carlo bootstrap to
-   **<1 %** (`dev/demo_sigma_validation.py`). That guarantee holds only if you actually pass
-   `sigma_intensity`. Two ways it silently evaporates: (a) APEXA's `compute_pair_distribution`
-   loader **discards trailing error columns by design** (`_capability_runner._load_1d`
-   docstring), so σ_G comes back as an array of zeros — measured (Notebook §1a); (b) the CLI
-   commands **fabricate σ = 5 % of |G|max** when the `.gr` has only two columns and print a
-   stderr banner saying the reported χ² is arbitrary (`cli/_common.fallback_sigma`). Read the
-   banner. A χ² computed on a fabricated σ means nothing.
-
-3. **Polyatomic means Faber-Ziman — the monoatomic path is a different quantity.**
-   `midas_integrate_v2.pdf.normalize_to_S` divides by a single ⟨f²⟩ and is correct only for
-   one element. A polyatomic sample needs both ⟨f⟩²(Q) and ⟨f²⟩(Q) and the Laue term:
-   `S(Q) = [I_coh − (⟨f²⟩ − ⟨f⟩²)] / ⟨f⟩²`, with `I_coh = scale·[I_meas − background] −
-   I_Compton`. That bridge is the whole reason `midas-pdf` exists; use `faber_ziman_S` (it
-   reduces exactly to the monoatomic form when there is one element — pinned by a regression
-   test).
-
-4. **Never take the composition, the wavelength or ρ₀ from a filename or a template.**
-   Composition sets ⟨f⟩²/⟨f²⟩; wavelength sets the Compton angular factor; ρ₀ sets the low-r
-   line the refinement is anchored on. All three are silent when wrong. Worse, APEXA's runner
-   **substitutes λ = 0.1 Å when the wavelength argument is empty or zero**
-   (`_capability_runner.cmd_pdf`: `wavelength_A=float(args.wavelength or 0.1)`) — a falsy `0`
-   does not raise, it defaults. State each value and the file you read it from.
-
-5. **Do not apply a Placzek correction to X-ray data.** It is a *neutron* correction. For
-   X-rays the equivalent is already carried by the Breit-Dirac recoil factor applied to the
-   Hubbell Compton term (`Composition.compton(breit_dirac=True)`, the default); the residual
-   beyond it is O((hν/Mc²)²) ≈ 10⁻¹² at 63 keV for Ni. `placzek.py` exists to say exactly
-   this and ships **no** X-ray Placzek function on purpose.
-
-6. **Ionic species need ionic form factors, and nothing will tell you they were ignored.**
-   `midas_hkls` ships neutral-atom Cromer-Mann coefficients and **silently maps** `"Ni2+"`,
-   `"O2-"`, `"Ce4+"` to the neutral atom — 5–20 % wrong at low Q, no warning.
-   `midas_pdf.ionic_form_factors` supplies the 4-Gaussian ionic coefficients (each satisfying
-   the electron-count sum rule `Σa + c ≈ Z − charge`); register or `publish_to_midas_hkls()`
-   them before normalizing an oxide or any mixed light/heavy ionic sample.
-
-7. **Name the function and the convention, every time.** F(Q)=Q[S−1]; G(r) is Keen's D(r) and
-   Egami–Billinge's G(r); g(r)=1+G/(4πrρ₀); T(r)=G+4πrρ₀; R(r)=rG+4πr²ρ₀ (Keen, *J. Appl.
-   Cryst.* **34**, 172 (2001), implemented in `conventions.py`). These differ by additive and
-   multiplicative functions of r, so "the PDF" names four different curves. The upstream
-   package states the FZ-vs-Keen choice is **still to be settled with the experimental
-   collaborators** — so report the convention alongside the number, and do not silently pick.
-
-8. **Choose Q_max deliberately and report it.** Truncating the transform at Q_max convolves
-   G(r) with the window's transform: too low and shells merge, too high and you fold detector
-   noise into termination ripple. The default window is **Lorch** (damps ripple at a cost in
-   resolution); `q_max=None` means *no truncation at all* — the whole measured range,
-   including its noisy tail, goes into the FT. That is rarely what you want.
-
-These rules distrust the data and the physics. The rest distrust your own run:
-
-9. **Suspect success.** Every failure above returns a smooth curve. "It ran" and "G(r) looks
-   like a PDF" are not evidence. Ask what the step would look like if it had silently done the
-   wrong thing — kept scale=1, dropped σ, used neutral form factors for an oxide, transformed
-   an untruncated noisy tail — and check that specific thing.
-
-10. **A peak below the shortest chemically possible bond is an artefact, not a discovery.**
-    APEXA's tool reports `first_peak_r_A` as the argmax of G(r) for **r > 0.5 Å**, with no
-    physical floor. On an unrefined synthetic Ni pattern it returned **0.72 Å** — a low-r
-    termination ripple, presented as the nearest-neighbour distance (Notebook §1c). Compare
-    every "first peak" against the shortest bond the composition allows before quoting it.
-
-11. **Do not reimplement what a `midas_*` package already does.** Geometry and wavelength →
-    `midas-calibrate-v2`; pixels → I(Q) with σ → `midas-integrate-v2` (polygon-exact, with
-    polarization / solid-angle / dark); form factors and anomalous f′,f″ → `midas-hkls`;
-    Compton → `midas_integrate_v2.corrections.compton`; the sine FT and its variance →
-    `midas_integrate_v2.pdf.fourier_sine_transform`. `midas-pdf` adds the polyatomic FZ
-    normalization and Δ-PDF, and re-exports the rest — matching that split keeps you inside
-    the tested path.
-
-12. **A converged fit is not a validated model.** The package ships WAIC and a LOO estimator
-    (`model_comparison.py`) precisely because posterior samples alone do not say which model
-    is better. Before presenting a structure, state the parameter count, and compare against
-    at least one simpler alternative. This binds hardest on RMC, which will fit noise.
-
-### Traps that silently corrupt results
-
-| Trap | Symptom if missed | Where |
-|---|---|---|
-| σ column present in the file but dropped by the loader | `sigma_G` returned as an array of **zeros**, read as "uncertainty is negligible" | §0, Notebook §1a |
-| `.gr` with only two columns fed to a CLI refinement | σ **fabricated** at 5 % of \|G\|max; χ²/ndof is arbitrary (stderr banner says so) | §4 |
-| transform run without phase-2 refinement | ⟨S⟩ sits at 2.75 instead of 1; G(r) smooth and entirely wrong in amplitude | §2, Notebook §1b |
-| wavelength argument left empty or `0` | silently defaults to **λ = 0.1 Å**; Compton angular factor wrong; biased S(Q) | §1 |
-| ionic sample normalized with neutral form factors | 5–20 % low-Q error in ⟨f⟩²; slope in G(r) read as structure | §1 |
-| monoatomic `normalize_to_S` used on a polyatomic sample | Laue term missing; S(Q) is a different quantity, not a rescaled one | §1 |
-| `q_max=None` on a pattern with a noisy tail | detector noise folded into termination ripple across the whole r range | §3 |
-| a low-r ripple reported as the first coordination shell | "nearest-neighbour distance" of 0.72 Å from an argmax with no physical floor | §3, Notebook §1c |
-| Placzek correction applied to X-ray data | a real bias introduced to fix something Breit-Dirac already handles | §1 |
-| G/g/T/R/F compared across tools without pinning the convention | disagreements that are pure definition, chased as physics | §5 |
-| Δ-PDF between states on different r-grids, Q_max or normalization | σ²(ΔG) invalid; the n-σ mask is decorative | §4 |
-| Δ-PDF of powder data described as 3D-ΔPDF | a different measurement entirely (single-crystal diffuse); the package says so | §4 |
-| `baseline="mean"` in `sequence_delta_pdf` treated as an independent reference | frame *t* is inside its own baseline, so σ² does not simply add | §4 |
-| single-point Δ-PDF "features" | genuine features span ≥2 r bins; `cluster_significant_regions` drops singletons by default | §4 |
-| multiple scattering left in a thick or strongly-scattering sample | smooth background absorbed into `scale`/`offset`, distorting the low-r line | §1 |
-| Monte-Carlo MS reference used inside a gradient chain | it is the one **non-differentiable** piece in the package, by design | §1 |
-| `__version__` used to decide whether a feature exists | measured: reports **0.1.1** on an install that ships the 0.2.0 CLI + modules | RUNBOOK, Notebook §1d |
-| RMC convergence presented as a determined structure | RMC fits noise; without WAIC/LOO and a parameter count it is not evidence | §4 |
-| coordination number quoted from an unrefined ρ₀ | the integral scales with both the amplitude error and ρ₀ | ENVELOPE |
-
----
-
-## 0. Environment and install gate — before anything else
-
-`midas_pdf` is a **Python library plus seven CLI entry points**. Most of the pipeline is
-library calls; the modelling steps have commands.
+## §1. Install gate
 
 ```bash
-pip install "midas-pdf>=0.2.0"     # torch>=2.1, numpy>=1.22, midas-params>=0.9.0
+python -c "import midas_pdf, midas_integrate_v2, midas_calibrate_v2, midas_hkls; \
+print(midas_pdf.__version__, midas_integrate_v2.__version__, midas_calibrate_v2.__version__, midas_hkls.__version__)"
 ```
 
-Then run the gate and **read its output** — `pip install` exiting 0 tells you nothing, and on
-this package the version string is not a capability gate (see the trap table):
+Exercised with midas-pdf 0.3.0, midas-integrate-v2 0.7.1, midas-calibrate-v2 0.15.0 and
+midas-hkls 0.11.0. **There is no behavioural floor check for this doc set yet.** The defects in
+`HARD_RULES.md` rules 1, 2, 11, 12 and 13 were present in those versions. Re-check each one
+against the cited line before assuming it is fixed, or still broken.
 
-```bash
-KMP_DUPLICATE_LIB_OK=TRUE python - <<'PY'
-import importlib, shutil, midas_pdf
-print("reported version:", getattr(midas_pdf, "__version__", "?"), "(do NOT gate on this)")
-for m in ("normalize", "pipeline", "refine", "deltapdf", "conventions",
-          "composition", "ionic_form_factors", "corrections", "multiple_scattering",
-          "structure", "cif", "rmc", "saxs", "model_comparison"):
-    try:
-        importlib.import_module(f"midas_pdf.{m}"); print(f"  {m}: OK")
-    except Exception as e:
-        print(f"  {m}: MISSING ({type(e).__name__})")
-print("CLIs:", [c for c in ("midas-pdf-refine","midas-pdf-cif","midas-pdf-joint",
-                            "midas-pdf-multiphase","midas-pdf-coreshell","midas-pdf-rmc",
-                            "midas-integrate-v2-pdf") if shutil.which(c)])
-PY
+## §2. Survey — what is in the folder
+
+Work out, do not ask:
+
+- **What a frame is.** A sum of how many exposures, from the detector's frame counter. On the
+  reference data every file held a 180-frame sum; the pixel ceiling was 180 × 65534.
+- **Darks.** Match each dark to its own file. A dark taken right after an exposure carries lag
+  of that exposure: ~0.7–0.9 % on the reference Varex (`$ANALYSIS/out/00c_dark_lag.json`).
+- **Incident flux.** Take it from the ion-chamber scalers (net counts), **not** from the
+  attenuator PV (hard rule 5).
+- **Energy.** The tabulated K edge of the monochromator foil
+  (`manuals/calibrate-integrate/HARD_RULES.md` rule 9).
+- **The detector's noise, measured, not assumed.** On the reference Varex the per-pixel σ of
+  data − dark was ≈ 2400–2700 ADU, nearly independent of signal, so √S on ADU is wrong by an
+  order of magnitude (hard rule 6).
+- **A mask.** Dead pixels (exact zeros present in every frame), pixels whose dark is at the
+  ceiling, line defects and border columns. Add an opaque-shadow mask: pixel ÷ median of its own
+  R bin on the corrected calibrant frame, median-filtered, below 0.6, dilated. The shadow mask
+  needs the geometry, so it is built in §4.
+- **Sample facts, as stated inputs:** composition, bulk density, packing fraction, container
+  material and radii. They go into absorption, multiple scattering and the low-r check. If a
+  powder is dispersed in a matrix, the bulk density is wrong for the low-r slope (hard rule 15).
+
+## §3. Geometry hand-off — from `calibrate-integrate`, carried across whole
+
+Calibrate with the `calibrate-integrate` doc set: from scratch, λ fixed, verified against the raw
+rings. On a dense calibrant at high energy, the recipe that passed was:
+
+```python
+import math
+from midas_calibrate_v2 import calibrate
+from midas_distortion.rhod import resolve_rho_d_um
+
+res = calibrate(img, wavelength=LAMBDA, pxY=PX, dark=dark, mask=mask, calibrant="CeO2",
+                output_dir=OUT, min_ring_separation_px=11.0, refine_distortion="none", n_iter=10)
+assert res.seed_method != "fallback"                     # halt H2
+
+# to_integration_spec() carries neither RhoD nor the residual map (hard rule 2)
+by, bz = float(res.seed_BC_y), float(res.seed_BC_z)      # the SEED centre, as calibrate() used
+ny, nz = int(res.NrPixelsY), int(res.NrPixelsZ)
+rho_px = math.hypot(max(by, ny - 1 - by), max(bz, nz - 1 - bz))
+rho_um, _how = resolve_rho_d_um(rho_px, ny, nz, by, bz, float(res.pxY))
+spec = res.to_integration_spec(RMin=20.0, RMax=R_CORNER_PX, RBinSize=1.0,
+                               EtaMin=-180.0, EtaMax=180.0, EtaBinSize=1.0, RhoD=rho_um)
+spec.ResidualCorrectionMap = str(res.residual_corr_bin_path)
 ```
 
-Gate on the **imports and the CLI list**, not the version. Outputs go in a project/gdata
-directory you own — **never `/tmp`**. On an APS beamline host use the shared env by full path
-(`/home/beams12/S1IDUSER/opt/envs/midas/bin/python`); see `RUNBOOK.md`.
+**Why those arguments.**
+- At 470 mm and 67.4 keV, CeO2 rings beyond R ≈ 1100 px sit closer than the E-step window.
+- Beyond ≈ 1300 px they carry almost no intensity: the E-step SNR stays below 1 at every η bin
+  from 5° to 20°.
+- The package defaults (n_iter 4, full distortion) oscillated and left 606 µε in-loop.
+- The accepted run left 50.3 µε ring-mean RMS to Q 17.2 **with** the map and 264.6 without
+  (Lab Notebook §3).
+
+**Then verify the Q axis to the Q_max you will transform to (hard rule 4):**
+- Use crest positions of **isolated** rings (≥ 12 px from both neighbours), off the raw profile.
+- Build the ring list with a large `n_rings`: `_ring_table(n_rings=120)` stops at Q ≈ 17.2 on
+  CeO2 at 67 keV.
+- If the calibrant has no measurable rings between the last one and Q_max, the Q scale there is
+  **unmeasured**. Write that into every downstream number.
+
+## §4. Integrate with the corrections the integrator does not apply
+
+```python
+import numpy as np, torch
+from midas_calibrate_v2.io.readers import read_image
+from midas_calibrate_v2.forward.geometry import build_tilt_matrix
+from midas_integrate_v2.forward.pixels import pixel_to_REta_from_spec
+from midas_integrate_v2.corrections.intensity import PolarizationCorrection, SolidAngleCorrection
+from midas_integrate_v2.binning import HardBinGeometry, integrate_hard_with_variance
+from midas_integrate_v2.pdf import R_px_to_Q
+
+dt = torch.float64
+Z, Y = torch.meshgrid(torch.arange(spec.NrPixelsZ, dtype=dt), torch.arange(spec.NrPixelsY, dtype=dt),
+                      indexing="ij")
+px = torch.as_tensor(spec.pxY, dtype=dt)
+with torch.no_grad():
+    pix = pixel_to_REta_from_spec(Y, Z, spec)
+    sa = SolidAngleCorrection()(Y.reshape(-1), Z.reshape(-1), Ycen=spec.BC_y, Zcen=spec.BC_z,
+                                TRs=build_tilt_matrix(spec.tx, spec.ty, spec.tz), Lsd=spec.Lsd,
+                                pxY=px, pxZ=torch.as_tensor(spec.pxZ, dtype=dt))
+    pf = PolarizationCorrection(pol_fraction=float(spec.PolarizationFraction),
+                                pol_plane_eta_deg=float(spec.PolarizationPlaneEtaDeg))(
+        pix.R_px.reshape(-1), pix.eta_deg.reshape(-1), Lsd=spec.Lsd, px=px)
+corr = (sa * pf).reshape(spec.NrPixelsZ, spec.NrPixelsY)      # divided out: I/c, var/c²
+
+geom = HardBinGeometry.from_spec(spec, mask=mask)               # True = excluded
+frame = read_image(FILE, data_loc="exchange/data") - read_image(FILE, data_loc="exchange/data_dark")
+mean2d, sigma2d = integrate_hard_with_variance(torch.as_tensor(frame), geom,
+                                               variance_image=VAR, correction=corr,
+                                               error_model="poisson")
+ones = torch.ones_like(corr)
+_, s_one = integrate_hard_with_variance(ones, geom, variance_image=ones)
+npix2d = 1.0 / s_one ** 2                                       # pixel count per (eta, R) bin
+```
+
+- **Binning.** Hard binning at 1° × 1 px. Collapse η later, weighting by pixel count, so that an
+  η wedge or an interleaved sliver set can be cut from the same cake.
+- **`VAR`.** A measured per-pixel variance model (offset + gain × signal), passed in with
+  `error_model="poisson"` so the integrator propagates it rather than √S. `"azimuthal"` uses
+  in-bin scatter instead.
+- **Before quoting any σ,** calibrate it with interleaved 1° slivers (hard rule 6).
+- **Polarization plane.** Check it once on the uncorrected cake: the ring-intensity minimum
+  must sit at `PolarizationPlaneEtaDeg`. It was 83°/93° on the reference data against a
+  default of 90.
+
+## §5. Reduce: I(Q) → S(Q) → G(r)
+
+**The recipe is [`phase-5-sq-gr.md`](phase-5-sq-gr.md).** In order:
+1. 1-D I(Q), pixel-weighted.
+2. A **uniform** Q grid (hard rule 3).
+3. Flux from the ion chambers.
+4. Paalman-Pings container subtraction.
+5. Multiple scattering.
+6. Scale anchored on the high-Q tail only.
+7. Faber-Ziman S(Q) with Compton.
+8. Sine transform.
+
+Two things belong in the spine because skipping them invalidates the run:
+- **Keep the low-r term out of the normalisation** (`w_lowr=0`, anchor on the tail). The
+  package default (`w_lowr=1.0`, `packages/midas_pdf/midas_pdf/refine.py:64`) fits the −4πρ₀r
+  line, and then the §6 low-r check cannot test it.
+- **Run the uncorrected arm beside the corrected one.** It is the discriminating test for
+  rule 1.
+
+## §6. Verify — before fitting anything
+
+Physical consistency, on every sample:
+
+| check | statistic | reference-beamtime result |
+|---|---|---|
+| S(Q) → 1 **outside** the anchor window | \|⟨S⟩[10,16] − 1\| | Ni 0.28, IPA 1.38, Kapton 0.49, CeO2 1.07 — **failed** |
+| low-r line | max \|G + 4πρ₀r\| below the first peak ÷ first-peak height | Ni 0.36, IPA 4.3, Kapton 1.35 — **failed** |
+| window / Q_max | the same fit at {Lorch, none} × {FT Q_max 18, 21} | a_Ni spread 3.5e-4 Å, U_iso ×1.8 |
+| independent reduction, same wedge and settings | Pearson, first-peak Δr | vs GSAS-II: 0.9974, −0.0009 Å — consistency only (rule 16) |
+
+When the physical checks fail, as they did on the reference data, every model number downstream
+is **conditional on the reduction**. Say that, and carry the chain uncertainty (phase-6 §6.2).
+The one lever that repaired the liquids was an oblique-incidence detector efficiency of unknown
+thickness (hard rule 14; DIAGNOSIS).
+
+## §7. Model
+
+**The recipes are in [`phase-6-model.md`](phase-6-model.md):**
+- small box, with the uncertainty recipe;
+- a raw-data phase check before multiphase, and the multiphase decoy;
+- strain-PDF, read in the Fisher eigenbasis;
+- RMC;
+- Bayesian posterior and WAIC/LOO.
+
+Each has a package limitation that silently changes what the number means (hard rules 7–12).
 
 ---
 
-## 0a. THE ORDER — do these in this sequence
+## §8. Halt conditions — stop on these whether or not anything looks wrong
 
-Two steps cannot be checked after the fact, so they come first.
+- **H1** The geometry was not verified against the raw rings out to Q_max, **and** the
+  unverified range is not declared.
+- **H2** `calibrate()` returned `seed_method == "fallback"`.
+- **H3** `RhoD` or the residual map was not carried into the integration spec (median pixel R
+  far beyond the detector diagonal, or `ResidualCorrectionMap` empty while `residual_corr.bin`
+  exists).
+- **H4** The corrected ÷ uncorrected 1-D profile is ≡ 1, i.e. the intensity corrections did not
+  reach the integrator.
+- **H5** There is no empty-container or air frame, or the flux normalisation came from an
+  attenuator PV instead of an ion chamber.
+- **H6** The array handed to the transform has a non-uniform Q step.
+- **H7** A σ, a significance or an information criterion is quoted without a sliver calibration
+  of the per-pixel error model. Label it uncalibrated instead.
+- **H8** S(Q)/G(r) fails the §6 checks and a model parameter (a, U_iso, a phase fraction) is
+  reported without saying it is conditional on that reduction.
+- **H9** A minority phase is modelled without a raw-data detection and a decoy (hard rules 9, 10).
+- **H10** A strain component is quoted from `recover_strain` without the Fisher eigen reading
+  (hard rule 11).
+- **H11** An RMC configuration carries species `X` (hard rule 12).
+- **H12** The reduction ran through `midas-integrate-v2-pdf` (hard rule 13).
 
-```
-phase 0   survey       is it total scattering? Q range, composition, σ column, calibration
-phase 1   normalize    Faber-Ziman S(Q): real composition, ionic f(Q) if ionic, Compton, corrections
-          ---- look at S(Q). It must be heading for 1. Do not skip. ----
-phase 2   refine       fit scale/background/rho0 against <S>->1 and G=-4*pi*rho0*r. NOT optional.
-phase 3   transform    windowed sine FT to G(r) with sigma; choose Q_max deliberately
-          ---- check the first peak against the shortest chemically possible bond ----
-phase 4   model        small-box / multiphase / core-shell / joint SAXS / RMC, with model comparison
-phase 5   report       name the convention, state sigma provenance, keep provisional labels
-```
+## §9. Hard rules
 
-The modelling phase is optional and **gated on phase 2 converging**. A structural model
-fitted to an unnormalized G(r) will absorb the scale error into its displacement parameters
-and scale, and report a comfortable χ².
+**In [`HARD_RULES.md`](HARD_RULES.md)** — 18 rules, each written after a silent wrong answer.
 
-Phases 1–3 are also available as a single call — `i_of_q_to_Gr(q, I, comp, r, ...)` — which is
-what APEXA's `compute_pair_distribution` invokes. **That single call has `scale=1.0` and no
-refinement**, so using it as the whole pipeline skips phase 2 by construction (rule 1).
+## §10. Traps that silently corrupt results
+
+| trap | symptom | guard |
+|---|---|---|
+| variance integrator without `correction=` | liquid G(r) spike of +400 at r ≈ 0.1 Å; S(Q) off by ×2–5 at high Q | rule 1; H4 |
+| `to_integration_spec()` without `RhoD` | R ~1e33 px, empty integration | rule 2; H3 |
+| residual map not set on the spec | outer-ring crests 5× worse (264.6 vs 50.3 µε) | rule 2 |
+| ring list capped by `n_rings` | the Q-scale check looks complete and stops at Q 17 | rule 4 |
+| R-binned profile into the transform | plausible, slightly wrong G(r) | rule 3; H6 |
+| attenuator PV trusted for flux | 10× scale error on the attenuated samples | rule 5 |
+| √S on ADU as σ | every significance 15–19× inflated | rule 6; H7 |
+| Hessian σ quoted raw | σ(a) 1.7e-6 Å where 4.5e-4 is honest | rule 7 |
+| Lorch data, windowless model | U_iso +84 %, a moves hundreds of ppm | rule 8 |
+| multiphase weight read as a fraction | a weight with no σ and a free scale | rule 9 |
+| strain from one frame | +5 % e11 on an unloaded powder | rule 11; H10 |
+| `Supercell.from_crystal` species | every atom `X`; swaps and CIFs wrong | rule 12; H11 |
+| `midas-integrate-v2-pdf` | mask, Compton and absorption silently not applied | rule 13; H12 |
+| thickness chosen to flatten S(Q) | a correction fitted to its own test | rule 14 |
+| bulk density for a dispersed powder | low-r check fails in every arm | rule 15 |
+| two reductions agreeing | read as validation | rule 16 |
+| `contour(..., extent=(0, W, H, 0))` over `imshow` | overlay mirrored top to bottom by 2·(BC_z − (H−1)/2) | explicit coordinate arrays (DIAGNOSIS) |
 
 ---
 
-## 1. Where things live
+## Provenance paths
 
-| Thing | Where |
-|---|---|
-| package source | `$MIDAS/packages/midas_pdf/` |
-| runnable one-per-capability examples | `$MIDAS/packages/midas_pdf/examples/` (01–13, see `examples/README.md`) |
-| σ validation vs MC bootstrap | `$MIDAS/packages/midas_pdf/dev/demo_sigma_validation.py` |
-| open items, conventions decision | `$MIDAS/packages/midas_pdf/dev/PLAN.md` |
-| APEXA tool | `compute_pair_distribution` → `_capability_runner.py` `pdf` subcommand |
-| upstream I(Q) with σ | `midas-integrate-v2` (`integrate_*_with_variance`) |
-
----
-
-## 2. Done means
-
-- S(Q) refined to ⟨S⟩→1 over the high-Q tail, with the fitted `scale`, background
-  coefficients and ρ₀ reported (phase 2), **or** an explicit statement that normalization
-  was not refined and every amplitude is therefore provisional.
-- G(r) with a σ band whose provenance is stated: propagated from a real σ_I, or absent —
-  never a zeros array quoted as a measurement.
-- Q_max, window, r-grid and convention named in the report.
-- The first peak checked against the shortest chemically possible bond for the composition.
-- Any structural model reported with its parameter count and at least one comparison
-  (WAIC/LOO or a simpler alternative).
-
----
-
-## Phases
-
-Open each as you reach it:
-
-- **[phase-0-survey.md](phase-0-survey.md)** — §0 what you have, what is missing
-- **[phase-1-normalize.md](phase-1-normalize.md)** — §1 composition, form factors, Compton, corrections, MS
-- **[phase-2-refine.md](phase-2-refine.md)** — §2 the differentiable normalization fit
-- **[phase-3-transform.md](phase-3-transform.md)** — §3 Q_max, window, the sine FT, σ, ripple
-- **[phase-4-model.md](phase-4-model.md)** — §4 small-box, multi-phase, core-shell, joint, RMC, Δ-PDF
-- **[phase-5-report.md](phase-5-report.md)** — §5 conventions, provenance, provisional labels
-
-When something looks wrong: **[DIAGNOSIS.md](DIAGNOSIS.md)**. Before promising that this
-measurement can answer the question: **[ENVELOPE.md](ENVELOPE.md)**. Every knob:
-**[PARAMETERS.md](PARAMETERS.md)**. Host and version state: **[RUNBOOK.md](RUNBOOK.md)**.
-
-## Sibling doc sets
-
-`calibrate-integrate` (produces the I(Q) this consumes) · `xrd-ct` (spatially resolved
-diffraction) · `ff-hedm` / `nf-hedm` / `pf-hedm` (grain-resolved) · `dfxm` · `dct-tt` · `tomo`.
+A path written `$ANALYSIS/...` names the analysis campaign directory for the reference beamtime
+(`midas_pdf_rerun`, with `scripts/`, `out/`, `logs/`, `PREREGISTER.md` and `RESULTS.md`). It is
+deliberately **not** in this repository. It is *provenance, not a link*: it names the file a
+number came from, and promises nothing about reaching it from another machine.

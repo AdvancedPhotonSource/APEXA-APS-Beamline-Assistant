@@ -28,12 +28,32 @@ a plan; it is what has actually been exercised.
 
 A calibration is healthy **only against a stated condition**, never on its own:
 
-* held-out calibrant strain **< 100 µε** — above that the geometry is wrong, not
-  merely imprecise. This is the gate, not a guideline.
+* held-out calibrant strain **< 100 µε** is a **screen, not a verdict** (amended
+  2026-09-08). Above it, **stop and look at the ring overlay** — the raw observation —
+  then decompose the residual, because its *structure* decides whether it matters. A
+  **coherent radial** residual (every ring off the same way, drifting smoothly with 2θ)
+  is a scale/Lsd/λ offset: it scales every axis equally and **cancels in any ratio** —
+  an a/b splitting, δ, texture. An **azimuthal cos 2η** residual is the one that maps
+  onto an apparent a/b splitting. On one DAC calibration "210 µε total" and "a
+  0.015 % δ floor" were both true at once. Judge a calibration against the quantity
+  you need; a high strain still disqualifies it for absolute d-spacings or strain.
 * ring crests, measured off the raw radial profile rather than the fit's own
   metric — the fit's residual can look good while the rings are misplaced.
 * the sentinel check has actually run: an unmasked low sentinel produced
   **1369 µε** on a dataset whose geometry was otherwise fine.
+* **the 100 µε cap itself is a fraction, `|1 − R_obs/R_pred|`, not an absolute
+  pointing error** — for a fixed absolute centroiding precision (some Δpixel set
+  by the peak shape and counting statistics), `strain = Δpixel / R_ring`, so a
+  SHORT sample-to-detector distance (rings sitting at a few hundred pixels of
+  radius) structurally reads a higher microstrain than the same real precision
+  would at a longer throw, where the same rings — if they still fit on the
+  detector at all — sit at a larger R. On a real ~350 mm setup, a geometry
+  visually confirmed correct by a ring overlay (sub-pixel to ~1 px per-ring
+  agreement) still read 199 µε, comfortably over the default cap. Read this gate
+  relative to the detector-distance/ring-radius regime, not as one universal bar
+  — and never round a small, overlay-confirmed overage up to "the calibration
+  failed" the way a 45–60× overage with a visibly drifting overlay actually is
+  (rule 14, `HARD_RULES.md`).
 
 One threshold with no condition attached false-alarms on a heavy run and goes
 silent on a broken one, which is why each row above names what it is measured

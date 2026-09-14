@@ -272,6 +272,97 @@ your own analysis of it. Each is terse here; the measurement behind it is in Not
     the true λ returns off-Bragg on the **weak-beam flank** — but only for the **strain** channel (a
     tilt-channel intensity ∝ $|$deviation$|$ doubles at any operating point).
 
+23. **Subtracting a background does not subtract its variance (§2, Notebook §11b).** Poisson
+    noise is set by what the detector *recorded*, not by what survives your subtraction — and
+    the near-baseline bins sit at the **largest** lever arms `Σ(x−c)²`, so they usually
+    dominate `var(centroid)` while carrying almost no signal. On the Mg-4Al ID03 set the
+    omitted term was **12.9× the retained one in variance** and the error bar came out
+    **5–6× too small**. Use `midas_dfxm.centroid_uncertainty`, or better, measure the scatter
+    with a **model-free split-half** (χ parity, obpitch parity) which assumes no noise model,
+    no gain and no lineshape at all. For halves A, B: `SD(A−B) = 2·σ_full`.
+
+24. **Before quoting an uncertainty budget, prove its terms are independent (Notebook §11b).**
+    Three of our four "independent" terms turned out to be three moments of one vector, with
+    `RMS(d) = hypot(mean(d), sd(d))` **exactly**. Compute the identity; if it holds, you have
+    listed A, B and √(A²+B²) as separate contributions. And **quote every term at the same
+    quantile** — a p95 against medians manufactures whatever ordering you want (ours produced
+    a fictitious "25× lead"; like-for-like it was 10–15×, and at the median that term was the
+    *smallest*).
+
+25. **A term proportional to the signal is not an uncertainty (Notebook §11b).** Regress any
+    candidate term against the field it is supposed to bound. Ours came back at r = −0.96,
+    R² = 0.92 — 92.5 % of it was deterministic dilution, and it vanishes when the signal does.
+    Also: never define a budget term against **no correction at all**; that is a straw man and
+    the halt table forbids the un-subtracted arm outright. Use the spread among *defensible*
+    choices.
+
+26. **A floor measured at one step size does not transfer in absolute units (Notebook §11b).**
+    The centroid estimator is **scale-equivariant in x** — verify it numerically, ours gave
+    0.333334 for a 3× rescale — so what transfers between axes is the error **in units of the
+    step**, never the value in mdeg. And a proxy floor whose *reference* is itself
+    under-sampled bounds nothing: decimating a 3-pt/FWHM axis and calling the undecimated
+    version "truth" measures the gap between a 1-pt and a 3-pt centroid, not the error against
+    the true angle.
+
+27. **When comparing two reductions, never select pixels on one of them (Notebook §11d).**
+    Regression to the mean is **symmetric**: select on theirs and ours looks unsupported;
+    select on ours and theirs does — we measured observed/predicted 0.79 in *both* directions.
+    Select on a third quantity or on the raw data. And never summarise a **bimodal** population
+    with its median: ours sat in the gap between our own two modes and described no pixel.
+
+28. **Photon transfer needs the covariance sum when a PSF is present (§2, Notebook §11e).**
+    `var/mean` is invalid with a pedestal (rule 13); additionally **every high-pass estimator
+    is biased low by Σw²** when one quantum spreads over more than a pixel (measured 0.71 here,
+    ~1.4 px per quantum). Use `Σ_d cov(S_i, S_{i+d})` over **all** lags on frame-differenced
+    data. A **negative read-noise intercept is a rejected model**, not a small correction — all
+    three of our first attempts had one, and gave 0.5, 8.7 and 11–360 ADU/quantum.
+
+29. **Before explaining a discrepancy between two products, prove they came from the same raw
+    files (Notebook §11f).** Ask for the exact input path and dataset index; ESRF dataset
+    numbering starts at 0. On the Mg-4Al ID03 set a collaborator's products were of a different
+    dataset, and a string of mechanism analyses (angular selectivity, a χ sub-window, COM-χ
+    "tracking", a "missing" feature) each found a pattern before anyone asked. A perfect
+    detector-grid alignment does not establish shared frames: hot pixels are detector-fixed. What
+    does separate the cases (one known case, unverified) is fine-scale agreement: the 4–8 px band-pass correlation of the COM
+    maps was 0.006–0.17 against the wrong dataset and 0.94–0.96 against the right one.
+
+30. **Sum more of a curve is not automatically a better centroid (Notebook §11k).** A
+    baseline-subtracted moment over the *whole* recorded curve, unclipped, is unbiased only
+    if the background is genuinely flat across the whole scan — real angular backgrounds
+    (rule 23) usually are not, and summing over more points then exposes the centroid to
+    that shape rather than diluting it. On real frames this was **worse** (−2 to −4 mdeg) than
+    the package's own windowed `reduce_rocking(window="peak")` reducer (+0.2 to +0.6 mdeg),
+    which already handles a peak near a scan end without discarding good data on the far side
+    — do not replace it with a "more principled" full-curve sum without measuring the
+    trade-off on real data first. `midas_dfxm.rocking_edge.edge_centres` packages this
+    reducer with a truncation flag and a gated fit — call it, don't rebuild it (§2f).
+
+31. **A truncation bound needs its coverage measured against real held-out cuts, on every
+    dataset it will be used on, before it is trusted (Notebook §11k).** Calibrating a flank
+    ratio against a dataset's own well-recorded pixels is necessary but not sufficient: on one
+    real dataset three designs all fell short of a 90 % coverage target (0.60 pooled at the
+    widest candidate ratio tried); on a second, broader-curved dataset coverage varied
+    0.86–0.93 across scans and could not be calibrated at all on one of them (zero eligible
+    pixels). Report the bound as a scale, not an interval, unless its measured coverage says
+    otherwise — and prefer a gated lineshape extrapolation (accepted only when the peak itself
+    is still recorded) over an assumed flank shape; it degrades predictably with the missing
+    fraction instead of failing silently.
+
+32. **The top-ranked peak in a periodicity spectrum is not automatically the real one — confirm
+    it by eye, every time the region or cutoff changes (kyay_dfxm_dec2025/artifact_check/,
+    2026-09-12).** Azimuthal whitening fixes the well-known red-spectrum failure (a raw argmax
+    rails at the lowest wavevector), but whitening alone is not sufficient: on a real Ba122
+    θ-2θ width map, the whitened spectrum's rank-1 peak (41 px, 168° from vertical, 74× the
+    radial-mean power) pointed the wrong way entirely across a comb pattern visible to the eye;
+    the real feature was rank-3 in the same list (39 px, 2°, 24× power). The failure is not
+    obvious from the numbers alone — 74× looks like the more confident answer — only an overlay
+    of the candidate direction on the real map shows which one actually tracks the visible
+    structure. This does not transfer between crops or cutoffs: a peak confirmed on one region
+    or one high-pass sigma is not confirmed on another; re-render and re-check every time either
+    changes, and prefer a cutoff-free cross-check (row/column autocorrelation, or a line profile
+    plus a two-parameter cosine fit, the one method a related earlier campaign found robust when
+    six other estimators failed) as a second read before quoting a period or angle.
+
 ### Traps that silently corrupt results
 
 | Trap | Symptom if missed | Where |
@@ -285,6 +376,15 @@ your own analysis of it. Each is terse here; the measurement behind it is in Not
 | a shear-strain reflection reported as "no contrast" | wrong channel — a cube-axis reflection sees the shear as tilt (θ-rock), not strain (θ,2θ) | §4, Notebook §9 |
 | a fixed-θ intensity image read at exact Bragg | 2nd-order response images the wave at **λ/2**; go weak-beam for the true λ | Notebook §9 |
 | a single DFXM frame used to call a wave 2D vs 3D | the inclined projection collapses sample x and z onto one detector axis; you need the scanned reconstruction | Notebook §9 |
+| a centroid error bar propagated over background-SUBTRACTED counts | error bar 5-6x too small; the near-baseline bins carry the longest lever arms | §2, Notebook §11b |
+| budget terms that are moments of one array | `RMS = hypot(mean, sd)` exactly; A, B and their quadrature sum listed as three | Notebook §11b |
+| an uncertainty term that scales with the signal | it is a dilution factor, not an uncertainty; it vanishes with the signal | Notebook §11b |
+| a sampling floor quoted in mdeg across a step-size change | the estimator is scale-equivariant; only the error *in units of the step* transfers | Notebook §11b |
+| pixels selected on one of the two maps being compared | regression to the mean, and it is symmetric — swap the roles and the verdict swaps | Notebook §11d |
+| a collaborator's product compared as if built from your frames | ask for the input file and dataset index (ESRF numbering starts at 0); grid-aligned hot pixels do not prove shared frames | Notebook §11f |
+| a full-curve, unclipped moment used to "fix" an edge-biased windowed centroid | can be *worse* on real data if the background is not flat across the scan; measure both before switching | Notebook §11k |
+| a truncation bound trusted because its calibration ran without error | calibration succeeding is not the same as reaching the coverage target; read the reported number | Notebook §11k |
+| gain from a high-pass photon transfer with an optical PSF | biased low by sum(w^2); a negative read intercept means the model is rejected | Notebook §11e |
 | a Miller string ("the 400 reflection") quoted without its index frame | channel inverts: ortho 400 (=tet [110]) is strain-sensing, tet 400 (cube axis) is tilt-sensing | Notebook §9a |
 | round-trip quoted as physical accuracy | 1e-16 "validation" that tests only the linear algebra | §2 |
 | mosaicity read as intrinsic sample spread | it is the intrinsic spread **convolved with the instrument resolution** — deconvolve with `fit_orientation_mosaicity`, not `moment_orientation` | §2, §4 |
@@ -306,6 +406,8 @@ your own analysis of it. Each is terse here; the measurement behind it is in Not
 | one fixed rocking window reused across a raster while θ_B drifts | truncated positions bias widths and integrals, and manufacture apparent two-population structure | §2 |
 | Λ assumed similar for a weak satellite and a strong parent | Λ ∝ 1/\|F\|, so the dynamical boundary can bind for one and never for the other | §1 |
 | rocking-width / Darwin-width used as a dynamical-relevance criterion | the criterion is t_coherent/Λ; a wide rocking curve does not bound dynamical effects | §1, §4 |
+| rank-1 peak of an azimuthally-whitened periodicity spectrum trusted without a visual overlay | picks a real but wrong-direction feature; the true one can be several ranks down and lower-power | rule 32 |
+| a detrend/high-pass cutoff chosen before inspecting a raw profile of the region | can remove the very periodicity being searched for if the cutoff sits below the real period | rule 32 |
 
 ---
 

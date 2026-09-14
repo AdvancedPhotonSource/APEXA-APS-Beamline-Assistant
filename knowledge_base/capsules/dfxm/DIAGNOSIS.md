@@ -447,3 +447,151 @@ its direction** relative to the strain axes; a reflection can be blind in one ch
 **Lever.** Match the channel to the reflection (diagonal reflection → θ,2θ strain; cube-axis → θ-rock
 tilt), and read the intensity wavelength on the weak-beam flank, not at the peak. If you need the true
 strain field, use the θ,2θ COM (linear) rather than a fixed-θ intensity.
+
+---
+
+## The centroid histogram is a comb at the motor step
+
+**Discriminating test.** Compute the phase of each pixel's centroid relative to the
+**encoder** grid: `p = ((c − g0)/step) mod 1`, folded to ±0.5. A well-sampled axis gives
+mean|p| = 0.250 and 20 % of pixels within 0.1 of a grid point. Then run the *same* statistic
+on a second, better-sampled axis of the same scan as a control — it must come back flat, and
+if it does not, the test is broken rather than the data.
+
+**Cause.** The rocking curve is narrower than the step you took it with, so the centroid is
+pulled toward the grid points. On the Mg-4Al ID03 set: rocking axis 1.16 pts/FWHM gave
+mean|p| = 0.2141 and **29.6 %** within 0.1 of a step; the roll axis at 3.35 pts/FWHM gave
+0.2484 and 20.4 % (Notebook §11a).
+
+**Lever.** It is in the data, not the reduction — an independent re-implementation combs
+identically. Fix it at the next beamtime by trimming the *range* and refining the *step*
+(the slack is usually range: the grain spanned 0.69° of a 1.0° window). Until then, do not
+quote a per-pixel orientation to better than the step, and check whether the phase origin you
+are measuring against is the commanded or the readback grid — they differed by 0.39 of a step
+here, which flips apparent pinning into apparent anti-pinning.
+
+---
+
+## A per-pixel centroid looks wrong specifically near the ends of the scanned range
+
+**Discriminating test.** Slide a window over the real frames: for pixels whose peak sits well
+inside the full scan, compute the centroid on a sub-window centred on the peak, then on the same
+width sub-window shifted so the peak sits at the window's edge. The true centroid cannot depend on
+where you chose to put the window, so any change between the two is the estimator's own bias, not
+the sample's. Run a no-baseline-subtraction positive control alongside it (it should move by tens
+of mdeg, confirming the test has power) and a noiseless synthetic peak as a negative control (it
+should match the ideal truncated centroid exactly).
+
+**Cause.** Two distinct, both real on the Mg-4Al ID03 set (Notebook §11k):
+- A **windowed, clipped** centroid (baseline-subtracted, negative residuals zeroed) discards real
+  signal asymmetrically when the window is forced symmetric around the peak near an edge — up to
+  10–17 mdeg of self-inflicted pull, worse the more the window is forced.
+- Less obviously, a **full-curve, unclipped** moment is not automatically safe either: it removes
+  the forced-window problem but can pick up a *different* one if the background is not flat across
+  the whole scan (rule 23) — real data measured 2–4 mdeg of residual bias from this, worse than the
+  package's own windowed `reduce_rocking(window="peak")` reducer.
+
+**Lever.** Use `reduce_rocking(window="peak")` (or `midas_dfxm.rocking_edge.edge_centres`, which
+wraps it and adds a truncation flag). Do not invent a "more principled" estimator without running
+this sweep test on real frames first — two attempts at one looked reasonable in isolation and were
+both worse than the existing reducer once measured.
+
+---
+
+## A centroid near a scan end needs to be reported honestly, not just measured
+
+**Discriminating test.** For pixels the sweep test above flags as truncated (real signal still
+above noise at the recorded boundary), check whether a single-peak lineshape fit converges with low
+residual and the fitted peak lies inside the recorded range. If it does not, no amount of "bound"
+machinery substitutes for that: measure the bound's own coverage against real, held-out planted
+cuts (crop a well-recorded pixel's curve by a known amount, check whether the bound contains its own
+un-cropped centroid) before quoting it as an interval.
+
+**Cause.** A bound built from an assumed flank shape (the cut side runs some multiple of the
+recorded side) is calibrated *for that assumption*, and real curves do not always satisfy it —
+narrow single peaks calibrate differently from broad, multi-featured ones, and calibration can
+run cleanly to completion while still falling well short of the target coverage.
+
+**Lever.** Report, per pixel: the centroid where untruncated; a fitted extrapolation where
+truncated *and* the fit is accepted (state how much of the curve was missing — accuracy degrades
+with it, not a fixed number); otherwise **undetermined**, not a numeric interval that measured
+0.60–0.93 coverage against a 0.90 target across two real datasets and three attempts
+(Notebook §11k). `midas_dfxm.rocking_edge.EdgeCentres.status` returns exactly this categorisation.
+
+---
+
+## Two reductions that should share frames agree on orientation but not on intensity
+
+**Discriminating test.** Five checks, in this order, because each excludes a whole class:
+
+0. **Are they really the same frames?** Ask for the exact input file and dataset index (ESRF
+   numbering starts at 0) before running anything below. On the Mg-4Al set the delivered products
+   were of a different dataset, and checks 1–4 ran without detecting it: detector-fixed hot pixels
+   align across acquisitions, orientation maps of neighbouring layers correlate well, and angular
+   selectivity "reproduced" the other dataset's contrast. Fingerprints that do discriminate:
+   single-frame zingers are frame-specific, and two reductions of identical frames agree at fine
+   spatial scale (below ~16 px) as well as coarse (Notebook §11f). Tested once on a known case (unverified): 4–8 px band-pass COM agreement was 0.006–0.17 for the wrong
+   dataset and 0.94–0.96 for the right one, while the zinger fingerprint moved only 0.05 → 0.17.
+
+1. **Is it a constant?** If one pipeline subtracts a per-frame scalar pedestal and the other
+   does not, the sums differ by a per-pixel **constant** — and a constant cannot move a
+   correlation off 1.0. If r ≪ 1, pedestal handling is *not* the cause. (Algebra, no compute.)
+2. **Is it the grid?** Cross-correlate isolated hot pixels or speckle fiducials, which are
+   **detector**-fixed. Ours gave dy = dx = 0.00 px with identity beating all 8 dihedral
+   transforms. Note a *whole-frame* correlation is inflated by the mask contrast — compare
+   inside the grain.
+3. **Is it a reweighting?** Fit per-bin weights on your own angular marginals to reproduce
+   their map. If even an unconstrained fit with negative weights caps well below 1 (ours:
+   59 parameters, r = 0.68), their product is **not a linear functional** of your angular
+   volume.
+4. **Is it angular selectivity?** Compare the raw angular profile on their dark features
+   against a matched control. Theirs sat at +120 mdeg in χ with a broadened, bimodal profile,
+   and a *parent-orientation window on our own raw data* reproduced their contrast.
+
+**Cause.** On the campaign that wrote this entry, **different input files** (Notebook §11f). Only
+once the inputs are confirmed identical is angular selectivity a candidate: one reflection images
+one orientation, so a pipeline that windows around a parent orientation renders everything outside
+it dark — legitimately, by diffraction contrast — while a pipeline that integrates the full
+scanned volume averages it in. Both are correct; they are **different quantities**.
+
+**Lever.** Ask which files, which dataset index and which angular range their product integrates. Do **not**
+attribute the difference to a specific step of their pipeline without their script (Notebook §7d).
+
+---
+
+## A feature is present in one reduction and absent in the other
+
+**Discriminating test.** First confirm both reductions used the same dataset (check 0 of the
+entry above; on the Mg-4Al set they had not). Then: do not eyeball it and do not use a whole-strip
+contrast statistic — both mislead. Trace the feature's ridge in the map that *has* it, then sample the **other**
+map along that exact path and against control paths offset by ±10…40 µm. Then arbitrate with
+the **raw counts** on the same pixel list.
+
+**Watch the two traps this test has.** (a) The path is selected on one map, so the comparison
+is circular unless you hold out rows or re-select from the raw data — check by tracing on
+every 8th row and evaluating on the unseen ones. (b) If your "raw" arbiter is your own
+pipeline's array with one step removed, it is not independent — verify with
+`np.array_equal`; ours was **bitwise identical** to the product it was supposed to arbitrate.
+
+**Cause and lever.** If the raw integrated counts on the path match the control (ours: 1.03–1.06)
+the feature is not photon-starved in *your* data: either the other product was made from
+different frames, or the difference is in its angular acceptance. If they do not, it is real absorption or a genuine orientation excursion.
+
+---
+
+## An uncertainty budget's terms do not look independent
+
+**Discriminating test.** Compute `RMS(d)` and `hypot(mean(d), sd(d))` for the vector each term
+came from. If they are equal to floating-point precision, you have listed A, B and √(A²+B²) as
+three contributions. Also correlate the arrays behind any two terms: ours came back at 0.9917.
+
+**Second test.** Regress each term against the field it is supposed to bound. A real
+uncertainty is uncorrelated with the signal; ours gave r = −0.96, R² = 0.92 — it was a
+dilution factor that vanishes when the signal does.
+
+**Third test.** Check that every term is quoted at the **same quantile**. A p95 against medians
+manufactures any ordering you like.
+
+**Cause.** Terms derived from one split, or one difference field, by different summary
+statistics. **Lever.** Rebuild as *one measurement decomposed*, state the decomposition, and
+prefer a model-free split-half over any analytic propagation (Notebook §11b, §11c).

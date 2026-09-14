@@ -155,3 +155,44 @@ doc sets agree.
    pre-registered and unbuilt. Notebook §7i is the motivation.
 
 **Nothing is mid-run.** No jobs on any host belonging to this thread.
+
+
+---
+
+## Pick-up point — 2026-09-10 (Mg-4Al ID03, `datasetG` collaboration)
+
+**Where it stands.** An independent reduction of a collaborator's ID03 Mg-4Al dataset is
+complete and verified correct (two from-scratch rebuilds: intensity max|diff| = 0, µ centroid
+r = 0.99975). Orientation and tilt maps are solid. A talk and speaker notes are in
+`$ANALYSIS/dfxm_talk/`; the technical report, survey and retractions in
+`$ANALYSIS/dfxm_datasetG/`. The working tree moved to copland `/gdata` on 2026-09-10 and the
+chiltepin copy is gone; the exact path is in the thread's local checkpoint. Scripts still hard-code
+the old chiltepin prefix.
+
+**What is NOT settled, in priority order.**
+
+1. **Detector gain.** Not measurable from these frames (Notebook §11k). Ask for darks/flats, or use the
+   covariance-sum estimator (Notebook §11e). Every absolute σ is provisional until then.
+2. **The per-pixel error bar.** Bounded only to ~3–10 mdeg, dominated by estimator choice
+   (moment vs fitted centre, 6.8–9.9 mdeg). Rule 20's asymmetric-lineshape test was run once
+   and its own search grid quantised the answer — redo it on a finer grid.
+3. **The scan-direction offset's mechanism** (Notebook §11h). Real and reproduced exactly; rolling
+   shutter is supported by one analysis (V in row, vertex at the sensor centre, R² = 0.70) and
+   excluded by another (wrong size, column dependence). Scan direction is aliased with χ parity
+   in this data, so it may not be separable here at all.
+4. ~~Whether the delivered `.mat` products come from a different layer~~ **Resolved 2026-09-10.**
+   The collaborator had built them from the wrong dataset (ESRF numbering starts at 0) and sent a
+   corrected set. It agrees with ours: total intensity r 0.960, COM-µ / COM-χ 0.994 / 0.997,
+   strain 0.999, zero shift (preregistered but unverified; Notebook §11f).
+
+**Five questions drafted for the collaborator, NOT yet sent**
+(`$ANALYSIS/dfxm_datasetG/message_to_collaborator.md`): darks/flats; obpitch zero offset;
+whether a finer µ step exists; the labDCT grain-averaged orientation for g9; and whether the
+sample translated anywhere. The sixth, which dataset the `.mat` maps came from, was asked
+separately and answered (item 4).
+
+**Do not re-open** without reading Notebook §11 first: the strain interpretation, its optical
+attribution, a "row-only lattice rotation", a railed dark-line tracker, an intensity-rejection
+claim, a reversed COM-µ comparison, a COM-χ "tracking" of the intensity disagreement, a
+"present at lower contrast" left-edge feature, a photon-noise margin and an uncertainty budget
+were all refuted there (Notebook §11b, §11l). One more claim was never verified (Notebook §11k).
