@@ -216,8 +216,46 @@ def get_midas_env() -> dict:
     """
     env = os.environ.copy()
 
-    # Add MIDAS bin to PATH so C++ executables are found
-    midas_bin_paths = [str(MIDAS_BIN), str(MIDAS_ROOT / "bin")]
+    # PATH order is the pip-vs-C++ engine decision. `_resolve_midas_cli` picks an
+    # engine with shutil.which(), so whatever is FIRST on PATH wins, and a pip
+    # console script that is not on PATH is indistinguishable from one that does
+    # not exist — the lookup silently degrades to the deprecated C++ tree.
+    #
+    # APEXA_MIDAS_BIN is the maintained `midas-suite` env's bin dir and goes
+    # FIRST. Per the MIDAS developer (2026-09-14) the pip packages do everything
+    # and no repo clone is needed; on copland that is:
+    #     conda deactivate
+    #     export PATH=/home/beams12/S1IDUSER/opt/envs/midas/bin:$PATH
+    # Set APEXA_MIDAS_BIN to that directory (see .env.template). Unset => the
+    # old C++-first behaviour, unchanged.
+    midas_bin_paths = []
+    _pip_bin = os.environ.get("APEXA_MIDAS_BIN", "").strip()
+    if _pip_bin:
+        midas_bin_paths.append(_pip_bin)
+        # Prepending is NOT enough. Per the upstream install gate
+        # (manuals/calibrate-integrate/README.md §1): "conda deactivate is
+        # required: an active midas_env shadows that bin even after you set
+        # PATH." A live conda env also exports CONDA_PREFIX/PYTHONHOME, which a
+        # child python honours ahead of PATH. So when APEXA_MIDAS_BIN is set we
+        # do the equivalent of `conda deactivate` for the subprocess: drop every
+        # conda env bin from PATH and clear the vars that re-assert it.
+        _conda_prefix = env.get("CONDA_PREFIX", "")
+        _kept = []
+        for _p in env.get("PATH", "").split(":"):
+            if not _p:
+                continue
+            if _conda_prefix and _p.startswith(_conda_prefix):
+                continue
+            if "/miniconda" in _p or "/anaconda" in _p or "/envs/" in _p:
+                if _p.rstrip("/") != _pip_bin.rstrip("/"):
+                    continue
+            _kept.append(_p)
+        env["PATH"] = ":".join(_kept)
+        for _v in ("CONDA_PREFIX", "CONDA_DEFAULT_ENV", "CONDA_PROMPT_MODIFIER",
+                   "PYTHONHOME", "CONDA_SHLVL", "CONDA_PYTHON_EXE"):
+            env.pop(_v, None)
+    # C++ bins stay on PATH as the fallback for anything without a pip console.
+    midas_bin_paths += [str(MIDAS_BIN), str(MIDAS_ROOT / "bin")]
     env["PATH"] = ":".join(midas_bin_paths + [env.get("PATH", "")])
 
     env["MIDAS_PATH"] = str(MIDAS_ROOT)
@@ -4762,12 +4800,28 @@ _CALIBRANT_DB = {
 }
 
 
+def midas_search_path() -> str:
+    """PATH used to locate MIDAS console scripts: APEXA_MIDAS_BIN first.
+
+    `shutil.which()` defaults to the *process* PATH, which is not the PATH
+    `get_midas_env()` builds for subprocesses — so without this the two
+    disagree: the engine gets picked against one PATH and then run with
+    another. Both now consult APEXA_MIDAS_BIN first.
+    """
+    parts = []
+    _pip_bin = os.environ.get("APEXA_MIDAS_BIN", "").strip()
+    if _pip_bin:
+        parts.append(_pip_bin)
+    parts.append(os.environ.get("PATH", ""))
+    return ":".join(p for p in parts if p)
+
+
 def _resolve_midas_cli(console_name: str, legacy_script=None):
     """Prefer the pip `midas-suite` console script; fall back to a legacy
     MIDAS_ROOT script ONLY when the console script is genuinely absent.
     Returns (kind, path) where kind is "pip" | "legacy" | None."""
     import shutil as _sh
-    exe = _sh.which(console_name)
+    exe = _sh.which(console_name, path=midas_search_path())
     if exe:
         return ("pip", exe)
     if legacy_script and Path(legacy_script).exists():
@@ -5633,9 +5687,24 @@ if img is None: raise SystemExit("could not load image array")
 if img.ndim>2: img=img[0]
 dark=_load(_DARK) if _DARK else None
 from midas_calibrate_v2 import calibrate
+# Device was hardcoded "cpu", so a GPU host still ran the differentiable fit on
+# CPU — minutes per frame, hours for a series. Auto-detect, overridable with
+# APEXA_MIDAS_DEVICE=cpu|cuda (explicit cpu is the documented-agreement path:
+# the manual records CPU and GPU agreeing exactly on v2, which is float64).
+import os as _os, torch as _torch
+_dev = (_os.environ.get("APEXA_MIDAS_DEVICE") or "auto").strip().lower()
+if _dev == "auto":
+    _dev = "cuda" if _torch.cuda.is_available() else "cpu"
+# Bound CPU thread oversubscription: several single-frame calibrations run
+# back to back (or in parallel), and torch defaulting to every core makes them
+# fight each other. APEXA_MIDAS_THREADS overrides.
+_thr = _os.environ.get("APEXA_MIDAS_THREADS", "").strip()
+if _thr.isdigit() and int(_thr) > 0:
+    _torch.set_num_threads(int(_thr))
+print(f"[v2] device={_dev} threads={_torch.get_num_threads()}", flush=True)
 res=calibrate(np.asarray(img,dtype=float), wavelength=_WL, pxY=_PX, calibrant=_CAL,
               output_dir=_OUT, initial_Lsd=_LSD, n_iter=_NITER, dark=dark,
-              device="cpu", verbose=True)
+              device=_dev, verbose=True)
 out={"engine":"pip-v2:midas_calibrate_v2","Lsd_um":res.Lsd,"BC_y":res.BC_y,
      "BC_z":res.BC_z,"tx":res.tx,"ty":res.ty,"tz":res.tz,"wavelength_A":res.wavelength_A,
      "in_loop_strain_uE":res.in_loop_strain_uE,
@@ -5878,6 +5947,38 @@ print("APEXA_V2_RESULT="+json.dumps(out))
                   "using legacy AutoCalibrateZarr (-ConvertFile 1).", file=sys.stderr)
         _ac_kind, _ac_cli = (None, None) if (_force_legacy or _img_is_hdf5) else \
             _resolve_midas_cli("midas-autocalibrate")
+
+        # Preflight the legacy C++ engine BEFORE dispatching to it. AutoCalibrateZarr
+        # is a Python driver that shells out to compiled binaries, so it can be
+        # present and importable while the binaries it needs are not built — the
+        # failure then surfaces deep in its own traceback as
+        # "FileNotFoundError: .../FF_HEDM/bin/GetHKLList", once per frame. On a
+        # 42-frame series that is 42 identical, guaranteed failures.
+        #
+        # The pip midas-suite env ships no compiled binaries at all (it is pure
+        # Python; `midas-hkls` is the console replacement for GetHKLList), so on a
+        # pip-only host this branch can never succeed. Refuse it with an actionable
+        # message instead of letting each frame rediscover the same missing file.
+        _v2_available = _resolve_midas_cli("midas-calibrate-v2")[1] is not None
+        if _ac_cli is None and _v2_available:
+            _gethkl = Path(MIDAS_ROOT) / "FF_HEDM" / "bin" / "GetHKLList"
+            if not _gethkl.exists():
+                return format_result({
+                    "tool": "midas_auto_calibrate",
+                    "status": "error",
+                    "error": "legacy C++ calibration engine unavailable",
+                    "detail": (
+                        f"This image ({image_path.suffix}) routes to the deprecated "
+                        f"AutoCalibrateZarr engine, which needs the compiled binary "
+                        f"{_gethkl} — not present. The maintained pip midas-suite env "
+                        f"ships no compiled binaries by design."),
+                    "fix": ("Re-run with calibration_engine=\"v2\" (midas-calibrate-v2 "
+                            "reads HDF5 directly via h5py and is a pip console script). "
+                            "If you must use the C++ engine, point MIDAS_PATH at a built "
+                            "MIDAS checkout and set APEXA_FORCE_LEGACY_MIDAS=1."),
+                    "nothing_was_run": True,
+                    "image": str(image_path),
+                })
         result = None
         engine_used = None
 

@@ -1123,13 +1123,17 @@ async def check_environment() -> str:
 # SECTION 3: X-RAY UTILITIES & CALCULATIONS (using xrayutilities)
 # =============================================================================
 
-# Canonical Planck constant × c for E[keV] <-> lambda[Å]:  lambda = HC / E.
-# This exact value is the beamline's own energy2lambda script constant
-# (AC, cchuang@anl.gov, 2025-04-10) and agrees with xrayutilities.en2lam to
-# 7 significant figures. Pinned here as the SINGLE source of truth so any
-# wavelength APEXA derives (e.g. the calibration --wavelength) equals the
-# beamline's other tools exactly, rather than a model-computed approximation.
-HC_KEV_ANGSTROM = 12.398419057638671
+# E[keV] <-> lambda[Å] is NOT computed here. `apexa_units` is the single source
+# of truth for every conversion in APEXA (xrayutilities.en2lam/lam2en when
+# importable, CODATA-2018 h·c = 12.39841984332 keV·Å as the subprocess fallback).
+#
+# This file previously pinned its own HC = 12.398419057638671 — the beamline's
+# energy2lambda script constant (AC, cchuang@anl.gov, 2025-04-10). It sat 63 ppb
+# below CODATA, i.e. ~1e-8 Å at 63 keV: physically irrelevant against a ~1e-4
+# Lsd refinement, but it meant two "single sources of truth" disagreed. Keeping
+# the beamline value would also have pinned APEXA *below* xrayutilities, which
+# downstream tools report against. Import, never re-derive.
+from apexa_units import kev_to_angstrom, angstrom_to_kev, backend as _units_backend
 
 # Element K-edge energies (keV) for edge-tuned runs. Source: the same beamline
 # energy2lambda script. Used ONLY when a run is deliberately tuned to an element's
@@ -1143,13 +1147,13 @@ ELEMENT_EDGE_KEV = {
 
 
 def _lambda_from_energy_kev(energy_kev: float) -> float:
-    """Wavelength in Å from energy in keV using the canonical beamline constant."""
-    return HC_KEV_ANGSTROM / energy_kev
+    """Wavelength in Å from energy in keV. Delegates to `apexa_units`."""
+    return kev_to_angstrom(energy_kev)
 
 
 def _energy_kev_from_lambda(wavelength_angstroms: float) -> float:
-    """Energy in keV from wavelength in Å using the canonical beamline constant."""
-    return HC_KEV_ANGSTROM / wavelength_angstroms
+    """Energy in keV from wavelength in Å. Delegates to `apexa_units`."""
+    return angstrom_to_kev(wavelength_angstroms)
 
 
 @mcp.tool()
@@ -1185,9 +1189,11 @@ async def xray_calculate(
     - "strain": Calculate strain from measured and reference d-spacings
     - "list_materials": List available materials in xrayutilities
 
-    NOTE: energy<->wavelength uses the beamline's canonical constant
-    (lambda = 12.398419057638671 / E[keV]). ALWAYS derive a calibration/FF
-    wavelength through this tool — do not hand-compute it.
+    NOTE: energy<->wavelength is delegated to `apexa_units` — the single source
+    of truth for the whole of APEXA (xrayutilities.en2lam/lam2en, falling back to
+    CODATA-2018 h·c = 12.39841984332 keV·Å in subprocesses without xrayutilities).
+    ALWAYS derive a calibration/FF wavelength through this tool — do not
+    hand-compute it, and do not re-derive it from a constant of your own.
 
     Args:
         calculation_type: Type of calculation (see above)
@@ -1329,13 +1335,13 @@ async def xray_calculate(
             if energy_kev is None:
                 return format_result({"error": "energy_kev or element required"})
 
-            # Canonical beamline constant (matches xrayutilities.en2lam to 7 figs).
             wavelength = _lambda_from_energy_kev(energy_kev)
 
             _out = {
                 "tool": "xray_calculate",
                 "calculation": "energy_to_wavelength",
-                "constant": "lambda = 12.398419057638671 / E[keV] (beamline energy2lambda)",
+                "constant": f"lambda = hc / E[keV] via apexa_units "
+                            f"(backend: {_units_backend()})",
                 "inputs": {"energy_kev": energy_kev,
                            **({"element": element} if element else {})},
                 "result": {
@@ -1352,13 +1358,13 @@ async def xray_calculate(
             if wavelength_angstroms is None:
                 return format_result({"error": "wavelength_angstroms required"})
 
-            # Canonical beamline constant (matches xrayutilities.lam2en to 7 figs).
             energy_kev = _energy_kev_from_lambda(wavelength_angstroms)
 
             return format_result({
                 "tool": "xray_calculate",
                 "calculation": "wavelength_to_energy",
-                "constant": "E[keV] = 12.398419057638671 / lambda[Å] (beamline energy2lambda)",
+                "constant": f"E[keV] = hc / lambda[Å] via apexa_units "
+                            f"(backend: {_units_backend()})",
                 "inputs": {"wavelength_angstroms": wavelength_angstroms},
                 "result": {
                     "energy_kev": round(energy_kev, 6),
