@@ -237,6 +237,22 @@ if {fmthint!r}: kw["fmthint"] = {fmthint!r}
 s = refine_one(data_path={data_file!r}, cif_paths={cif_files!r},
                output_dir={output_dir!r}, instprm_path={instprm_file!r},
                config=cfg, **kw)
+
+# What the run declined to touch, and on whose authority. A refinement
+# that silently omits a parameter cannot be told apart from one that
+# never considered it, so the policy is reported beside the result.
+try:
+    from agentic_gsas2.experiment import CITATION
+    offered = list(cfg.structure.instprm_parameters)
+    reasons = {{"Z": CITATION["profile"], "Zero": CITATION["zero"],
+               "X": CITATION["broadening"], "Y": CITATION["broadening"],
+               "SH/L": CITATION["profile"]}}
+    s["instrument_policy"] = {{
+        "refined": offered,
+        "withheld": {{k: v for k, v in reasons.items() if k not in offered}},
+    }}
+except Exception:
+    pass
 print(json.dumps(s, default=str))
 """
     out = _run_python(code, timeout=1800)
@@ -251,8 +267,13 @@ print(json.dumps(s, default=str))
         "phases": out.get("phases"),
         "output_dir": output_dir,
         "trust": verdict,
+        "instrument_policy": out.get("instrument_policy"),
     }
     if return_trace:
+        # Each step carries both the parameter ComputeWorstFit ranked
+        # and the terms actually released, which differ for the grouped
+        # categories: a step logged against ":0:Zero" may have refined
+        # U, V and W and left Zero fixed.
         payload["decision_trace"] = out.get("history")
     return format_result(payload)
 
@@ -264,6 +285,8 @@ async def propose_structures(
     top_n: int = 3,
     wavelength_A: float = 1.5406,
     out_dir: str = "cod_candidates",
+    fmthint: Optional[str] = None,
+    instprm_file: Optional[str] = None,
 ) -> str:
     """Find candidate structures for a pattern when you have no CIF.
 
@@ -278,10 +301,16 @@ async def propose_structures(
 
     Args:
         data_file: powder pattern, two columns or any format numpy loads.
+            For a GSAS legacy file (.XRA, .CWN, .fxye) pass fmthint too.
         text: what the sample is thought to be, e.g. a phase or mineral name.
         top_n: how many candidates to fetch.
         wavelength_A: wavelength of the measurement.
         out_dir: where the retrieved CIFs are written.
+        fmthint: GSAS-II reader hint, as for refine_pattern. Pass "GSAS"
+            for the legacy formats; leave unset for two-column text.
+        instprm_file: instrument parameter file, used only when fmthint
+            is given, because the GSAS-II reader wants one to load a
+            histogram.
 
     Returns JSON: ranked candidates with COD id, space group, cell, M20
     and the local CIF path for each.
@@ -291,8 +320,25 @@ import json, sys
 import numpy as np
 sys.path.insert(0, {DEFAULT_AGENTIC_REPO!r})
 from agentic_gsas2.cod import propose_structures
-d = np.loadtxt({data_file!r})
-x, y = d[:, 0], d[:, 1]
+# A GSAS legacy file (.XRA, .CWN, .fxye) has a text header that
+# np.loadtxt cannot parse -- it dies on "could not convert string
+# 'CPD' to float64". With a fmthint, hand it to the GSAS-II reader
+# instead, which is the same path refine_pattern takes. No phase is
+# needed just to read the pattern.
+if {fmthint!r}:
+    from agentic_gsas2.project import Project, HistogramSpec
+    import tempfile
+    from pathlib import Path
+    _scratch = Path(tempfile.mkdtemp())
+    _spec = HistogramSpec(data_path={data_file!r},
+                          instprm_path={instprm_file!r},
+                          limits=None, fmthint={fmthint!r})
+    _pat = Project.single_histogram(
+        _spec, [], _scratch / "read.gpx").pattern(0)
+    x, y = np.asarray(_pat["x"]), np.asarray(_pat["yobs"])
+else:
+    d = np.loadtxt({data_file!r})
+    x, y = d[:, 0], d[:, 1]
 c = propose_structures(x, y, {wavelength_A!r}, text={text!r},
                        top_n={top_n!r}, out_dir={out_dir!r})
 print(json.dumps({{"status": "success", "candidates": [
