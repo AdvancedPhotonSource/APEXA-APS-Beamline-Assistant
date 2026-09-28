@@ -35,7 +35,10 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     env:
-      MIDAS_DIR: ${{ runner.temp }}/MIDAS
+      # NOT ${{ runner.temp }}: the `runner` context does not exist in job-level
+      # env, so GitHub rejects the whole file at validation time -- the job never
+      # starts and every push logs a 0s "workflow file issue" failure.
+      MIDAS_DIR: ${{ github.workspace }}/../MIDAS
       SYNC_BRANCH: auto/midas-capsule-sync
     steps:
       - name: Check out APEXA
