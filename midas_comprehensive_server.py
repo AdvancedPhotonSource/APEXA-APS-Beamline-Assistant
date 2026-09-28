@@ -5625,6 +5625,27 @@ async def midas_auto_calibrate(
         if str(calibration_engine).lower() == "v2" and not _resolved_wl:
             print("[engine] v2 calibration needs a wavelength but none resolved; "
                   "falling back to v1 engine.", file=sys.stderr)
+        # image_transform (ImTransOpt) is applied only on the v1/legacy path,
+        # which builds a -ImTransOpt CLI argument. The v2 branch below returns
+        # before that code, so on v2 the parameter was accepted and SILENTLY
+        # DROPPED: an operator passing ImTransOpt=2 got a byte-identical result
+        # and no message. That is exactly the failure class this system exists to
+        # prevent, so say it out loud rather than let a null test look like a
+        # negative result (observed at 20-ID, 2026-09-28).
+        if (str(calibration_engine).lower() == "v2" and image_transform
+                and str(image_transform).strip() not in ("", "0")):
+            return format_result({
+                "tool": "midas_auto_calibrate", "status": "error",
+                "error": "image_transform is not supported by the v2 engine",
+                "detail": (f"image_transform={image_transform!r} was requested, but the v2 "
+                           "differentiable engine does not apply ImTransOpt -- it would have "
+                           "been ignored and the result would look like a valid negative test."),
+                "fix": ("Run this calibration with calibration_engine=\"v1\", which passes "
+                        "-ImTransOpt to AutoCalibrateZarr, or place ImTransOpt in a "
+                        "parameters.txt beside the image."),
+                "nothing_was_run": True, "image": str(image_path),
+            })
+
         if str(calibration_engine).lower() == "v2" and _resolved_wl:
             _v2_out = (Path(output_dir).expanduser().absolute()
                        if output_dir else image_path.parent)
@@ -5713,12 +5734,44 @@ out={"engine":"pip-v2:midas_calibrate_v2","Lsd_um":res.Lsd,"BC_y":res.BC_y,
      "residual_corr_bin_path":getattr(res,"residual_corr_bin_path",None)}
 print("APEXA_V2_RESULT="+json.dumps(out))
 '''
-            # v2 (midas_calibrate_v2) ships in the pip midas-suite installed in
-            # THIS interpreter's env (the APEXA .venv) — NOT in the conda MIDAS
-            # env that find_midas_python() returns (that one only carries the
-            # C++ deps: zarr/diplib/numba/...). Running v2 under conda →
-            # ModuleNotFoundError every time. Use sys.executable (the .venv).
+            # Which interpreter runs v2 decides which midas-calibrate-v2 does the
+            # science, and they can differ by many releases on the same host.
+            #
+            # Default is sys.executable (the APEXA .venv): v2 needs the pip
+            # midas-suite + torch, which the conda MIDAS env from
+            # find_midas_python() does not carry (it holds only the C++ deps:
+            # zarr/diplib/numba), so running v2 there is ModuleNotFoundError.
+            #
+            # But APEXA's .venv installs from uv.lock, which can be far behind the
+            # maintained shared env. Measured on copland 2026-09-28: the .venv had
+            # midas-calibrate-v2 0.5.3 while /home/beams12/S1IDUSER/opt/envs/midas
+            # had 0.22.0 -- and 0.5.3 is below the < 0.16.0 RhoD defect the
+            # calibrate-integrate capsule documents. The operator gate-checked the
+            # shared env and the calibration then silently ran on the stale one.
+            #
+            # So prefer APEXA_MIDAS_BIN's interpreter when it can actually import
+            # v2, and say which one was chosen. Probe-guarded, falls back to the
+            # .venv, so an unset or broken APEXA_MIDAS_BIN changes nothing.
             midas_python = sys.executable
+            _pip_bin = os.environ.get("APEXA_MIDAS_BIN", "").strip()
+            if _pip_bin:
+                _cand = str(Path(_pip_bin) / "python")
+                try:
+                    if subprocess.run([_cand, "-c", "import midas_calibrate_v2"],
+                                      capture_output=True, text=True,
+                                      timeout=60).returncode == 0:
+                        midas_python = _cand
+                except Exception:
+                    pass
+            try:
+                _ver = subprocess.run(
+                    [midas_python, "-c",
+                     "import importlib.metadata as m;print(m.version('midas-calibrate-v2'))"],
+                    capture_output=True, text=True, timeout=60).stdout.strip()
+            except Exception:
+                _ver = "?"
+            print(f"[engine] v2 interpreter: {midas_python} "
+                  f"(midas-calibrate-v2 {_ver or '?'})", file=sys.stderr)
             # Probe importability first so a missing/old pip package yields one
             # clean line instead of dumping a traceback on every calibration.
             try:
