@@ -1,25 +1,54 @@
 """V2 refinement driver: NaN-safe + dict-aware cell + NIST starting CIF.
 
-Run inside the GSASII conda env (which has GSASII installed) with no extra deps.
-
 Usage:
-    conda run -n GSASII python refine_v2.py <detector_name>
+    python refine_v2.py <detector_name>
 
-Where detector_name is one of: varex_distortion, varex_aero, pilatus, ge.
+detector_name is one of: varex_distortion, varex_aero, pilatus, ge.
+
+Requires GSAS-II and MIDAS's gsas_ii_refine to be importable. If they are not on
+PYTHONPATH, point at them with:
+    GSASII_PATH=/path/to/GSAS-II      # dir containing the GSASII package
+    MIDAS_PATH=/path/to/MIDAS         # module is read from $MIDAS_PATH/utils
+
+Inputs, resolved relative to this file:
+    <detector>/integration/*.caked.hdf.zarr.zip   integrated pattern
+    <detector>/refinement/instrument.instprm      GSAS-II instrument parameters
+    CeO2_NIST_5p41165.cif                         starting cell (NIST SRM 674b)
+
+The integrated patterns (~95 MB) are deposited with this paper's data release,
+MDF DOI 10.18126/tgg4-1m26, rather than in the source repository. They are also
+regenerable from MIDAS's bundled CeO2 example frames
+(MIDAS/FF_HEDM/Example/Calibration/) via the documented calibration and
+integration steps.
+
+Outputs <detector>/refinement_v2/{hist_NNNN.gpx,summary.json}.
 """
 import json
 import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/Users/b324240/miniconda3/envs/GSASII/GSAS-II")
-sys.path.insert(0, "/Users/b324240/Git/MIDAS/utils")
+# Paths come from the environment, never from this file. GSASII_PATH and
+# MIDAS_PATH are only needed when those packages are not already importable.
+for _var, _sub in (("GSASII_PATH", ""), ("MIDAS_PATH", "utils")):
+    _p = os.environ.get(_var, "").strip()
+    if _p:
+        sys.path.insert(0, str(Path(_p) / _sub) if _sub else _p)
 
 import numpy as np
-import GSASII.GSASIIscriptable as G2sc
-from gsas_ii_refine import _open_zarr, build_refinement_recipe
+try:
+    import GSASII.GSASIIscriptable as G2sc
+except ImportError:
+    sys.exit("GSAS-II not importable. Install it, or set GSASII_PATH to the "
+             "directory containing the GSASII package.")
+try:
+    from gsas_ii_refine import _open_zarr, build_refinement_recipe
+except ImportError:
+    sys.exit("gsas_ii_refine not importable. Set MIDAS_PATH to your MIDAS "
+             "checkout (the module lives in $MIDAS_PATH/utils).")
 
-ROOT = Path("/Users/b324240/Git/beamline-assistant-dev/benchmark/detector_zoo")
+# This script lives in detector_zoo/, so the data root is its own directory.
+ROOT = Path(__file__).resolve().parent
 CIF = ROOT / "CeO2_NIST_5p41165.cif"
 
 CONFIG = {

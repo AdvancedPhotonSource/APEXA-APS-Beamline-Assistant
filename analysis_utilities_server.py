@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 import numpy as np
 import logging
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 # Suppress verbose MCP server logging
 logging.getLogger("mcp").setLevel(logging.WARNING)
@@ -27,7 +27,7 @@ logging.getLogger("fastmcp").setLevel(logging.WARNING)
 # INITIALIZATION
 # =============================================================================
 
-mcp = FastMCP("Analysis Utilities")
+mcp = MCPServer("Analysis Utilities")
 
 # Try to import optional dependencies
 try:

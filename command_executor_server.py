@@ -6,14 +6,14 @@ import platform
 import shutil
 import logging
 from pathlib import Path
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 # Suppress verbose MCP server logging
 logging.getLogger("mcp").setLevel(logging.WARNING)
 logging.getLogger("fastmcp").setLevel(logging.WARNING)
 
-# Initialize FastMCP server
-mcp = FastMCP("command-executor")
+# Initialize MCPServer server
+mcp = MCPServer("command-executor")
 
 # Allowed commands for security
 ALLOWED_COMMANDS = {
@@ -137,5 +137,5 @@ async def find_executable(program: str) -> str:
         return f"Error finding executable: {str(e)}"
 
 if __name__ == "__main__":
-    print("Starting Command Executor FastMCP Server...", file=sys.stderr)
+    print("Starting Command Executor MCPServer Server...", file=sys.stderr)
     mcp.run(transport='stdio')

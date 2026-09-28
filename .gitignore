@@ -218,6 +218,11 @@ benchmark/detector_zoo/ge/
 benchmark/detector_zoo/pilatus/
 benchmark/detector_zoo/varex_aero/
 benchmark/detector_zoo/varex_distortion/
+# ...but ship the GSAS-II instrument parameters (208 B each). refine_v2.py needs
+# them and they cannot be derived from the released frames; the ~95 MB integrated
+# patterns stay out and are regenerable via the documented calibrate+integrate path.
+!benchmark/detector_zoo/*/refinement/
+!benchmark/detector_zoo/*/refinement/instrument.instprm
 benchmark/results/day2/
 benchmark/results/smoke_*/
 benchmark/results/*.json

@@ -31,12 +31,12 @@ import time
 import logging
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 logging.getLogger("mcp").setLevel(logging.WARNING)
 logging.getLogger("fastmcp").setLevel(logging.WARNING)
 
-mcp = FastMCP("epics-motor")
+mcp = MCPServer("epics-motor")
 
 # Default IOC prefix — used when the model omits prefix from tool calls.
 # Override with EPICS_MOTOR_PREFIX env var for different beamlines.
