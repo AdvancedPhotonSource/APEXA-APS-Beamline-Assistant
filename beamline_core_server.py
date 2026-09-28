@@ -31,7 +31,7 @@ import platform
 import shutil
 import numpy as np
 import logging
-from mcp.server.mcpserver import MCPServer
+from mcp.server.fastmcp import FastMCP
 
 from apexa_remote_exec import remote_run, ssh_hint
 
@@ -43,7 +43,7 @@ logging.getLogger("fastmcp").setLevel(logging.WARNING)
 # INITIALIZATION
 # =============================================================================
 
-mcp = MCPServer("beamline-core")
+mcp = FastMCP("beamline-core")
 
 # Try to import X-ray utilities (domain-specific package)
 try:

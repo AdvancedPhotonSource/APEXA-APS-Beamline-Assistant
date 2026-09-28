@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 import subprocess
 import logging
-from mcp.server.mcpserver import MCPServer
+from mcp.server.fastmcp import FastMCP
 
 # Suppress verbose MCP server logging
 logging.getLogger("mcp").setLevel(logging.WARNING)
@@ -64,8 +64,8 @@ def find_gsas2_installation() -> Optional[Path]:
 GSAS2_ROOT = find_gsas2_installation()
 GSAS2_AVAILABLE = GSAS2_ROOT is not None
 
-# Initialize MCPServer server
-mcp = MCPServer("gsas2-analysis")
+# Initialize FastMCP server
+mcp = FastMCP("gsas2-analysis")
 
 # =============================================================================
 # HELPER FUNCTIONS

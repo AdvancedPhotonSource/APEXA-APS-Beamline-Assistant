@@ -165,7 +165,7 @@ def idempotent(
         resume_keys: kwargs whose non-empty value means "deliberate resume" →
                      bypass the guard entirely.
 
-    Place BELOW ``@mcp.tool()`` so MCPServer registers the wrapper; ``functools.wraps``
+    Place BELOW ``@mcp.tool()`` so FastMCP registers the wrapper; ``functools.wraps``
     exposes the wrapped signature via ``__wrapped__`` so schema introspection is
     unaffected.
     """

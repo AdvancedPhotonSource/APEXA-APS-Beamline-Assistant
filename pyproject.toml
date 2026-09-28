@@ -7,7 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     # Core
     "httpx>=0.28.1",
-    "mcp>=2.2.0",
+    "mcp>=1.14.1",
     # OpenAI-compatible transport (argo-proxy). Gives APEXA structured
     # multi-turn tool calling — role:"tool" + tool_call_id — which Argo
     # /chat/ cannot carry. See apexa_provider_openai.py.

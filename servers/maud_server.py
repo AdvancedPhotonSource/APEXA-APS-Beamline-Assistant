@@ -21,7 +21,7 @@ import json
 import logging
 import sys
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.fastmcp import FastMCP
 
 from apexa_engines import find_maud_installation, maud_install_hint
 
@@ -29,7 +29,7 @@ from apexa_engines import find_maud_installation, maud_install_hint
 logging.getLogger("mcp").setLevel(logging.WARNING)
 logging.getLogger("fastmcp").setLevel(logging.WARNING)
 
-mcp = MCPServer("maud-analysis")
+mcp = FastMCP("maud-analysis")
 
 
 @mcp.tool()

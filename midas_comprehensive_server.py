@@ -20,7 +20,7 @@ import shlex
 import asyncio
 import logging
 import traceback
-from mcp.server.mcpserver import MCPServer
+from mcp.server.fastmcp import FastMCP
 from _idempotency import idempotent  # skip-if-done guard for heavy tools (Phase 0)
 from apexa_remote_exec import (
     decide_exec_host, remote_run, remote_exists, remote_read_text,
@@ -448,8 +448,8 @@ for path in [MIDAS_UTILS, MIDAS_FF_V7, MIDAS_NF_V7]:
     if path.exists():
         sys.path.insert(0, str(path))
 
-# Initialize MCPServer server
-mcp = MCPServer("midas-comprehensive-analysis")
+# Initialize FastMCP server
+mcp = FastMCP("midas-comprehensive-analysis")
 
 # =============================================================================
 # DEPENDENCY IMPORTS

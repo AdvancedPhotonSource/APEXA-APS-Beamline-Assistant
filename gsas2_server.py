@@ -40,14 +40,14 @@ from pathlib import Path
 
 import logging
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.fastmcp import FastMCP
 from _idempotency import idempotent  # skip-if-done guard for heavy tools
 
 logging.getLogger("mcp").setLevel(logging.WARNING)
 logging.getLogger("fastmcp").setLevel(logging.WARNING)
 logger = logging.getLogger("gsas2_server")
 
-mcp = MCPServer("Agentic GSAS-II")
+mcp = FastMCP("Agentic GSAS-II")
 
 # ---------------------------------------------------------------------------
 # Environment
