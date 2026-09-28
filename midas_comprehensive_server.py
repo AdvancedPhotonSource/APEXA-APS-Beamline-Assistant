@@ -3579,6 +3579,11 @@ def _resolve_image_transform(image_path: Path, user_arg: str,
     diagnostics ("user" / "params" / "sibling" / "default-warned").
     """
     if user_arg:
+        # Every other branch below announces what it picked; this one did not, so
+        # the single case where the operator explicitly set ImTransOpt was the one
+        # case with no confirmation in the log -- exactly when you most want it,
+        # since a wrong transform produces a converged, wrong geometry.
+        print(f"  ImTransOpt={user_arg.strip()} (explicit, from the caller)", file=sys.stderr)
         return user_arg.strip(), "user"
 
     # Check the explicit params file we're about to use
