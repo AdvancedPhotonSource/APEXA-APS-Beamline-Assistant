@@ -58,7 +58,9 @@ def test_nf_argbuild_sanitize_and_counts(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     # midas-nf-pipeline must appear "installed" for the tool to proceed.
-    monkeypatch.setattr(shutil, "which", lambda _n: "/usr/bin/midas-nf-pipeline")
+    # accepts path= : production resolves MIDAS CLIs through midas_search_path()
+    monkeypatch.setattr(shutil, "which",
+                        lambda _n, path=None: "/usr/bin/midas-nf-pipeline")
 
     with tempfile.TemporaryDirectory() as d:
         # Param file WITH an inline comment (the crash trigger).
@@ -116,7 +118,9 @@ def test_nf_no_sanitize_when_no_inline_comments(monkeypatch):
     captured = {}
     monkeypatch.setattr(subprocess, "run",
                         lambda cmd, *a, **kw: captured.setdefault("cmd", cmd) or _FakeCompleted())
-    monkeypatch.setattr(shutil, "which", lambda _n: "/usr/bin/midas-nf-pipeline")
+    # accepts path= : production resolves MIDAS CLIs through midas_search_path()
+    monkeypatch.setattr(shutil, "which",
+                        lambda _n, path=None: "/usr/bin/midas-nf-pipeline")
 
     with tempfile.TemporaryDirectory() as d:
         param = os.path.join(d, "ps.txt")

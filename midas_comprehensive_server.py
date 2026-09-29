@@ -442,7 +442,12 @@ def _resolve_detector_preset(name_or_alias: str):
 
 _autocal_script = MIDAS_UTILS / "AutoCalibrateZarr.py"
 if not _autocal_script.exists():
-    print(f"⚠ AutoCalibrateZarr.py not found at {_autocal_script} — calibration unavailable", file=sys.stderr)
+    # Not fatal: only the legacy engine uses this script. The canonical v2 recipe,
+    # the in-process native engine and the pip console script all run from the pip
+    # midas-suite with no repo clone.
+    print(f"  AutoCalibrateZarr.py not found at {_autocal_script} — the legacy "
+          f"calibration engine is unavailable; the pip engines are unaffected",
+          file=sys.stderr)
 
 # Add MIDAS Python modules to path
 for path in [MIDAS_UTILS, MIDAS_FF_V7, MIDAS_NF_V7]:
@@ -1265,7 +1270,7 @@ async def run_ff_hedm_full_workflow(
             # local .venv's midas-pipeline is the wrong binary for a remote run.
             _pipeline_bin = "midas-pipeline"
         else:
-            _pipeline_bin = _shutil.which("midas-pipeline")
+            _pipeline_bin = _shutil.which("midas-pipeline", path=midas_search_path())
             if not _pipeline_bin:
                 return format_result({
                     "tool": "run_ff_hedm_full_workflow",
@@ -1555,7 +1560,7 @@ async def calibrate_ring_thresholds(
             # sys.executable -c invocation. Same rule as midas_auto_calibrate (v2) and
             # _find_midas_params_cli.
             venv_rt = Path(sys.executable).parent / "midas-ring-thresh"
-            path_rt = _shutil.which("midas-ring-thresh")
+            path_rt = _shutil.which("midas-ring-thresh", path=midas_search_path())
             if venv_rt.exists():
                 cmd = [str(venv_rt), zpath, "--result-folder", rf, "--n-frames", str(n_frames)]
             elif path_rt:
@@ -1685,7 +1690,7 @@ async def run_pf_hedm_workflow(
             return format_result({"tool": "run_pf_hedm_workflow",
                                   "status": "error", "error": param_path})
 
-        _pipeline_bin = _shutil.which("midas-pipeline")
+        _pipeline_bin = _shutil.which("midas-pipeline", path=midas_search_path())
         if not _pipeline_bin:
             return format_result({
                 "tool": "run_pf_hedm_workflow",
@@ -1810,7 +1815,7 @@ async def run_ff_calibration(
         # tilt/BC/Lsd refinement + panel shifts + outlier-ring rejection in one
         # call. `fit_tilt`/`fit_panel_shifts` are now always-on inside the engine
         # and kept only for backward-compatible signatures.
-        autocal_cli = _shutil.which("midas-autocalibrate")
+        autocal_cli = _shutil.which("midas-autocalibrate", path=midas_search_path())
         if autocal_cli:
             cmd = [autocal_cli, param_path]
             cmd_str = " ".join(cmd)
@@ -2053,7 +2058,7 @@ async def run_nf_hedm_reconstruction(
             return format_result({"tool": "run_nf_hedm_reconstruction",
                                   "status": "error", "error": param_path})
 
-        _nf_bin = _shutil.which("midas-nf-pipeline")
+        _nf_bin = _shutil.which("midas-nf-pipeline", path=midas_search_path())
         if not _nf_bin:
             return format_result({
                 "tool": "run_nf_hedm_reconstruction",
@@ -2262,7 +2267,7 @@ async def refine_nf_parameters(
             return format_result({"tool": "refine_nf_parameters",
                                   "status": "error", "error": ppath})
 
-        nf_bin = _shutil.which("midas-nf-pipeline")
+        nf_bin = _shutil.which("midas-nf-pipeline", path=midas_search_path())
         if nf_bin:
             cmd = [nf_bin, "refine-params", ppath]
         else:
@@ -2808,7 +2813,7 @@ async def extract_grain_centroids(
         # mic2grains needs a NF parameter file: paramFN micFile outFile
         # [doNeighborSearch] [nCPUs] [minConfOverride] — auto-detect a sibling.
         import shutil as _shutil
-        nf_cli = _shutil.which("midas-nf-pipeline")
+        nf_cli = _shutil.which("midas-nf-pipeline", path=midas_search_path())
         legacy_bin = MIDAS_BIN / "NFGrainCentroids"
         if nf_cli and not legacy_bin.exists():
             nf_param = None
@@ -3278,7 +3283,7 @@ async def validate_midas_installation(
             import shutil as _sh
             for cli in ("midas-pipeline", "midas-autocalibrate",
                         "midas-integrate", "midas-calibrate"):
-                validation[f"cli_{cli.replace('-', '_')}"] = bool(_sh.which(cli))
+                validation[f"cli_{cli.replace('-', '_')}"] = bool(_sh.which(cli, path=midas_search_path()))
         except Exception as _ne:
             validation["native_packages"] = {"error": str(_ne)}
 
@@ -5552,42 +5557,15 @@ async def midas_auto_calibrate(
                 print("[engine] falling back to subprocess (AutoCalibrateZarr.py)",
                       file=sys.stderr)
 
-        # Locate AutoCalibrateZarr.py
-        # Note: We don't check MIDAS_AVAILABLE here because that only checks for
-        # pyFAI/fabio dependencies, not MIDAS executables. AutoCalibrateZarr.py
-        # has its own dependencies managed within the MIDAS environment.
+        # AutoCalibrateZarr.py is the LEGACY engine's driver and needs a MIDAS
+        # repo clone. Only the legacy path uses it -- canonical v2, the in-process
+        # native engine and the pip console script all run from the pip midas-suite
+        # with no clone at all. This check used to run here, unconditionally, and
+        # early-return -- so on a pip-only host (the deployment MIDAS now specifies:
+        # "no repo clone needed") calibration was refused outright even though the
+        # engine that would have run needs nothing from the clone. Deferred to the
+        # legacy branch, where it is actually a precondition.
         autocal_script = MIDAS_ROOT / "utils" / "AutoCalibrateZarr.py"
-        print(f"✓ Checking for AutoCalibrateZarr.py at: {autocal_script}", file=sys.stderr)
-        if not autocal_script.exists():
-            # Provide diagnostic information about what was found
-            utils_dir = MIDAS_ROOT / "utils"
-            utils_exists = utils_dir.exists()
-
-            diagnostic_info = f"MIDAS_ROOT detected: {MIDAS_ROOT}\n"
-            diagnostic_info += f"utils/ directory exists: {utils_exists}\n"
-
-            if utils_exists:
-                try:
-                    utils_contents = [f.name for f in utils_dir.iterdir() if f.name.endswith('.py')][:10]
-                    diagnostic_info += f"Python files in utils/: {', '.join(utils_contents) if utils_contents else 'none'}\n"
-                except:
-                    diagnostic_info += "Could not list utils/ contents\n"
-
-            # Check for alternative locations
-            alt_locations = []
-            for name in ["AutoCalibrateZarr.py", "deprecated_AutoCalibrate.py", "AutoCalibrate.py"]:
-                script_path = MIDAS_ROOT / "utils" / name
-                if script_path.exists():
-                    alt_locations.append(str(script_path))
-
-            if alt_locations:
-                diagnostic_info += f"\nFound alternative scripts:\n  " + "\n  ".join(alt_locations)
-
-            return format_result({
-                "tool": "midas_auto_calibrate",
-                "status": "error",
-                "error": f"AutoCalibrateZarr.py not found at expected location: {autocal_script}\n\n{diagnostic_info}\n\nTo fix:\n1. Set MIDAS_PATH environment variable to your MIDAS installation\n2. Ensure AutoCalibrateZarr.py exists in MIDAS/utils/\n3. Use a recent MIDAS version from https://github.com/marinerhemant/MIDAS"
-            })
 
         # Expand paths
         image_path = Path(image_file).expanduser().absolute()
@@ -6146,6 +6124,24 @@ async def midas_auto_calibrate(
 
         # Build command with all parameters according to MIDAS manual
         # Use MIDAS Python (conda midas_env) instead of current Python (UV)
+        if not autocal_script.exists():
+            _utils = MIDAS_ROOT / "utils"
+            _alts = [str(_utils / n) for n in
+                     ("AutoCalibrateZarr.py", "deprecated_AutoCalibrate.py",
+                      "AutoCalibrate.py") if (_utils / n).exists()]
+            return format_result({
+                "tool": "midas_auto_calibrate", "status": "error",
+                "error": (f"the legacy engine needs AutoCalibrateZarr.py, which is not "
+                          f"at {autocal_script}. MIDAS_ROOT={MIDAS_ROOT}, "
+                          f"utils/ exists={_utils.exists()}."),
+                "alternatives_found": _alts,
+                "nothing_was_run": True,
+                "fix": ("The legacy engine is the only one that needs a MIDAS repo "
+                        "clone. Prefer the canonical engine, which does not: set "
+                        "APEXA_MIDAS_BIN to the pip midas-suite environment's bin/ "
+                        "and use calibration_engine=\"auto\" (or \"v2\"). To keep "
+                        "using the legacy path, set MIDAS_PATH to a MIDAS checkout."),
+            })
         midas_python = find_midas_python()
         cmd = [
             midas_python,
@@ -6731,7 +6727,7 @@ def _batch_integrate_v2_python(frames, params_file, dark_file, out_dir,
     can fall back to the legacy C++ integrator. PyTorch — slow on CPU at scale.
     """
     import shutil as _sh
-    cli = _sh.which("midas-integrate-v2")
+    cli = _sh.which("midas-integrate-v2", path=midas_search_path())
     if not cli:
         raise RuntimeError("midas-integrate-v2 not found (pip midas-suite)")
     out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
@@ -6878,7 +6874,7 @@ async def midas_batch_integrate(
         # integrator below (which also handles mixed dirs). Slow on CPU at scale.
         import shutil as _sh2
         _force_legacy = os.environ.get("APEXA_FORCE_LEGACY_MIDAS") == "1"
-        if not _force_legacy and dark_file and _sh2.which("midas-integrate-v2"):
+        if not _force_legacy and dark_file and _sh2.which("midas-integrate-v2", path=midas_search_path()):
             try:
                 _df = Path(data_file)
                 if _df.is_dir():
@@ -6940,7 +6936,7 @@ async def midas_batch_integrate(
         # requested and the input is a stack; any dark subtraction or MIDAS
         # lineout/zarr (GSAS) need falls back to the legacy C++ integrator below.
         import shutil as _sh
-        _v2b = _sh.which("midas-integrate-v2-batch")
+        _v2b = _sh.which("midas-integrate-v2-batch", path=midas_search_path())
         _suffix = Path(data_file).suffix.lower()
         _is_stack = _suffix in (".zip", ".zarr", ".h5", ".hdf5")
         if _v2b and _is_stack and not dark_file and not bright_file:
@@ -9562,6 +9558,26 @@ def _resolve_param_file(path_str: str) -> tuple[bool, str]:
     return False, f"Path not found: {path}"
 
 
+def midas_bin_python() -> Optional[str]:
+    """The interpreter inside APEXA_MIDAS_BIN, when that is configured and real.
+
+    find_midas_python() probes for `zarr, diplib, numba, h5py, skimage` — the
+    dependency set of the legacy C++-era scripts. A modern pip `midas-suite`
+    environment has no diplib, so it FAILS that probe and every caller that falls
+    back to it lands on an interpreter without the MIDAS packages, reporting
+    "No Python with MIDAS dependencies found" on a host where MIDAS is installed
+    and working. Prefer the configured environment; fall back only after it.
+    """
+    _bin = os.environ.get("APEXA_MIDAS_BIN", "").strip()
+    if not _bin:
+        return None
+    for name in ("python", "python3"):
+        cand = Path(_bin) / name
+        if cand.exists():
+            return str(cand)
+    return None
+
+
 def _find_midas_params_cli() -> str:
     """Locate the midas-params console script.
 
@@ -9571,12 +9587,15 @@ def _find_midas_params_cli() -> str:
     conda-adjacent path for older layouts. Without this, _run_midas_params fell
     back to the conda python and raised ModuleNotFoundError: 'midas_params'."""
     import shutil as _sh
-    exe = _sh.which("midas-params")
+    exe = _sh.which("midas-params", path=midas_search_path())
     if exe:
         return exe
-    cli_path = str(Path(find_midas_python()).parent / "midas-params")
-    if Path(cli_path).exists():
-        return cli_path
+    for base in (midas_bin_python(), find_midas_python()):
+        if not base:
+            continue
+        cli_path = Path(base).parent / "midas-params"
+        if cli_path.exists():
+            return str(cli_path)
     return None
 
 
@@ -9584,7 +9603,7 @@ def _run_midas_params(subcommand_args: list, timeout: int = 60) -> dict:
     """Run a midas-params CLI subcommand and return parsed JSON output."""
     cli = _find_midas_params_cli()
     if cli is None:
-        midas_python = find_midas_python()
+        midas_python = midas_bin_python() or find_midas_python()
         cmd = [midas_python, "-c",
                "from midas_params.cli import main; import sys; sys.exit(main())",
                ] + subcommand_args

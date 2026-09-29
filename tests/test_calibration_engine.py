@@ -376,3 +376,26 @@ def test_canonical_block_guards_every_preset_lookup():
         assert "isinstance(" in after, (
             "a _resolve_detector_preset() result is used without an isinstance "
             "guard; a miss returns the known-key list, not a dict")
+
+
+def test_a_missing_legacy_script_does_not_block_the_pip_engines():
+    """AutoCalibrateZarr.py belongs to the LEGACY engine and needs a MIDAS repo
+    clone. The check used to run unconditionally and early-return, so on a
+    pip-only host -- the deployment MIDAS now specifies, "no repo clone needed" --
+    calibration was refused outright even though the engine that would have run
+    needs nothing from the clone.
+    """
+    src = open(M.__file__).read()
+    body_start = src.index("async def midas_auto_calibrate(")
+    body = src[body_start:src.index("\n@mcp.tool()", body_start)]
+
+    check = body.index("if not autocal_script.exists():")
+    engine = body.index('_eng = _choose_calibration_engine(')
+    assert check > engine, (
+        "the legacy-script precondition runs before the engine is chosen, so a "
+        "missing clone blocks the pip engines too")
+
+    # and when it does fire it must be honest about having run nothing
+    tail = body[check:check + 1400]
+    assert "nothing_was_run" in tail
+    assert "APEXA_MIDAS_BIN" in tail, "the refusal should name the way out"
