@@ -311,3 +311,38 @@ def test_read_param_value_finds_px_in_a_template(tmp_path):
     t.write_text("NrPixelsY 2880\npx 100.0\nWavelength 0.1968\n")
     assert float(M._read_param_value(t, "px")) == 100.0
     assert M._read_param_value(t, "NotThere") in (None, "", 0)
+
+
+# --------------------------------------------------------------------------- #
+# handbook rules come from the vendored manual, not from Python prose
+# --------------------------------------------------------------------------- #
+
+def test_handbook_rules_resolve_from_the_capsule():
+    """Rule text must come from knowledge_base/capsules/calibrate-integrate/
+    HARD_RULES.md, so a rule edited upstream changes what APEXA says on the next
+    sync rather than needing a code change."""
+    rules = M._calibration_handbook_rules([9, 12])
+    assert {r["n"] for r in rules} == {9, 12}
+    for r in rules:
+        assert r["source"].endswith("HARD_RULES.md")
+        assert r["rule"].strip()
+    # rule 9 is the lambda/Lsd degeneracy, 12 is RhoD in microns
+    by_n = {r["n"]: r["rule"] for r in rules}
+    assert "Lsd" in by_n[9]
+    assert "RhoD" in by_n[12]
+
+
+def test_handbook_rules_are_fail_open():
+    assert M._calibration_handbook_rules([]) == []
+    assert M._calibration_handbook_rules([9999]) == []
+
+
+def test_runner_does_not_restate_handbook_rule_prose():
+    """The runner should cite rule NUMBERS. Invented constants and paraphrased
+    thresholds are what this guards against -- the Lsd policy follows
+    midas_calibrate_v2's own initial_Lsd/tolLsd semantics, so no percentage
+    threshold or hand-picked window should appear."""
+    src = open(RUNNER).read()
+    assert "handbook_rule_refs" in src
+    for invented in ("relative_disagreement", "50000.0", "seed rejected"):
+        assert invented not in src, invented

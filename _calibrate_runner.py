@@ -113,12 +113,12 @@ def build_parser():
     p.add_argument("--min-ring-separation", type=float, default=0.0,
                    help="px; only meaningful with two calibrants")
     p.add_argument("--expected-lsd-um", type=float, default=0.0,
-                   help="recorded sample-to-detector distance (um). make_seed has no "
-                        "distance hint, so without this a ring-pattern alias can seed "
-                        "a false basin hundreds of mm away.")
+                   help="nominal sample-to-detector distance (um) — midas_calibrate_v2's "
+                        "initial_Lsd. Used as given. make_seed has no distance argument, "
+                        "so without this Lsd rests on ring-pattern inference alone.")
     p.add_argument("--lsd-tol-um", type=float, default=0.0,
-                   help="search half-window around Lsd (um). Default 50000 when an "
-                        "expected distance is given, else the template's tolLsd.")
+                   help="override the Lsd bound (um). Default: the template's tolLsd, "
+                        "which CalibrationParams sets to 15000.")
     p.add_argument("--trust-seed-lsd", action="store_true",
                    help="take the seeder's distance even when it disagrees with "
                         "--expected-lsd-um")
@@ -221,6 +221,12 @@ def main(argv=None):
     can_pass_mask = _accepts(autocalibrate_four_stage, "mask")
     can_frame_reduce = _accepts(read_image, "frame_reduce")
 
+    # Handbook rules this run touched, as NUMBERS. The text is not duplicated
+    # here: APEXA resolves them against the vendored calibrate-integrate
+    # HARD_RULES.md at report time, so a rule edited upstream changes what APEXA
+    # says without a code change.
+    rule_refs = set()
+
     caps = {
         "midas_calibrate_v2": v2_version,
         "read_image.return_mask": can_return_mask,
@@ -292,6 +298,7 @@ def main(argv=None):
                 img, bad_mask = read_image(args.image, return_mask=True, **read_kw)
             else:
                 img = read_image(args.image, **read_kw)
+                rule_refs.add(3)
                 notes.append(
                     f"midas_calibrate_v2 {v2_version} has no read_image(return_mask=); "
                     "sentinels handled by the handbook's img[img<0]=0 fallback only — "
@@ -384,6 +391,7 @@ def main(argv=None):
         "method": "make_seed",
         "notes": getattr(seed, "notes", ""),
     }
+    rule_refs.add(14)
     if seed_info["threshold_rung"] > 0:
         notes.append(
             f"make_seed relaxed its threshold to rung {seed_info['threshold_rung']} — "
@@ -391,43 +399,43 @@ def main(argv=None):
             "fits noise; treat this geometry as provisional and check a ring overlay.")
 
     # ---- the recipe: start from scratch, never from an existing block ---------------
-    # BC always comes from the seed -- it genuinely has to be found. Lsd is
-    # different: it is a RECORDED instrument setting, and make_seed has no distance
-    # hint, so it infers the distance from ring radii alone. When the ring pattern
-    # aliases, the seeder lands in a false basin and the fit happily refines inside
-    # it: measured at 20-ID, a 900 mm setup seeded 595 mm and refined to 1617 ue,
-    # while the same frame given the distance reached 894 mm. Hard rule 9's lever is
-    # exactly this -- tie Lsd to a recorded distance.
+    # Lsd follows midas_calibrate_v2's own `initial_Lsd` semantics: a supplied
+    # nominal distance is USED, not weighed against the seeder. Upstream states it
+    # at pipelines/auto.py:385 -- "initial_Lsd -- nominal sample-to-detector
+    # distance (um)" -- and goes further, bypassing the auto-seed entirely when
+    # BC_guess and initial_Lsd are both given. There is no compare-to-seed rule
+    # anywhere in the package, so there is none here.
+    #
+    # It matters because make_seed takes no distance argument at all: it infers Lsd
+    # from ring radii, and an aliasing pattern seeds a false basin that the fit then
+    # refines faithfully. BC still comes from the seed -- that genuinely has to be
+    # found -- but a recorded distance is an instrument reading, and tying Lsd to
+    # one is hard rule 9's lever.
     v1.BC_y, v1.BC_z = seed.BC_y, seed.BC_z
     lsd_info = {"seed_lsd_um": float(seed.Lsd_um),
-                "expected_lsd_um": float(args.expected_lsd_um) or None,
-                "source": "seed"}
-    if args.expected_lsd_um > 0:
-        _rel = abs(float(seed.Lsd_um) - args.expected_lsd_um) / args.expected_lsd_um
-        lsd_info["relative_disagreement"] = round(_rel, 4)
-        if _rel > 0.10 and not args.trust_seed_lsd:
-            v1.Lsd = float(args.expected_lsd_um)
-            lsd_info["source"] = "expected (seed rejected)"
-            notes.append(
-                f"the seeder returned Lsd {seed.Lsd_um/1000:.1f} mm against a recorded "
-                f"{args.expected_lsd_um/1000:.1f} mm ({_rel*100:.0f}% off) — a "
-                "ring-pattern alias, not a measurement. Pinned to the recorded "
-                "distance and bounded; pass trust_seed_lsd to override.")
-        else:
-            v1.Lsd = float(seed.Lsd_um)
-            lsd_info["source"] = ("seed (agrees with expected)" if _rel <= 0.10
-                                  else "seed (forced by trust_seed_lsd)")
+                "nominal_lsd_um": float(args.expected_lsd_um) or None}
+    rule_refs.add(9)
+    if args.expected_lsd_um > 0 and not args.trust_seed_lsd:
+        v1.Lsd = float(args.expected_lsd_um)
+        lsd_info["source"] = "nominal (initial_Lsd semantics)"
+        if seed.Lsd_um > 0:
+            lsd_info["seed_minus_nominal_um"] = round(
+                float(seed.Lsd_um) - args.expected_lsd_um, 1)
     else:
         v1.Lsd = float(seed.Lsd_um)
-        notes.append("no recorded distance supplied, so Lsd rests entirely on the "
-                     "ring-pattern seed — check it against the setup.")
+        lsd_info["source"] = ("seed (trust_seed_lsd)" if args.trust_seed_lsd
+                              else "seed (no nominal distance supplied)")
+        if not args.expected_lsd_um:
+            notes.append("no nominal distance supplied, so Lsd rests entirely on the "
+                         "ring-pattern seed — make_seed has no distance argument, so "
+                         "there is nothing constraining it to the real setup.")
 
-    # Bound the search. spec_from_v1_params turns tolLsd into the Lsd bound.
-    _lsd_tol = (args.lsd_tol_um if args.lsd_tol_um > 0
-                else (50000.0 if args.expected_lsd_um > 0 else float(v1.tolLsd or 0)))
-    if _lsd_tol > 0:
-        v1.tolLsd = _lsd_tol
-        lsd_info["tol_um"] = _lsd_tol
+    # The bound is MIDAS's own: spec_from_v1_params turns v1.tolLsd into the Lsd
+    # bound, and CalibrationParams defaults it to 15000 um. Whatever the template
+    # says wins; only an explicit argument overrides. No window is invented here.
+    if args.lsd_tol_um > 0:
+        v1.tolLsd = float(args.lsd_tol_um)
+    lsd_info["tol_um"] = float(v1.tolLsd)
 
     v1.tx = v1.ty = v1.tz = 0.0
     for n in [f"p{i}" for i in range(15)]:
@@ -456,10 +464,12 @@ def main(argv=None):
     _rho_expected = float(v1.MaxRingRad) * 0.5 * (float(v1.pxY) + float(v1.pxZ))
     if v1.RhoD <= 0:
         v1.RhoD = _rho_expected
+        rule_refs.add(12)
         notes.append(f"RhoD set to {v1.RhoD:.1f} um "
                      f"(MaxRingRad {v1.MaxRingRad:.0f} px x px {v1.pxY:.1f} um); "
                      "not left to the version-dependent upstream derivation")
     elif v1.RhoD < 0.5 * _rho_expected:
+        rule_refs.add(12)
         notes.append(
             f"template RhoD {v1.RhoD:g} is far below the {_rho_expected:.0f} um implied "
             f"by MaxRingRad x px -- it looks like PIXELS, not microns (hard rule 12). "
@@ -506,11 +516,12 @@ def main(argv=None):
             args.panel_ny, args.panel_nz, args.panel_sy, args.panel_sz,
             gap_y=_parse_gaps(args.panel_gaps_y),
             gap_z=_parse_gaps(args.panel_gaps_z))
-        notes.append(f"tiled: {n_panels} panels, in-plane shift only (hard rule 4)")
+        rule_refs.update((4, 7))
+        notes.append(f"tiled: {n_panels} panels, in-plane shift only")
 
     # ---- run -------------------------------------------------------------------------
     run_kw = dict(spec=spec, panel_layout=layout, dark=dark,
-                  stage1_lsd_tol_um=(_lsd_tol if _lsd_tol > 0 else None),
+                  stage1_lsd_tol_um=(float(v1.tolLsd) if v1.tolLsd else None),
                   n_iter_stage1=args.n_iter_stage1,
                   n_iter_stage2=args.n_iter_stage2,
                   common_kwargs=dict(drop_gap_fits=True),
@@ -569,6 +580,7 @@ def main(argv=None):
     }
     gate["passed"] = (strain_test is not None and strain_test < args.strain_gate_ue)
 
+    rule_refs.update((2, 15))
     payload = {
         "status": "success",
         "engine": f"canonical-v2:four_stage ({v2_version})",
@@ -588,6 +600,7 @@ def main(argv=None):
         "scope_gate": scope,
         "gate": gate,
         "notes": notes,
+        "handbook_rule_refs": sorted(rule_refs),
     }
 
     if not gate["passed"] and not args.ignore_gate:

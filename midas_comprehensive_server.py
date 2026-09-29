@@ -5107,6 +5107,33 @@ def _calibration_interpreter():
     return _CALIB_INTERP_CACHE
 
 
+def _calibration_handbook_rules(refs):
+    """Resolve handbook rule NUMBERS to their text from the vendored capsule.
+
+    The rules live in knowledge_base/capsules/calibrate-integrate/HARD_RULES.md,
+    synced from MIDAS. Resolving them at report time rather than restating them in
+    Python is the same principle the parameter guardrails already follow: a rule is
+    changed by editing the handbook, never by editing a per-failure branch here. A
+    rule edited upstream changes what APEXA says on the next capsule sync.
+
+    Never raises; an unavailable capsule simply yields no rule text.
+    """
+    if not refs:
+        return []
+    try:
+        from capsule_registry import hard_rules
+        by_n = {r.get("n"): r.get("text", "") for r in hard_rules("calibrate-integrate")}
+    except Exception:
+        return []
+    out = []
+    for n in refs:
+        txt = by_n.get(n)
+        if txt:
+            out.append({"n": n, "rule": txt,
+                        "source": "calibrate-integrate/HARD_RULES.md"})
+    return out
+
+
 def _choose_calibration_engine(requested, image_path, resolved_wavelength):
     """Resolve ONE calibration engine, with the reason recorded.
 
@@ -5273,7 +5300,7 @@ async def midas_auto_calibrate(
     template_param_file: str = "",     # v1 params supplying detector size/px/lattice for the canonical recipe
     detector: str = "",                # preset alias (see detector_presets.json) → tiled panel layout
     px_um: float = 0.0,                # detector pixel size in µm; overrides every guess
-    lsd_tol_um: float = 0.0,           # Lsd search half-window (µm); default 50000 with a known distance
+    lsd_tol_um: float = 0.0,           # override the Lsd bound (µm); default = template tolLsd (MIDAS: 15000)
     trust_seed_lsd: bool = False,      # take the seeder's distance even if it contradicts the recorded one
     strain_gate_ue: float = 100.0,     # held-out strain cap, µε (handbook §4)
     ignore_calibration_gate: bool = False,  # accept a result that fails the strain gate
@@ -5924,7 +5951,17 @@ async def midas_auto_calibrate(
             elif _dpre and _dpre.get("px_um"):
                 _px_use, _px_src = float(_dpre["px_um"]), f"detector preset {_dk!r}"
             else:
-                _px_use, _px_src = float(_px2), "image-shape heuristic (VERIFY THIS)"
+                # Last resort. Dimensions alone do NOT determine pixel size -- a
+                # 2880x2880 frame is 150 um on a Varex 2923 and 100 um on the VarexD
+                # at 20-ID -- so say which presets share these dimensions rather than
+                # presenting a guess as a fact.
+                _same = [k for k, v in _load_detector_presets().items()
+                         if (v.get("NrPixelsY"), v.get("NrPixelsZ")) == (_ny2, _nz2)]
+                _px_use = float(_px2)
+                _px_src = ("image-shape heuristic (VERIFY THIS — dimensions do not "
+                           "determine pixel size"
+                           + (f"; {_ny2}x{_nz2} also matches {_same}" if _same else "")
+                           + "; pass px_um= or a template with `px`)")
 
             _cmd_v2 = [_eng["interpreter"], str(CALIBRATE_RUNNER_SCRIPT),
                        "--image", str(image_path),
@@ -6078,6 +6115,8 @@ async def midas_auto_calibrate(
                 "capabilities": _payload.get("capabilities"),
                 "output_dir": str(_v2_out),
                 "notes": list(_payload.get("notes", [])) + _merge_notes,
+                "handbook_rules": _calibration_handbook_rules(
+                    _payload.get("handbook_rule_refs") or []),
             }
             for _k in ("error", "fix", "nothing_was_run", "missing_dependencies"):
                 if _k in _payload:
