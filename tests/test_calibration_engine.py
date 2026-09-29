@@ -346,3 +346,33 @@ def test_runner_does_not_restate_handbook_rule_prose():
     assert "handbook_rule_refs" in src
     for invented in ("relative_disagreement", "50000.0", "seed rejected"):
         assert invented not in src, invented
+
+
+def test_detector_preset_miss_returns_a_list_not_a_dict():
+    """The shape that caused an AttributeError in the canonical block: a MISS
+    returns (None, [known keys]), so `(preset or {}).get(...)` explodes on the
+    list. Any call site must isinstance-check before treating it as a mapping.
+    """
+    key, val = M._resolve_detector_preset("")
+    assert key is None and isinstance(val, list)
+    key, val = M._resolve_detector_preset("no-such-detector")
+    assert key is None and isinstance(val, list)
+    key, val = M._resolve_detector_preset("varex_2923")
+    assert key == "varex_2923" and isinstance(val, dict) and val.get("px_um")
+
+
+def test_canonical_block_guards_every_preset_lookup():
+    """detector='' is the DEFAULT, so an unguarded lookup breaks every call that
+    does not name a detector -- which is most of them."""
+    import re
+    src = open(M.__file__).read()
+    start = src.index('if _eng["engine"] == "canonical-v2":')
+    end = src.index("\n@mcp.tool()", start)          # end of this tool's body
+    block = src[start:end]
+    sites = list(re.finditer(r"_resolve_detector_preset\(detector\)", block))
+    assert sites, "expected the canonical block to consult the detector registry"
+    for m in sites:
+        after = block[m.end():m.end() + 200]
+        assert "isinstance(" in after, (
+            "a _resolve_detector_preset() result is used without an isinstance "
+            "guard; a miss returns the known-key list, not a dict")

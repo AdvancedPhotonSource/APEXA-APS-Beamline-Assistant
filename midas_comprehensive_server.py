@@ -5909,8 +5909,10 @@ async def midas_auto_calibrate(
             else:
                 _auto_tmpl = _v2_out / f"{original_stem}_v2_template.txt"
                 _dk0, _dpre0 = _resolve_detector_preset(detector)
+                if not isinstance(_dpre0, dict):
+                    _dpre0 = {}          # a miss returns the known-key LIST, not a dict
                 _syn_px = (float(px_um) if px_um and float(px_um) > 0
-                           else float((_dpre0 or {}).get("px_um") or _px2))
+                           else float(_dpre0.get("px_um") or _px2))
                 _ok_t, _err_t = _synthesize_calibration_params(
                     _auto_tmpl, calibrant=_calib_v2, wavelength=float(_resolved_wl),
                     px_um=_syn_px, ny=int(_ny2), nz=int(_nz2),
@@ -5943,6 +5945,8 @@ async def midas_auto_calibrate(
             # (Varex 2923), but a VarexD at 20-ID is 100 µm, and silently
             # substituting 150 puts a 50% error straight into Lsd.
             _dk, _dpre = _resolve_detector_preset(detector)
+            if not isinstance(_dpre, dict):
+                _dpre = {}               # ditto: a miss yields the known-key list
             _tmpl_px = _read_param_value(Path(_tmpl), "px")
             if px_um and float(px_um) > 0:
                 _px_use, _px_src = float(px_um), "px_um argument"
