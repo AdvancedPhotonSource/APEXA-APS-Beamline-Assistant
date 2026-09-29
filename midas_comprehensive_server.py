@@ -5080,6 +5080,7 @@ def _calibration_interpreter():
     candidates.append(sys.executable)
 
     last_why = "no candidate interpreter was probed"
+    probed_midas_bin = bool(_bin)
     for exe in candidates:
         try:
             probe = subprocess.run([exe, "-c", _CANONICAL_V2_PROBE],
@@ -5094,6 +5095,14 @@ def _calibration_interpreter():
             return _CALIB_INTERP_CACHE
         last_why = f"{exe}: {(probe.stderr or '').strip().splitlines()[-1:] or ['no detail']}"[:300]
 
+    # The overwhelmingly common cause is APEXA_MIDAS_BIN not being set, so APEXA
+    # probes its OWN venv -- which carries whatever midas-calibrate-v2 was locked,
+    # typically older than the environment the beamline actually maintains. Say so
+    # here rather than leaving the operator to infer it from a ModuleNotFoundError.
+    if not probed_midas_bin:
+        last_why += ("  [APEXA_MIDAS_BIN is not set, so only APEXA's own .venv was "
+                     "probed. Set it to the MIDAS pip environment's bin/ -- in "
+                     "APEXA's .env, not a shell export -- and restart.]")
     _CALIB_INTERP_CACHE = (sys.executable, "unknown", False, last_why)
     return _CALIB_INTERP_CACHE
 
@@ -5827,6 +5836,13 @@ async def midas_auto_calibrate(
         print(f"[engine] {_eng['engine']} — {_eng['reason']}", file=sys.stderr)
         for _fb in _eng["fallbacks"]:
             print(f"[engine]   {_fb}", file=sys.stderr)
+        # A silent downgrade is how a 43-file series ends up computed by the engine
+        # you were trying to stop using. Falling back is legitimate, but it is not a
+        # detail: say plainly which engine will produce the numbers.
+        if _eng["engine"] != "canonical-v2" and _eng["fallbacks"]:
+            print("[engine]   ⚠ NOT using the canonical handbook recipe — this run's "
+                  f"geometry will come from the '{_eng['engine']}' path. Fix the "
+                  "reason above before trusting a series.", file=sys.stderr)
 
         if _eng["engine"] == "refuse":
             return format_result({
