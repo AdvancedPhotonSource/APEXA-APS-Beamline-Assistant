@@ -112,6 +112,16 @@ def build_parser():
     p.add_argument("--max-ring-rad-px", type=float, default=0.0)
     p.add_argument("--min-ring-separation", type=float, default=0.0,
                    help="px; only meaningful with two calibrants")
+    p.add_argument("--expected-lsd-um", type=float, default=0.0,
+                   help="recorded sample-to-detector distance (um). make_seed has no "
+                        "distance hint, so without this a ring-pattern alias can seed "
+                        "a false basin hundreds of mm away.")
+    p.add_argument("--lsd-tol-um", type=float, default=0.0,
+                   help="search half-window around Lsd (um). Default 50000 when an "
+                        "expected distance is given, else the template's tolLsd.")
+    p.add_argument("--trust-seed-lsd", action="store_true",
+                   help="take the seeder's distance even when it disagrees with "
+                        "--expected-lsd-um")
 
     # Image reading.
     p.add_argument("--data-loc", default="exchange/data", help="HDF5 dataset path")
@@ -381,7 +391,44 @@ def main(argv=None):
             "fits noise; treat this geometry as provisional and check a ring overlay.")
 
     # ---- the recipe: start from scratch, never from an existing block ---------------
-    v1.BC_y, v1.BC_z, v1.Lsd = seed.BC_y, seed.BC_z, seed.Lsd_um
+    # BC always comes from the seed -- it genuinely has to be found. Lsd is
+    # different: it is a RECORDED instrument setting, and make_seed has no distance
+    # hint, so it infers the distance from ring radii alone. When the ring pattern
+    # aliases, the seeder lands in a false basin and the fit happily refines inside
+    # it: measured at 20-ID, a 900 mm setup seeded 595 mm and refined to 1617 ue,
+    # while the same frame given the distance reached 894 mm. Hard rule 9's lever is
+    # exactly this -- tie Lsd to a recorded distance.
+    v1.BC_y, v1.BC_z = seed.BC_y, seed.BC_z
+    lsd_info = {"seed_lsd_um": float(seed.Lsd_um),
+                "expected_lsd_um": float(args.expected_lsd_um) or None,
+                "source": "seed"}
+    if args.expected_lsd_um > 0:
+        _rel = abs(float(seed.Lsd_um) - args.expected_lsd_um) / args.expected_lsd_um
+        lsd_info["relative_disagreement"] = round(_rel, 4)
+        if _rel > 0.10 and not args.trust_seed_lsd:
+            v1.Lsd = float(args.expected_lsd_um)
+            lsd_info["source"] = "expected (seed rejected)"
+            notes.append(
+                f"the seeder returned Lsd {seed.Lsd_um/1000:.1f} mm against a recorded "
+                f"{args.expected_lsd_um/1000:.1f} mm ({_rel*100:.0f}% off) — a "
+                "ring-pattern alias, not a measurement. Pinned to the recorded "
+                "distance and bounded; pass trust_seed_lsd to override.")
+        else:
+            v1.Lsd = float(seed.Lsd_um)
+            lsd_info["source"] = ("seed (agrees with expected)" if _rel <= 0.10
+                                  else "seed (forced by trust_seed_lsd)")
+    else:
+        v1.Lsd = float(seed.Lsd_um)
+        notes.append("no recorded distance supplied, so Lsd rests entirely on the "
+                     "ring-pattern seed — check it against the setup.")
+
+    # Bound the search. spec_from_v1_params turns tolLsd into the Lsd bound.
+    _lsd_tol = (args.lsd_tol_um if args.lsd_tol_um > 0
+                else (50000.0 if args.expected_lsd_um > 0 else float(v1.tolLsd or 0)))
+    if _lsd_tol > 0:
+        v1.tolLsd = _lsd_tol
+        lsd_info["tol_um"] = _lsd_tol
+
     v1.tx = v1.ty = v1.tz = 0.0
     for n in [f"p{i}" for i in range(15)]:
         setattr(v1, n, 0.0)
@@ -463,6 +510,7 @@ def main(argv=None):
 
     # ---- run -------------------------------------------------------------------------
     run_kw = dict(spec=spec, panel_layout=layout, dark=dark,
+                  stage1_lsd_tol_um=(_lsd_tol if _lsd_tol > 0 else None),
                   n_iter_stage1=args.n_iter_stage1,
                   n_iter_stage2=args.n_iter_stage2,
                   common_kwargs=dict(drop_gap_fits=True),
@@ -536,6 +584,7 @@ def main(argv=None):
         "n_panels": n_panels,
         "calibrants": calibrants or [seed_calibrant],
         "seed": seed_info,
+        "lsd": lsd_info,
         "scope_gate": scope,
         "gate": gate,
         "notes": notes,

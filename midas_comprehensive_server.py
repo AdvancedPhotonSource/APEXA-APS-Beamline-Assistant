@@ -5243,7 +5243,8 @@ def _write_integration_outcome(out_dir, payload: dict,
         "energy_kev", "wavelength_angstrom", "seed_from_params", "threshold",
         "first_ring_nr", "lsd_guess", "bc_x_guess", "bc_y_guess",
         "image_transform", "data_loc", "template_param_file", "detector",
-        "strain_gate_ue", "ignore_calibration_gate", "px_um")},
+        "strain_gate_ue", "ignore_calibration_gate", "px_um",
+        "lsd_tol_um", "trust_seed_lsd")},
 )
 async def midas_auto_calibrate(
     image_file: str,
@@ -5272,6 +5273,8 @@ async def midas_auto_calibrate(
     template_param_file: str = "",     # v1 params supplying detector size/px/lattice for the canonical recipe
     detector: str = "",                # preset alias (see detector_presets.json) → tiled panel layout
     px_um: float = 0.0,                # detector pixel size in µm; overrides every guess
+    lsd_tol_um: float = 0.0,           # Lsd search half-window (µm); default 50000 with a known distance
+    trust_seed_lsd: bool = False,      # take the seeder's distance even if it contradicts the recorded one
     strain_gate_ue: float = 100.0,     # held-out strain cap, µε (handbook §4)
     ignore_calibration_gate: bool = False,  # accept a result that fails the strain gate
 ) -> str:
@@ -5933,6 +5936,20 @@ async def midas_auto_calibrate(
                        "--device", os.environ.get("APEXA_MIDAS_DEVICE", "cpu")]
             if _px_use > 0:
                 _cmd_v2 += ["--px-um", f"{_px_use:.4f}"]
+
+            # The recorded sample-to-detector distance. make_seed infers Lsd from
+            # ring radii with no distance hint, so an aliasing pattern seeds a false
+            # basin -- 20-ID measured a 900 mm setup seeding 595 mm. Passing the
+            # known distance is hard rule 9's lever, and it is the difference
+            # between that and 894 mm on the same frame.
+            _exp_lsd = (float(lsd_guess) if lsd_guess and lsd_guess < 1_000_000
+                        else (float(lsd_from_filename) if lsd_match else 0.0))
+            if _exp_lsd > 0:
+                _cmd_v2 += ["--expected-lsd-um", f"{_exp_lsd:.1f}"]
+            if lsd_tol_um and float(lsd_tol_um) > 0:
+                _cmd_v2 += ["--lsd-tol-um", f"{float(lsd_tol_um):.1f}"]
+            if trust_seed_lsd:
+                _cmd_v2 += ["--trust-seed-lsd"]
             if _tr:
                 _cmd_v2 += ["--im-trans", str(_tr)]
             if _dark_abs:
@@ -5954,7 +5971,8 @@ async def midas_auto_calibrate(
 
             print(f"[engine] canonical v2 ({_eng['v2_version']}) via "
                   f"{_eng['interpreter']}: calibrant={_calib_v2} wl={_resolved_wl:.6f} "
-                  f"px<-{_px_src} imtrans={_tr or 'none'}({_tr_src}) out={_v2_out}",
+                  f"px<-{_px_src} imtrans={_tr or 'none'}({_tr_src}) "
+                  f"expected_lsd={(_exp_lsd/1000 if _exp_lsd else 0):.1f}mm out={_v2_out}",
                   file=sys.stderr)
 
             # Clean env: the pip torch stack breaks under the C++ DYLD/LD injection
@@ -6055,6 +6073,7 @@ async def midas_auto_calibrate(
                 "px_um_source": _px_src,
                 "scope_gate": _payload.get("scope_gate"),
                 "seed": _seed,
+                "lsd": _payload.get("lsd"),
                 "gate": _gate,
                 "capabilities": _payload.get("capabilities"),
                 "output_dir": str(_v2_out),
