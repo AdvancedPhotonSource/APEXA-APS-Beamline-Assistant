@@ -245,3 +245,45 @@ def test_the_imtransopt_double_apply_hazard_is_real_and_handled(tmp_path):
     # The runner's mitigation, which is correct for both.
     spec.im_trans = ()
     assert tuple(getattr(spec, "im_trans", ()) or ()) == ()
+
+
+# --------------------------------------------------------------------------- #
+# locality: APEXA running ON the data host must not route to itself
+# --------------------------------------------------------------------------- #
+
+def test_registry_host_forms_resolve_to_this_machine(monkeypatch):
+    """A registry `host` is an ssh TARGET, so it can carry a user@ prefix and a
+    domain. Matching only the bare string made APEXA-on-copland fail to recognise
+    itself and SSH to itself -- and the loopback login shell lacks the MIDAS
+    activation, so the run failed with `command not found` on the very host where
+    the binary is on PATH.
+    """
+    import importlib
+    import apexa_remote_exec as R
+    monkeypatch.setenv("APEXA_LOCAL_HOSTNAMES", "copland")
+    importlib.reload(R)
+    try:
+        for name in ("copland", "COPLAND", "s1iduser@copland",
+                     "copland.xray.aps.anl.gov",
+                     "s1iduser@copland.xray.aps.anl.gov"):
+            assert R.is_local_host(name), name
+        assert not R.is_local_host("chiltepin")
+        assert not R.is_local_host("")
+    finally:
+        monkeypatch.delenv("APEXA_LOCAL_HOSTNAMES", raising=False)
+        importlib.reload(R)
+
+
+def test_force_local_beats_the_registry(monkeypatch):
+    """The escape hatch an operator can reach for mid-experiment: it must take
+    precedence over a data-root prefix match, without editing the registry."""
+    import importlib
+    import apexa_remote_exec as R
+    monkeypatch.setenv("APEXA_FORCE_REMOTE_EXEC", "0")
+    importlib.reload(R)
+    try:
+        d = R.decide_exec_host("/gdata/dm/20ID/whatever.h5")
+        assert d["is_remote"] is False, d
+    finally:
+        monkeypatch.delenv("APEXA_FORCE_REMOTE_EXEC", raising=False)
+        importlib.reload(R)

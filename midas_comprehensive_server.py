@@ -5399,9 +5399,23 @@ async def midas_auto_calibrate(
                                   "error": _cal_decision.get("reason")})
         if _cal_decision.get("is_remote"):
             _ch = _cal_decision.get("host")
+            _diag = _cal_decision.get("diagnosis") or {}
             return format_result({
                 "tool": "midas_auto_calibrate", "status": "error",
                 "is_remote": True, "host": _ch,
+                "nothing_was_run": True,
+                # Say WHY this fired. The common false positive is APEXA running ON
+                # the data host under a name the registry does not use -- in which
+                # case nothing is remote and no SSH is needed at all.
+                "locality_reason": _cal_decision.get("reason"),
+                "diagnosis": _diag,
+                "if_this_is_the_data_host": (
+                    "Then this refusal is wrong and the registry name simply does "
+                    "not match this machine's hostname. Do NOT work around it with "
+                    "run_remote_command -- that bypasses the lint gate, the strain "
+                    "gate and the output verifier. Set APEXA_FORCE_REMOTE_EXEC=0 "
+                    "(forces local, beats the registry) or APEXA_LOCAL_HOSTNAMES="
+                    "<the registry's name for this host>, then re-run this tool."),
                 "error": (
                     f"The calibrant data resolves to remote host '{_ch}', but "
                     "midas_auto_calibrate does not yet run over SSH (remote routing "

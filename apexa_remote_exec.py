@@ -86,7 +86,16 @@ def is_local_host(name: str) -> bool:
     if not name:
         return False
     n = name.strip().lower()
-    return n in local_hostnames() or n.split(".", 1)[0] in local_hostnames()
+    # A registry record's `host` is an ssh TARGET, so it may carry a user@ prefix
+    # and/or a domain ("s1iduser@copland.xray.aps.anl.gov"). Compare on the bare
+    # hostname, or APEXA deployed on that very machine fails to recognise itself
+    # and SSHes to itself -- the loopback login shell lacks the MIDAS activation,
+    # so the run then fails with `command not found` on a host where the binary is
+    # plainly on PATH.
+    if "@" in n:
+        n = n.rsplit("@", 1)[1]
+    locals_ = local_hostnames()
+    return n in locals_ or n.split(".", 1)[0] in locals_
 
 
 def resolve_host(host: str = "") -> str:
@@ -368,7 +377,18 @@ def decide_exec_host(*data_paths: str, host: str = "") -> Dict[str, Any]:
                               f"running local",
                     "unreachable": False}
         return {"is_remote": True, "host": h, "record": host_record(h),
-                "reason": "registry data-root prefix match", "unreachable": False}
+                "reason": (f"registry data-root prefix match -> {h!r}; this machine "
+                           f"answers to {sorted(local_hostnames())}, which does not "
+                           f"include it"),
+                "diagnosis": {
+                    "matched_host": h,
+                    "this_machine": sorted(local_hostnames()),
+                    "fix_if_wrong": ("If this IS the data host, the registry name "
+                                     "does not match its hostname: set "
+                                     "APEXA_LOCAL_HOSTNAMES=<name> (or "
+                                     "APEXA_FORCE_REMOTE_EXEC=0) and re-run."),
+                },
+                "unreachable": False}
 
     # 4. all local
     if paths and all(os.path.exists(os.path.expanduser(p)) for p in paths):
