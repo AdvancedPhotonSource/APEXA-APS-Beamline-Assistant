@@ -119,6 +119,11 @@ def build_parser():
     p.add_argument("--lsd-tol-um", type=float, default=0.0,
                    help="override the Lsd bound (um). Default: the template's tolLsd, "
                         "which CalibrationParams sets to 15000.")
+    p.add_argument("--refine-distortion", default="full",
+                   help="which distortion terms to refine: full (all 15) | radial "
+                        "(iso_R2/R4/R6 only) | none | an explicit comma list of v1 "
+                        "p-keys. Hard rule 11: azimuthal harmonics need azimuth to "
+                        "be identifiable and rail at their bounds without it.")
     p.add_argument("--trust-seed-lsd", action="store_true",
                    help="take the seeder's distance even when it disagrees with "
                         "--expected-lsd-um")
@@ -475,6 +480,44 @@ def main(argv=None):
             f"by MaxRingRad x px -- it looks like PIXELS, not microns (hard rule 12). "
             "Left as given; the distortion block may be mis-scaled.")
 
+    # Hard rule 11 — refine only the distortion the azimuth supports. The v1 p-keys
+    # are NOT all the same kind of term; the mapping is upstream's
+    # (compat/from_v1.py V1_TO_V2_DISTORTION):
+    #   radial (isotropic):  p2=iso_R2, p4=iso_R6, p5=iso_R4
+    #   azimuthal amplitude: p0=a2 p1=a4 p7=a1 p9=a3 p11=a5 p13=a6
+    #   azimuthal phase:     p3=phi4 p6=phi2 p8=phi1 p10=phi3 p12=phi5 p14=phi6
+    # Each a_k/phi_k pair is a k-fold harmonic and is degenerate with the beam
+    # centre (1-fold) and the tilts (2-fold) unless the azimuth supports it, so it
+    # rails and drags the tilts with it.
+    _RADIAL_PKEYS = ("p2", "p4", "p5")
+    _ALL_PKEYS = tuple(f"p{i}" for i in range(15))
+    _rd = (args.refine_distortion or "full").strip().lower()
+    if _rd in ("full", "all", ""):
+        _keep = set(_ALL_PKEYS)
+    elif _rd in ("none", "off"):
+        _keep = set()
+    elif _rd == "radial":
+        _keep = set(_RADIAL_PKEYS)
+    else:
+        _keep = {t.strip() for t in _rd.replace(",", " ").split() if t.strip()}
+        _bad = _keep - set(_ALL_PKEYS)
+        if _bad:
+            _fail(f"--refine-distortion lists unknown p-keys {sorted(_bad)}; "
+                  f"valid keys are p0..p14, or full/radial/none",
+                  capabilities=caps)
+    if _keep != set(_ALL_PKEYS):
+        rule_refs.add(11)
+        try:
+            _ref = dict(v1.Refine or {})
+            for k in _ALL_PKEYS:
+                _ref[k] = k in _keep
+            v1.Refine = _ref
+            notes.append(
+                f"distortion: refining {sorted(_keep) or 'nothing'} of p0..p14 "
+                f"(--refine-distortion {_rd})")
+        except Exception as e:
+            notes.append(f"could not restrict the distortion block: {e}")
+
     try:
         v1.validate()
     except Exception as e:
@@ -559,6 +602,35 @@ def main(argv=None):
         except Exception:
             return None
 
+    # Which refined parameters finished sitting on a bound? DIAGNOSIS calls this
+    # bound.pileup, and it is the difference between "converged" and "ran out of
+    # room" -- a distinction the strain number alone does not make.
+    at_bounds = []
+    try:
+        _unp = res.stage2.unpacked
+        for _nm, _par in (getattr(spec, "parameters", {}) or {}).items():
+            if not getattr(_par, "refined", False) or not getattr(_par, "bounds", None):
+                continue
+            _lo, _hi = _par.bounds
+            _v = _unp.get(_nm)
+            _v = _f(_v.item() if hasattr(_v, "item") else _v)
+            if _v is None or _hi <= _lo:
+                continue
+            _span = _hi - _lo
+            if abs(_v - _lo) <= 0.01 * _span or abs(_v - _hi) <= 0.01 * _span:
+                at_bounds.append({"parameter": _nm, "value": _v,
+                                  "bounds": [_lo, _hi]})
+    except Exception as e:
+        notes.append(f"could not check parameter bounds: {e}")
+    if at_bounds:
+        rule_refs.add(11)
+        notes.append(
+            f"{len(at_bounds)} refined parameter(s) finished ON a bound "
+            f"({', '.join(b['parameter'] for b in at_bounds)}) — the fit ran out of "
+            "room rather than converging. For azimuthal harmonics this is the "
+            "signature hard rule 11 describes; try --refine-distortion radial, "
+            "then none.")
+
     strain_test = _f(getattr(res, "stage4_strain_uE_test", None))
     strain_full = _f(getattr(res, "stage4_strain_uE", None))
     gap = (abs(strain_test - strain_full)
@@ -597,6 +669,8 @@ def main(argv=None):
         "calibrants": calibrants or [seed_calibrant],
         "seed": seed_info,
         "lsd": lsd_info,
+        "at_bounds": at_bounds,
+        "refine_distortion": _rd,
         "scope_gate": scope,
         "gate": gate,
         "notes": notes,

@@ -399,3 +399,27 @@ def test_a_missing_legacy_script_does_not_block_the_pip_engines():
     tail = body[check:check + 1400]
     assert "nothing_was_run" in tail
     assert "APEXA_MIDAS_BIN" in tail, "the refusal should name the way out"
+
+
+def test_refine_distortion_is_exposed_with_the_upstream_key_split():
+    """Hard rule 11: azimuthal harmonics rail without azimuth to identify them.
+    The v1 p-keys are not interchangeable -- upstream's V1_TO_V2_DISTORTION makes
+    p2/p4/p5 the isotropic radial terms and the other twelve a_k/phi_k harmonics.
+    """
+    import inspect
+    sig = inspect.signature(M.midas_auto_calibrate)
+    assert sig.parameters["refine_distortion"].default == "full"
+
+    src = open(RUNNER).read()
+    assert '_RADIAL_PKEYS = ("p2", "p4", "p5")' in src, (
+        "the radial set must match upstream: p2=iso_R2, p4=iso_R6, p5=iso_R4")
+    for mode in ("radial", "none", "full"):
+        assert mode in src
+
+
+def test_bound_pileup_is_reported():
+    """A parameter finishing ON its bound means the fit ran out of room, not that
+    it converged -- and the strain number alone does not make that distinction."""
+    src = open(RUNNER).read()
+    assert "at_bounds" in src and "bound" in src.lower()
+    assert "at_bounds" in open(M.__file__).read()

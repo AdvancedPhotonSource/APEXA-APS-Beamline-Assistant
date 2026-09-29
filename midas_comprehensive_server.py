@@ -5276,7 +5276,7 @@ def _write_integration_outcome(out_dir, payload: dict,
         "first_ring_nr", "lsd_guess", "bc_x_guess", "bc_y_guess",
         "image_transform", "data_loc", "template_param_file", "detector",
         "strain_gate_ue", "ignore_calibration_gate", "px_um",
-        "lsd_tol_um", "trust_seed_lsd")},
+        "lsd_tol_um", "trust_seed_lsd", "refine_distortion")},
 )
 async def midas_auto_calibrate(
     image_file: str,
@@ -5306,6 +5306,7 @@ async def midas_auto_calibrate(
     detector: str = "",                # preset alias (see detector_presets.json) → tiled panel layout
     px_um: float = 0.0,                # detector pixel size in µm; overrides every guess
     lsd_tol_um: float = 0.0,           # override the Lsd bound (µm); default = template tolLsd (MIDAS: 15000)
+    refine_distortion: str = "full",   # full | radial | none | "p2,p4,p5" — hard rule 11
     trust_seed_lsd: bool = False,      # take the seeder's distance even if it contradicts the recorded one
     strain_gate_ue: float = 100.0,     # held-out strain cap, µε (handbook §4)
     ignore_calibration_gate: bool = False,  # accept a result that fails the strain gate
@@ -5969,6 +5970,8 @@ async def midas_auto_calibrate(
                 _cmd_v2 += ["--lsd-tol-um", f"{float(lsd_tol_um):.1f}"]
             if trust_seed_lsd:
                 _cmd_v2 += ["--trust-seed-lsd"]
+            if refine_distortion and str(refine_distortion).strip().lower() != "full":
+                _cmd_v2 += ["--refine-distortion", str(refine_distortion).strip()]
             if _tr:
                 _cmd_v2 += ["--im-trans", str(_tr)]
             if _dark_abs:
@@ -6093,6 +6096,8 @@ async def midas_auto_calibrate(
                 "scope_gate": _payload.get("scope_gate"),
                 "seed": _seed,
                 "lsd": _payload.get("lsd"),
+                "at_bounds": _payload.get("at_bounds"),
+                "refine_distortion": _payload.get("refine_distortion"),
                 "gate": _gate,
                 "capabilities": _payload.get("capabilities"),
                 "output_dir": str(_v2_out),
