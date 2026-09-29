@@ -191,7 +191,7 @@ Run `validate_midas_installation` in APEXA to check if both packages are detecte
 
 ## Dependencies
 
-- `uv sync` installs ~168 packages in ~1 second
+- `uv sync` installs the locked dependency set in ~1 second
 - `uv run` auto-creates `.venv/` -- users never activate manually
 - Optional extras: `uv sync --extra extra` (pyfai, vtk, seaborn, lmfit, etc.)
 - Core deps: httpx, mcp, fastapi, gradio, numpy, scipy, matplotlib, fabio, h5py, xrayutilities

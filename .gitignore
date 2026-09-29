@@ -276,3 +276,4 @@ tests/__pycache__/
 
 # Runtime crash dumps
 error_dumps/
+scratch-cal/

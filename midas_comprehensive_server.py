@@ -16,6 +16,7 @@ import numpy as np
 import xrayutilities as xu
 import re
 import subprocess
+import time
 import shlex
 import asyncio
 import logging
@@ -5040,6 +5041,165 @@ def _write_calibration_outcome(out_dir, payload: dict):
         return None
 
 
+CALIBRATE_RUNNER_SCRIPT = Path(__file__).parent / "_calibrate_runner.py"
+
+# Zarr is an AutoCalibrateZarr-only capability: midas_calibrate_v2.io.readers
+# dispatches on extension and has no .zip/.zarr branch, so "auto" must never send
+# a zarr store to the canonical engine.
+_CALIB_ZARR_SUFFIXES = (".zip", ".zarr")
+
+# What the canonical recipe needs in whichever interpreter runs it. scikit-image is
+# imported by make_seed at call time and was only DECLARED by midas-calibrate-v2 from
+# 0.22.0, so an older build installs cleanly without it and fails mid-fit.
+_CANONICAL_V2_PROBE = (
+    "import midas_calibrate_v2, skimage, midas_calibrate.params; "
+    "from midas_calibrate_v2.pipelines.four_stage import autocalibrate_four_stage; "
+    "import importlib.metadata as m; print(m.version('midas-calibrate-v2'))"
+)
+
+_CALIB_INTERP_CACHE = None
+
+
+def _calibration_interpreter():
+    """Pick the interpreter that can run the canonical four-stage recipe.
+
+    Prefers ``APEXA_MIDAS_BIN``'s python — the blessed MIDAS pip environment, which
+    is where a current midas-calibrate-v2 actually lives — and falls back to APEXA's
+    own. Probing beats trusting a version pin: the operator gate-checks one env while
+    APEXA may be running in another, which is exactly how a 0.22.0 gate-check ended up
+    executing 0.5.3. Returns ``(python_exe, version, ok, why)``; cached per process.
+    """
+    global _CALIB_INTERP_CACHE
+    if _CALIB_INTERP_CACHE is not None:
+        return _CALIB_INTERP_CACHE
+
+    candidates = []
+    _bin = os.environ.get("APEXA_MIDAS_BIN", "").strip()
+    if _bin:
+        candidates.append(str(Path(_bin) / "python"))
+    candidates.append(sys.executable)
+
+    last_why = "no candidate interpreter was probed"
+    for exe in candidates:
+        try:
+            probe = subprocess.run([exe, "-c", _CANONICAL_V2_PROBE],
+                                   capture_output=True, text=True, timeout=90,
+                                   env=dict(os.environ))
+        except Exception as e:
+            last_why = f"{exe}: probe failed ({type(e).__name__}: {e})"
+            continue
+        if probe.returncode == 0:
+            ver = (probe.stdout or "").strip().splitlines()[-1:] or ["unknown"]
+            _CALIB_INTERP_CACHE = (exe, ver[0], True, "")
+            return _CALIB_INTERP_CACHE
+        last_why = f"{exe}: {(probe.stderr or '').strip().splitlines()[-1:] or ['no detail']}"[:300]
+
+    _CALIB_INTERP_CACHE = (sys.executable, "unknown", False, last_why)
+    return _CALIB_INTERP_CACHE
+
+
+def _choose_calibration_engine(requested, image_path, resolved_wavelength):
+    """Resolve ONE calibration engine, with the reason recorded.
+
+    Replaces a four-branch cascade in which the first branch (the in-process native
+    engine) ignored ``calibration_engine`` entirely — so ``calibration_engine="v2"``
+    could silently run the v1 native engine instead, and return before output_dir
+    handling and the outcome manifest were reached.
+
+    Returns ``{engine, reason, interpreter, v2_version, fallbacks}`` where engine is
+    one of ``canonical-v2`` | ``native`` | ``pip-console`` | ``legacy``.
+    """
+    req = (str(requested) or "auto").strip().lower()
+    suffix = Path(image_path).suffix.lower()
+    is_zarr = suffix in _CALIB_ZARR_SUFFIXES
+    exe, ver, ok, why = _calibration_interpreter()
+    fallbacks = []
+
+    def _pick(engine, reason):
+        return {"engine": engine, "reason": reason, "interpreter": exe,
+                "v2_version": ver, "fallbacks": fallbacks}
+
+    if req == "legacy":
+        return _pick("legacy", "caller forced the legacy AutoCalibrateZarr engine")
+
+    if req == "v2":
+        # Explicit means explicit: never silently downgrade. The caller asked for the
+        # canonical engine, so an unmet precondition is a refusal, not a different run.
+        if is_zarr:
+            return _pick("refuse", f"calibration_engine='v2' but the input is {suffix} — "
+                                   "midas_calibrate_v2 has no zarr reader")
+        if not resolved_wavelength:
+            return _pick("refuse", "calibration_engine='v2' but no wavelength could be "
+                                   "resolved from the arguments, filename or file metadata")
+        if not ok:
+            return _pick("refuse", f"calibration_engine='v2' but the canonical recipe is "
+                                   f"not runnable: {why}")
+        return _pick("canonical-v2", "caller requested the canonical v2 engine")
+
+    if req == "v1":
+        return _pick("native", "caller requested the v1 cascade "
+                               "(native -> pip-console -> legacy)")
+
+    # "auto" (the default): prefer canonical v2, record every reason it is not used.
+    if is_zarr:
+        fallbacks.append(f"canonical-v2 skipped: {suffix} is a zarr store, which "
+                         "midas_calibrate_v2 cannot read")
+    elif not resolved_wavelength:
+        fallbacks.append("canonical-v2 skipped: no wavelength resolved")
+    elif not ok:
+        fallbacks.append(f"canonical-v2 skipped: {why}")
+    else:
+        return _pick("canonical-v2", "auto: the canonical four-stage recipe is available")
+    return _pick("native", "auto: fell back to the v1 cascade")
+
+
+def _merge_refined_params(template_path, paramstest_path, out_path):
+    """Merge the refined geometry onto the full template and write it where every
+    downstream consumer already looks.
+
+    Two reasons this cannot just ship ``paramstest_v2.txt`` directly:
+    ``write_v1_paramstest`` deliberately drops DATA_LOCATION_KEYS -- including
+    ``MaskFile`` -- and ``CalibrationParams.to_text()`` omits MinRingRad/MaxRingRad/
+    Width/EtaBinSize/RBinSize. Both are needed by integration. The template is the
+    only place they survive.
+
+    Returns ``(path, notes)``. Never raises; on failure returns ``(None, [why])``.
+    """
+    notes = []
+    try:
+        from apexa_lib import read_params, write_params
+    except Exception as e:
+        return None, [f"could not import apexa_lib for the param merge: {e}"]
+    try:
+        merged = read_params(template_path)
+        refined = read_params(paramstest_path)
+
+        # to_text() emits `px` twice -- once from the typed pxY field, once from the
+        # passthrough `extra` dict. A line-by-line parse keeps the LAST, which is the
+        # stale passthrough copy. px is not refined, so they normally agree; say so
+        # loudly if they ever do not.
+        px_vals = [ln.split()[1] for ln in Path(paramstest_path).read_text().splitlines()
+                   if ln.strip().startswith("px ")]
+        if len(px_vals) > 1 and len({float(v) for v in px_vals}) > 1:
+            refined["px"] = float(px_vals[0])
+            notes.append(f"paramstest_v2.txt carried conflicting px values {px_vals}; "
+                         "kept the typed one")
+
+        merged.update(refined)          # refined geometry wins over the template
+        for k in ("bc_x", "bc_y", "lsd_um"):
+            merged.pop(k, None)         # read_params conveniences, not file keys
+        write_params(merged, out_path)
+        restored = [k for k in ("MaskFile", "MinRingRad", "MaxRingRad", "Width",
+                                "EtaBinSize", "RBinSize")
+                    if k in merged and k not in refined]
+        if restored:
+            notes.append("restored from the template (dropped by write_v1_paramstest "
+                         "or to_text): " + ", ".join(restored))
+        return str(out_path), notes
+    except Exception as e:
+        return None, [f"param merge failed: {type(e).__name__}: {e}"]
+
+
 def _write_integration_outcome(out_dir, payload: dict,
                                filename: str = "APEXA_integration.json"):
     """Per-run integration outcome manifest — the same on-disk-truth pattern as
@@ -5073,7 +5233,8 @@ def _write_integration_outcome(out_dir, payload: dict,
         "image_file", "parameters_file", "dark_file", "calibration_engine",
         "energy_kev", "wavelength_angstrom", "seed_from_params", "threshold",
         "first_ring_nr", "lsd_guess", "bc_x_guess", "bc_y_guess",
-        "image_transform", "data_loc")},
+        "image_transform", "data_loc", "template_param_file", "detector",
+        "strain_gate_ue", "ignore_calibration_gate")},
 )
 async def midas_auto_calibrate(
     image_file: str,
@@ -5096,9 +5257,13 @@ async def midas_auto_calibrate(
     data_loc: str = "",
     energy_kev: float = 0.0,
     wavelength_angstrom: float = 0.0,
-    calibration_engine: str = "v1",   # v2 opt-in: fails beam-center seeding on off-center detectors (pending MIDAS dev fix)
+    calibration_engine: str = "auto",  # auto → canonical v2 when available, else the v1 cascade
     seed_from_params: str = "",        # trusted neighbour refined_MIDAS_params*.txt → seed BC/Lsd (robust fallback for low-SNR frames)
     host: str = "",
+    template_param_file: str = "",     # v1 params supplying detector size/px/lattice for the canonical recipe
+    detector: str = "",                # preset alias (see detector_presets.json) → tiled panel layout
+    strain_gate_ue: float = 100.0,     # held-out strain cap, µε (handbook §4)
+    ignore_calibration_gate: bool = False,  # accept a result that fails the strain gate
 ) -> str:
     """🔧 PRIMARY TOOL FOR FF-HEDM DETECTOR CALIBRATION (MIDAS Official)
 
@@ -5288,8 +5453,25 @@ async def midas_auto_calibrate(
         # run the pure-Python engine. Fall back to AutoCalibrateZarr.py
         # when the package is missing or the hardware gate fails (CPU-only).
         # Set APEXA_USE_NATIVE_MIDAS=0 to force the subprocess path.
+        # Gated on the RESOLVED engine. This branch used to run whenever a
+        # parameters_file was present, ignoring calibration_engine entirely — so
+        # calibration_engine="v2" silently executed the v1 native engine, and
+        # returned before output_dir handling, wavelength resolution and the
+        # outcome manifest were ever reached.
         _native_disabled = os.environ.get("APEXA_USE_NATIVE_MIDAS") == "0"
-        if (not _native_disabled
+        _req_engine = str(calibration_engine).strip().lower()
+        if _req_engine in ("v1", "native"):
+            _allow_native = True
+        elif _req_engine == "auto":
+            # Under "auto" the canonical recipe wins when it can run; native is the
+            # first fallback, so only try it here when canonical-v2 is ruled out.
+            # _calibration_interpreter() is cached, so this costs one probe.
+            _allow_native = not (
+                _calibration_interpreter()[2]
+                and Path(image_file).suffix.lower() not in _CALIB_ZARR_SUFFIXES)
+        else:
+            _allow_native = False   # "v2" / "legacy" never take this path
+        if (not _native_disabled and _allow_native
                 and parameters_file and not image_transform):
             try:
                 from apexa_midas_native import (
@@ -5622,215 +5804,232 @@ async def midas_auto_calibrate(
         _announce_output("midas_auto_calibrate", _calib_out,
                          engine=str(calibration_engine), image=image_path.name)
 
-        # ── Engine v2: midas-calibrate-v2 (differentiable; writes calibration.json) ──
-        # Produces the SAME artifact a colleague gets from midas-calibrate-v2:
-        # calibration.json with iso_R/harmonic distortion + in/post-residual
-        # strain (µε) — enabling a true v2-vs-v2 calibration benchmark. PyTorch,
-        # so slow on CPU-only hosts; runs in the MIDAS python env via subprocess.
-        if str(calibration_engine).lower() == "v2" and not _resolved_wl:
-            print("[engine] v2 calibration needs a wavelength but none resolved; "
-                  "falling back to v1 engine.", file=sys.stderr)
-        # image_transform (ImTransOpt) is applied only on the v1/legacy path,
-        # which builds a -ImTransOpt CLI argument. The v2 branch below returns
-        # before that code, so on v2 the parameter was accepted and SILENTLY
-        # DROPPED: an operator passing ImTransOpt=2 got a byte-identical result
-        # and no message. That is exactly the failure class this system exists to
-        # prevent, so say it out loud rather than let a null test look like a
-        # negative result (observed at 20-ID, 2026-09-28).
-        if (str(calibration_engine).lower() == "v2" and image_transform
-                and str(image_transform).strip() not in ("", "0")):
+        # ── Engine resolution: ONE decision, with the reason recorded ──────────
+        # Previously four branches were tried in sequence and the FIRST (the
+        # in-process native engine, below) ignored calibration_engine entirely, so
+        # calibration_engine="v2" could silently run the v1 native engine instead.
+        _eng = _choose_calibration_engine(calibration_engine, image_path, _resolved_wl)
+        print(f"[engine] {_eng['engine']} — {_eng['reason']}", file=sys.stderr)
+        for _fb in _eng["fallbacks"]:
+            print(f"[engine]   {_fb}", file=sys.stderr)
+
+        if _eng["engine"] == "refuse":
             return format_result({
                 "tool": "midas_auto_calibrate", "status": "error",
-                "error": "image_transform is not supported by the v2 engine",
-                "detail": (f"image_transform={image_transform!r} was requested, but the v2 "
-                           "differentiable engine does not apply ImTransOpt -- it would have "
-                           "been ignored and the result would look like a valid negative test."),
-                "fix": ("Run this calibration with calibration_engine=\"v1\", which passes "
-                        "-ImTransOpt to AutoCalibrateZarr, or place ImTransOpt in a "
-                        "parameters.txt beside the image."),
-                "nothing_was_run": True, "image": str(image_path),
+                "error": _eng["reason"],
+                "engine_requested": str(calibration_engine),
+                "interpreter": _eng["interpreter"],
+                "midas_calibrate_v2": _eng["v2_version"],
+                "nothing_was_run": True,
+                "image": str(image_path),
+                "fix": ("Use calibration_engine=\"auto\" to let APEXA fall back to the "
+                        "v1 cascade, or fix the precondition named above. An explicit "
+                        "\"v2\" never downgrades silently — that is the point."),
             })
 
-        if str(calibration_engine).lower() == "v2" and _resolved_wl:
+        # ── Canonical v2: the four-stage recipe from the calibrate-integrate ──
+        # capsule (phase-4-calibrate.md §4), run via _calibrate_runner.py.
+        if _eng["engine"] == "canonical-v2":
             _v2_out = (Path(output_dir).expanduser().absolute()
                        if output_dir else image_path.parent)
             _v2_out.mkdir(parents=True, exist_ok=True)
-            # v2 built-in calibrant set. _detect_calibrant_from_name returns a
-            # material only when its token is in the filename (else defaults to
-            # CeO2). If it detected a real calibrant the v2 engine can't handle
-            # (Au/Ni/Al), do NOT silently run CeO2 against a differently-named
-            # image — that fabricates a wrong-material calibration. Fail honestly.
-            _V2_CALIBRANTS = ("CeO2", "LaB6", "Si", "Al2O3")
             _calib_v2 = _detect_calibrant_from_name(original_stem)
-            if _calib_v2 not in _V2_CALIBRANTS:
-                _hint = ("Au is a single-crystal / NF beam-position standard, not an "
-                         "FF powder calibrant — use a powder standard for v2 geometry."
-                         if _calib_v2 == "Au" else
-                         f"{_calib_v2} is not a supported v2 powder calibrant.")
-                return format_result({
-                    "tool": "midas_auto_calibrate", "status": "error",
-                    "engine": "v2:midas_calibrate_v2",
-                    "error": (f"filename '{original_stem}' looks like a {_calib_v2} "
-                              f"calibrant, which the v2 engine does not support "
-                              f"(built-ins: {', '.join(_V2_CALIBRANTS)})."),
-                    "detected_calibrant": _calib_v2,
-                    "supported_calibrants": list(_V2_CALIBRANTS),
-                    "hint": (_hint + " To calibrate with a powder standard, pass a "
-                             "CeO2/LaB6/Si/Al2O3 image, or run calibration_engine='v1' "
-                             "(material-agnostic via LatticeConstant+SpaceGroup)."),
-                })
             _ny2, _nz2, _px2 = _detector_shape_and_px(image_path)
-            _lsd_um2 = (float(lsd_guess) if lsd_guess < 1_000_000
-                        else (float(lsd_from_filename) if lsd_match else 1_000_000.0))
+
+            # Template: explicit -> caller's parameters_file -> synthesized from the
+            # sourced detector registry. It supplies detector size, pixel size,
+            # lattice and thresholds; the recipe overwrites all geometry from the
+            # seed, so nothing is inherited from a previous answer (hard rule 2).
+            _tmpl = ""
+            if template_param_file and Path(template_param_file).expanduser().exists():
+                _tmpl = str(Path(template_param_file).expanduser().absolute())
+            elif param_path and Path(param_path).exists():
+                _tmpl = str(param_path)
+            else:
+                _auto_tmpl = _v2_out / f"{original_stem}_v2_template.txt"
+                _ok_t, _err_t = _synthesize_calibration_params(
+                    _auto_tmpl, calibrant=_calib_v2, wavelength=float(_resolved_wl),
+                    px_um=float(_px2), ny=int(_ny2), nz=int(_nz2),
+                    lsd_um=float(lsd_guess if lsd_guess < 1_000_000
+                                 else (lsd_from_filename if lsd_match else 1_000_000.0)),
+                    bc_y=float(_nz2) / 2.0, bc_x=float(_ny2) / 2.0,
+                    eta_bin=float(eta_bin_size), n_iter=int(n_iterations),
+                    mult=float(mult_factor))
+                if not _ok_t:
+                    return format_result({
+                        "tool": "midas_auto_calibrate", "status": "error",
+                        "error": f"could not build a template parameter file: {_err_t}",
+                        "nothing_was_run": True, "image": str(image_path),
+                        "fix": "Pass parameters_file= or template_param_file=.",
+                    })
+                _tmpl = str(_auto_tmpl)
+
+            # ImTransOpt is resolved HERE and applied exactly once, at read time,
+            # inside the runner. It must not also reach the pipeline via the
+            # template's `extra` — the runner clears spec.im_trans for that reason.
+            _tr, _tr_src = _resolve_image_transform(image_path, image_transform,
+                                                    Path(_tmpl))
+
             _dark_abs = (str(Path(dark_file).expanduser().absolute())
                          if dark_file and Path(dark_file).expanduser().exists() else "")
-            _vals = (
-                f"_IMG={str(image_path)!r}\n_DARK={_dark_abs!r}\n_WL={float(_resolved_wl)}\n"
-                f"_PX={float(_px2)}\n_CAL={_calib_v2!r}\n_OUT={str(_v2_out)!r}\n"
-                f"_LSD={float(_lsd_um2)}\n_NITER={int(n_iterations)}\n"
-            )
-            _body = r'''
-import json, numpy as np
-from pathlib import Path
-def _load(p):
-    p=str(p)
-    if not p: return None
-    if p.endswith((".h5",".hdf5",".hdf",".nxs")):
-        import h5py; best=[None]
-        with h5py.File(p,"r") as f:
-            def v(n,o):
+            _run_started = time.time()
+            _cmd_v2 = [_eng["interpreter"], str(CALIBRATE_RUNNER_SCRIPT),
+                       "--image", str(image_path),
+                       "--template", _tmpl,
+                       "--output-dir", str(_v2_out),
+                       "--calibrant", _calib_v2,
+                       "--wavelength", f"{float(_resolved_wl):.8f}",
+                       "--px-um", f"{float(_px2):.4f}",
+                       "--strain-gate-ue", str(float(strain_gate_ue)),
+                       "--device", os.environ.get("APEXA_MIDAS_DEVICE", "cpu")]
+            if _tr:
+                _cmd_v2 += ["--im-trans", str(_tr)]
+            if _dark_abs:
+                _cmd_v2 += ["--dark", _dark_abs]
+            if data_loc:
+                _cmd_v2 += ["--data-loc", data_loc]
+            if ignore_calibration_gate:
+                _cmd_v2 += ["--ignore-gate"]
+            # Tiled detectors: the layout comes from the sourced registry, which is
+            # the only place a concrete panel geometry exists (Pilatus 2M today).
+            _dk, _dpre = _resolve_detector_preset(detector)
+            if _dpre and isinstance(_dpre, dict) and _dpre.get("module_gaps"):
+                _mg = _dpre["module_gaps"]
+                _cmd_v2 += ["--panel-ny", str(_mg["NPanelsY"]),
+                            "--panel-nz", str(_mg["NPanelsZ"]),
+                            "--panel-sy", str(_mg["PanelSizeY"]),
+                            "--panel-sz", str(_mg["PanelSizeZ"]),
+                            "--panel-gaps-y", " ".join(map(str, _mg["PanelGapsY"])),
+                            "--panel-gaps-z", " ".join(map(str, _mg["PanelGapsZ"]))]
+
+            print(f"[engine] canonical v2 ({_eng['v2_version']}) via "
+                  f"{_eng['interpreter']}: calibrant={_calib_v2} wl={_resolved_wl:.6f} "
+                  f"px={_px2} imtrans={_tr or 'none'}({_tr_src}) out={_v2_out}",
+                  file=sys.stderr)
+
+            # Clean env: the pip torch stack breaks under the C++ DYLD/LD injection
+            # get_midas_env() applies (h5py/libhdf5 symbol mismatch).
+            _pv2 = None
+            try:
+                _pv2 = subprocess.run(
+                    _cmd_v2, capture_output=True, text=True,
+                    timeout=int(os.environ.get("APEXA_CALIB_TIMEOUT", "7200")),
+                    env=dict(os.environ))
+            except subprocess.TimeoutExpired:
+                _out_t = {"tool": "midas_auto_calibrate", "status": "timeout",
+                          "engine": f"canonical-v2:{_eng['v2_version']}",
+                          "error": "the canonical v2 calibration timed out",
+                          "image_file": str(image_path), "output_dir": str(_v2_out),
+                          "nothing_was_run": False}
+                _out_t["outcome_manifest"] = _write_calibration_outcome(_v2_out, _out_t)
+                return format_result(_out_t)
+
+            _payload = None
+            if _pv2 is not None and (_pv2.stdout or "").strip():
                 try:
-                    if hasattr(o,"shape") and len(getattr(o,"shape",()))>=2:
-                        a=np.asarray(o[()])
-                        if a.ndim>2: a=a[0]
-                        if best[0] is None or a.size>best[0].size: best[0]=a
-                except Exception: pass
-            f.visititems(v)
-        return best[0]
-    import fabio; return np.asarray(fabio.open(p).data)
-img=_load(_IMG)
-if img is None: raise SystemExit("could not load image array")
-if img.ndim>2: img=img[0]
-dark=_load(_DARK) if _DARK else None
-from midas_calibrate_v2 import calibrate
-# Device was hardcoded "cpu", so a GPU host still ran the differentiable fit on
-# CPU — minutes per frame, hours for a series. Auto-detect, overridable with
-# APEXA_MIDAS_DEVICE=cpu|cuda (explicit cpu is the documented-agreement path:
-# the manual records CPU and GPU agreeing exactly on v2, which is float64).
-import os as _os, torch as _torch
-_dev = (_os.environ.get("APEXA_MIDAS_DEVICE") or "auto").strip().lower()
-if _dev == "auto":
-    _dev = "cuda" if _torch.cuda.is_available() else "cpu"
-# Bound CPU thread oversubscription: several single-frame calibrations run
-# back to back (or in parallel), and torch defaulting to every core makes them
-# fight each other. APEXA_MIDAS_THREADS overrides.
-_thr = _os.environ.get("APEXA_MIDAS_THREADS", "").strip()
-if _thr.isdigit() and int(_thr) > 0:
-    _torch.set_num_threads(int(_thr))
-print(f"[v2] device={_dev} threads={_torch.get_num_threads()}", flush=True)
-res=calibrate(np.asarray(img,dtype=float), wavelength=_WL, pxY=_PX, calibrant=_CAL,
-              output_dir=_OUT, initial_Lsd=_LSD, n_iter=_NITER, dark=dark,
-              device=_dev, verbose=True)
-out={"engine":"pip-v2:midas_calibrate_v2","Lsd_um":res.Lsd,"BC_y":res.BC_y,
-     "BC_z":res.BC_z,"tx":res.tx,"ty":res.ty,"tz":res.tz,"wavelength_A":res.wavelength_A,
-     "in_loop_strain_uE":res.in_loop_strain_uE,
-     "post_residual_strain_uE":res.post_residual_strain_uE,
-     "calibration_json":str(Path(_OUT)/"calibration.json"),
-     "residual_corr_bin_path":getattr(res,"residual_corr_bin_path",None)}
-print("APEXA_V2_RESULT="+json.dumps(out))
-'''
-            # Which interpreter runs v2 decides which midas-calibrate-v2 does the
-            # science, and they can differ by many releases on the same host.
-            #
-            # Default is sys.executable (the APEXA .venv): v2 needs the pip
-            # midas-suite + torch, which the conda MIDAS env from
-            # find_midas_python() does not carry (it holds only the C++ deps:
-            # zarr/diplib/numba), so running v2 there is ModuleNotFoundError.
-            #
-            # But APEXA's .venv installs from uv.lock, which can be far behind the
-            # maintained shared env. Measured on copland 2026-09-28: the .venv had
-            # midas-calibrate-v2 0.5.3 while /home/beams12/S1IDUSER/opt/envs/midas
-            # had 0.22.0 -- and 0.5.3 is below the < 0.16.0 RhoD defect the
-            # calibrate-integrate capsule documents. The operator gate-checked the
-            # shared env and the calibration then silently ran on the stale one.
-            #
-            # So prefer APEXA_MIDAS_BIN's interpreter when it can actually import
-            # v2, and say which one was chosen. Probe-guarded, falls back to the
-            # .venv, so an unset or broken APEXA_MIDAS_BIN changes nothing.
-            midas_python = sys.executable
-            _pip_bin = os.environ.get("APEXA_MIDAS_BIN", "").strip()
-            if _pip_bin:
-                _cand = str(Path(_pip_bin) / "python")
-                try:
-                    if subprocess.run([_cand, "-c", "import midas_calibrate_v2"],
-                                      capture_output=True, text=True,
-                                      timeout=60).returncode == 0:
-                        midas_python = _cand
+                    _payload = json.loads(_pv2.stdout)
                 except Exception:
-                    pass
+                    _payload = None
+            if _payload is None:
+                _tail = "\n".join((_pv2.stderr or "").strip().splitlines()[-12:]) \
+                    if _pv2 is not None else ""
+                _out_e = {
+                    "tool": "midas_auto_calibrate", "status": "error",
+                    "engine": f"canonical-v2:{_eng['v2_version']}",
+                    "error": "the canonical v2 runner produced no JSON payload",
+                    "returncode": (_pv2.returncode if _pv2 is not None else None),
+                    "stderr": _tail, "image_file": str(image_path),
+                    "output_dir": str(_v2_out), "nothing_was_run": False,
+                }
+                _out_e["outcome_manifest"] = _write_calibration_outcome(_v2_out, _out_e)
+                return format_result(_out_e)
+
+            # Merge the refined geometry onto the full template and write it under
+            # the name every downstream consumer already globs. Without this the
+            # calibration is a dead end: integration auto-discovers
+            # refined_MIDAS_params*.txt and errors when it is absent.
+            _merged_path, _merge_notes = (None, [])
+            _pt = _payload.get("paramstest_file")
+            if _pt and Path(_pt).exists():
+                _merged_path, _merge_notes = _merge_refined_params(
+                    _tmpl, _pt, _v2_out / "refined_MIDAS_params_v2.txt")
+
+            _geo = {}
             try:
-                _ver = subprocess.run(
-                    [midas_python, "-c",
-                     "import importlib.metadata as m;print(m.version('midas-calibrate-v2'))"],
-                    capture_output=True, text=True, timeout=60).stdout.strip()
+                from apexa_lib import read_params as _rp
+                if _merged_path:
+                    _g = _rp(_merged_path)
+                    _geo = {"lsd": _g.get("lsd_um"), "bc_y": _g.get("bc_y"),
+                            "bc_x": _g.get("bc_x"), "tx": _g.get("tx"),
+                            "ty": _g.get("ty"), "tz": _g.get("tz"),
+                            "wavelength": _g.get("Wavelength"), "px": _g.get("px")}
             except Exception:
-                _ver = "?"
-            print(f"[engine] v2 interpreter: {midas_python} "
-                  f"(midas-calibrate-v2 {_ver or '?'})", file=sys.stderr)
-            # Probe importability first so a missing/old pip package yields one
-            # clean line instead of dumping a traceback on every calibration.
-            try:
-                _probe = subprocess.run(
-                    [midas_python, "-c", "import midas_calibrate_v2"],
-                    capture_output=True, text=True, timeout=60)
-                _v2_ok = _probe.returncode == 0
-            except Exception:
-                _v2_ok = False
-            if not _v2_ok:
-                print("[engine] v2 engine (midas_calibrate_v2) not importable in "
-                      f"{midas_python} — using v1 engine.", file=sys.stderr)
-                _p = None
-            else:
-                print("=" * 70, file=sys.stderr)
-                print("🔧 MIDAS CALIBRATION (v2 differentiable — midas_calibrate_v2):",
-                      file=sys.stderr)
-                print(f"   image={image_path} calibrant={_calib_v2} λ={_resolved_wl} "
-                      f"px={_px2} Lsd0={_lsd_um2} out={_v2_out}", file=sys.stderr)
-                print("   (PyTorch on CPU is slow — this can take many minutes)",
-                      file=sys.stderr)
-                print("=" * 70, file=sys.stderr)
-                try:
-                    # Clean env (no C++ DYLD/LD injection — that triggers an
-                    # h5py/libhdf5 symbol mismatch for the pip torch stack).
-                    _p = subprocess.run([midas_python, "-c", _vals + _body],
-                                        capture_output=True, text=True,
-                                        timeout=7200, env=dict(os.environ))
-                except subprocess.TimeoutExpired:
-                    print("[engine] v2 calibration timed out (CPU PyTorch is slow) — "
-                          "falling back to v1 engine.", file=sys.stderr)
-                    _p = None
-            _line = (next((l for l in (_p.stdout or "").splitlines()
-                          if l.startswith("APEXA_V2_RESULT=")), None)
-                     if _p is not None else None)
-            if _p is not None and _p.returncode == 0 and _line:
-                import json as _json
-                _res = _json.loads(_line[len("APEXA_V2_RESULT="):])
-                _res.update({
-                    "tool": "midas_auto_calibrate", "status": "success",
-                    "Lsd_mm": _res.get("Lsd_um", 0) / 1000.0,
-                    "message": (f"v2 calibration complete (calibrant {_calib_v2}). "
-                                f"Strain {_res.get('in_loop_strain_uE')}→"
-                                f"{_res.get('post_residual_strain_uE')} µε. "
-                                f"calibration.json written to {_v2_out}.")})
-                print("[engine] calibration engine: pip-v2:midas_calibrate_v2",
-                      file=sys.stderr)
-                return format_result(_res)
-            # v2 failed/unavailable → fall through to the v1 engine below.
-            if _p is not None:
-                print("[engine] v2 calibration failed — falling back to v1 engine.",
-                      file=sys.stderr)
-                for _l in (_p.stderr or "").strip().splitlines()[-8:]:
-                    print(f"  {_l}", file=sys.stderr)
+                pass
+
+            _gate = _payload.get("gate") or {}
+            _seed = _payload.get("seed") or {}
+            _fresh = bool(_merged_path
+                          and Path(_merged_path).stat().st_mtime >= _run_started - 1)
+
+            _out = {
+                "tool": "midas_auto_calibrate",
+                "status": _payload.get("status", "error"),
+                "engine": _payload.get("engine",
+                                       f"canonical-v2:{_eng['v2_version']}"),
+                "engine_reason": _eng["reason"],
+                "recipe": _payload.get("recipe"),
+                "calibrant": _calib_v2,
+                "image_file": str(image_path),
+                "dark_file": _dark_abs or None,
+                "input_parameters_file": _tmpl,
+                # v1 key names on purpose: apexa_ffhedm_graph, the web server, the
+                # benchmark and midas_integrate_2d_to_1d all key on these.
+                "calibrated_parameters_file": _merged_path,
+                "refined_param_file": _merged_path,
+                "calibrated_parameters": _geo,
+                "convergence_metrics": {
+                    "final_mean_strain": _gate.get("stage4_strain_uE_test"),
+                    "strain_uE_test": _gate.get("stage4_strain_uE_test"),
+                    "strain_uE_full": _gate.get("stage4_strain_uE_full"),
+                    "held_out_vs_full_gap_uE": _gate.get("held_out_vs_full_gap_uE"),
+                    "gate_threshold_uE": _gate.get("threshold_uE"),
+                    "gate_passed": _gate.get("passed"),
+                    "seed_method": _seed.get("method"),
+                    "seed_threshold_rung": _seed.get("threshold_rung"),
+                    "converged": bool(_gate.get("passed")),
+                },
+                "paramstest_file": _pt,
+                "panelshifts_file": _payload.get("panelshifts_file"),
+                "im_trans_applied": _payload.get("im_trans_applied"),
+                "im_trans_source": _tr_src,
+                "scope_gate": _payload.get("scope_gate"),
+                "seed": _seed,
+                "gate": _gate,
+                "capabilities": _payload.get("capabilities"),
+                "output_dir": str(_v2_out),
+                "notes": list(_payload.get("notes", [])) + _merge_notes,
+            }
+            for _k in ("error", "fix", "nothing_was_run", "missing_dependencies"):
+                if _k in _payload:
+                    _out[_k] = _payload[_k]
+
+            # Honest status: returncode 0 and a file on disk are not the same as a
+            # file THIS run wrote. Without the freshness check a stale
+            # refined_MIDAS_params*.txt is reported as the current result.
+            if _out["status"] == "success" and not _fresh:
+                _out["status"] = "warning"
+                _out["run_note"] = (
+                    "the run reported success but no freshly-written parameter file "
+                    "was found — do not cite these numbers as this run's result")
+            if _out["status"] == "success":
+                _out["message"] = (
+                    f"Canonical v2 calibration complete (calibrant {_calib_v2}, "
+                    f"{_eng['v2_version']}). Held-out strain "
+                    f"{_gate.get('stage4_strain_uE_test')} µε "
+                    f"(gate {_gate.get('threshold_uE')} µε). "
+                    f"Refined parameters: {_merged_path}")
+            _out["outcome_manifest"] = _write_calibration_outcome(_v2_out, _out)
+            return format_result(_out)
 
         # Build command with all parameters according to MIDAS manual
         # Use MIDAS Python (conda midas_env) instead of current Python (UV)

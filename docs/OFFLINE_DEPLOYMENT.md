@@ -1,5 +1,30 @@
 # Offline / air-gapped beamline deployment
 
+## §0.0 The lockfile is the deployment contract
+
+`uv.lock` is what makes an install reproducible on a host with no public internet.
+**`uv sync --upgrade` on a laptop is a production change for every host that later
+pulls**, and the failure does not appear until that host tries to install.
+
+This is not hypothetical. On 2026-09-27 an upgrade of the whole MIDAS stack plus a
+migration to MCP 2.x was committed after `uv sync --upgrade`; copland — which has the
+data and the ANL-internal network but no public internet — could not reach a
+`llvmlite` wheel and failed to start. Both changes were reverted together in
+`63f1422` because they shared the lockfile and could not be separated.
+
+Rules that follow from it:
+
+- Change `uv.lock` deliberately, as its own commit, never as a side effect.
+- Before landing a dependency change, confirm every new or bumped wheel is reachable
+  **from the air-gapped host**, not from the laptop.
+- Adding a dependency to make one feature work is a production change. Prefer
+  feature-detection and an actionable refusal. (The canonical calibration path needs
+  `scikit-image`; rather than adding it, APEXA probes for it and tells the operator
+  to point `APEXA_MIDAS_BIN` at the MIDAS pip env, where it is already a declared
+  dependency of `midas-calibrate-v2` >= 0.22.0.)
+- **MCP 2.x is still pending** for this reason. The migration is written and
+  reverted; re-landing it needs the wheels to reach copland first.
+
 For a beamline machine with **no internet access** (or a locked-down network that
 can't reach `huggingface.co`). Covers the two things that don't "just work" on a
 fresh checkout: the **knowledge base (RAG)** embedding model, and **data that

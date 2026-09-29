@@ -1,186 +1,197 @@
 ---
 name: midas-calibrate
 description: Run MIDAS detector geometry calibration using a CeO2 or LaB6 calibrant image. Use when the user asks to calibrate, run calibration, find beam center, refine detector distance (Lsd), or mentions CeO2/LaB6/ceria calibrant files.
-compatibility: Requires MIDAS v11 + midas-suite (midas_calibrate ≥0.2.7). Native-Python calibration runs in-process; no compiled C binaries required for the primary path.
+compatibility: Requires midas-suite. The preferred path (canonical v2) needs midas-calibrate-v2 + scikit-image; the legacy path needs a MIDAS repo clone + diplib. Neither requires compiled C binaries for the primary path.
 metadata:
   author: pawan-tripathi
-  version: "2.0"
+  version: "3.0"
   midas-version: "11.0"
-  package: "midas_calibrate"
-  manual: MIDAS/manuals/FF_Calibration.md
+  package: "midas_calibrate_v2"
+  manual: knowledge_base/capsules/calibrate-integrate/phase-4-calibrate.md
 ---
 
-## Calibration Workflow (MIDAS v11)
+## Calibration in APEXA
 
-In v11, calibration is the **native-Python `midas_calibrate` package**, run
-in-process by APEXA. The legacy C binary `CalibrantPanelShiftsOMP` is **archived**;
-`CalibrantIntegratorOMP` is the active C/OpenMP superset used only as a fallback.
+**One tool: `midas_auto_calibrate`.** It selects an engine, runs it, enforces the
+handbook's acceptance gate, and writes a v1-format parameter file that integration
+and FF-HEDM pick up automatically.
 
-### Calibration engines — three, not two (don't confuse them)
+The authoritative procedure is the vendored capsule
+[`knowledge_base/capsules/calibrate-integrate/`](../../../knowledge_base/capsules/calibrate-integrate/) —
+`phase-4-calibrate.md` for the recipe, `HARD_RULES.md` for the rules, `DIAGNOSIS.md`
+when something looks wrong. **This skill describes how APEXA invokes it; the capsule
+is the source of truth for the physics.**
 
-There are **two Python generations sitting above one C/OpenMP binary** — *not*
-"Python vs C++". Both `midas_calibrate` packages are pure-Python PyTorch
-(`setuptools` backend, `torch>=2.1`, zero C/C++/CMake sources).
+### Step 1 — Find the files
 
-| Engine | Language | Who calls it | Outputs |
-|---|---|---|---|
-| **`midas_calibrate` (v1)** | Python / PyTorch | **APEXA's `midas_auto_calibrate`** (native, in-process via `apexa_midas_native.native_calibrate`) | `refined_MIDAS_params_<material>.txt` only |
-| **`midas_calibrate_v2`** | Python / PyTorch | the package's own notebooks (one-shot `calibrate()`, Bayesian/Laplace UQ, multi-panel, residual maps) | `calibration.json` + `residual_corr.bin` (+ refined params) |
-| **`CalibrantIntegratorOMP`** | **C / OpenMP** | `AutoCalibrateZarr.py` and the `midas-autocalibrate` CLI (subprocess **fallback**) | `refined_MIDAS_params*.txt`, `*corr.csv`, `autocal.log` |
-
-- **APEXA uses v1** (`midas_calibrate`) for the native path, falling back to the
-  **C/OMP** binary via `AutoCalibrateZarr.py`. It does **not** invoke
-  `midas_calibrate_v2` today — so `calibration.json` / `residual_corr.bin` are
-  *not* produced by `midas_auto_calibrate`.
-- `v1` vs `v2` is an **API generation** difference (v2 adds UQ, multi-panel,
-  residual-correction maps), both differentiable PyTorch. The only C/C++ code in
-  the calibration path is the OMP binary.
-
-> **Robust / seeded retry (e.g. a low-SNR frame that landed in a false basin):**
-> call `midas_auto_calibrate(..., seed_from_params="<good neighbour's
-> refined_MIDAS_params*.txt>")`. It reads a complete, correct seed (both BC coords
-> + Lsd in µm) and runs the proven v1 engine. Do **NOT** hand-write runner scripts
-> against the `midas_calibrate_v2` package — it has its own open issues (e.g.
-> "keeping 1 of N rings" → IndexError) and is not the supported path.
-
-Two MCP tools:
-
-| | **`midas_auto_calibrate`** (preferred) | **`run_ff_calibration`** (lower-level) |
-|---|---|---|
-| Input | Point at an image — auto-detects format/energy/material | A prepared `Parameters.txt` |
-| Engine | native `midas_calibrate` in-process → `AutoCalibrateZarr.py` fallback | `midas-autocalibrate` CLI → `CalibrantIntegratorOMP` fallback |
-| Use when | Almost always | You already have a full param file and want the CLI path |
-
-> Run [[midas-validate]] (`inspect_dataset_file`, `enumerate_bragg_rings`) first if
-> you're unsure of the geometry or which rings to expect.
-
-### Step 1 — Find files
-
-Use `list_directory` to locate:
-- Calibrant image: CeO2 or LaB6 diffraction image (`.tif`, `.ge`, `.h5`, `.zip`)
-- Parameter file (optional): `ps_*.txt`, `Parameters.txt`, or any `*params*.txt`
-- Dark file (optional): file starting with `dark_`
+`list_directory` to locate:
+- **Calibrant image** — CeO2 or LaB6 (`.tif`, `.ge*`, `.h5`, `.zip`)
+- **Dark frame** — usually `dark_*`. Pass it. A missing dark is the second most
+  common cause of "no fitted points"; a *wrong-exposure* dark is worse, because it
+  does not fail — it moved a fitted Lsd from 1052 mm to 578 mm in the archive.
+- **Parameter file** (optional) — `ps_*.txt`, `Parameters.txt`, `*params*.txt`.
+  Used as the template: detector size, pixel size, lattice, thresholds.
 
 ### Step 2 — Call the tool
 
 ```
 midas_auto_calibrate(
-    image_file       = "<absolute path>",
-    param_file       = "<absolute path to parameter file>",   # optional — auto-detected
-    dark_file        = "<absolute path to dark, or omit>",
-    n_iterations     = 40,
-    mult_factor      = 2.5,
-    eta_bin_size     = 5.0,
-    first_ring_nr    = 1,
-    bad_px_intensity = -2,
-    gap_intensity    = -1
+    image_file          = "<absolute path>",
+    parameters_file     = "<absolute path>",   # optional — auto-detected/synthesized
+    dark_file           = "<absolute path>",   # pass it whenever one exists
+    output_dir          = "<absolute path>",
+    calibration_engine  = "auto",              # default
 )
 ```
 
-### Supported formats
+Every argument is optional except `image_file`. Other real parameters:
+`template_param_file`, `detector`, `strain_gate_ue`, `ignore_calibration_gate`,
+`image_transform`, `data_loc`, `energy_kev`, `wavelength_angstrom`, `lsd_guess`,
+`bc_x_guess`/`bc_y_guess`, `n_iterations`, `seed_from_params`, `host`.
 
-| Extension | Format |
+> There is **no** `param_file`, `bad_px_intensity` or `gap_intensity` argument.
+> (Earlier versions of this skill documented all three; a literal copy failed.)
+
+### The engines — four paths, one decision
+
+`calibration_engine` picks; the choice and its reason are returned as `engine` and
+`engine_reason`, and every rejected alternative is listed under `fallbacks`.
+
+| value | behaviour |
 |---|---|
-| `.tif`, `.tiff` | TIFF |
-| `.ge`, `.ge1`–`.ge5` | GE binary |
-| `.h5`, `.hdf5`, `.hdf`, `.nxs` | HDF5 |
-| `.zip` | Zarr |
+| **`"auto"`** (default) | canonical v2 when it can run → native → pip console → legacy. Each fallback records **why**. |
+| `"v2"` | canonical v2, or **refuse**. Never downgrades silently. |
+| `"v1"` | the old cascade: in-process native `midas_calibrate` → `midas-autocalibrate` console → `AutoCalibrateZarr.py` |
+| `"legacy"` | force `AutoCalibrateZarr.py` |
 
-### v11 rules — never get these wrong
+| engine | what it is | needs |
+|---|---|---|
+| **canonical v2** | the handbook four-stage recipe via `_calibrate_runner.py` | `midas_calibrate_v2` **+ `scikit-image`** |
+| native v1 | `midas_calibrate` in-process | a torch accelerator (raises on CPU-only) |
+| pip console v1 | `midas-autocalibrate` (from the **`midas-calibrate`** package — v1, not v2) | cannot read HDF5 |
+| legacy | `AutoCalibrateZarr.py` → `CalibrantIntegratorOMP` | a **MIDAS repo clone** + `diplib` |
 
-- **Native engine is the primary path** — `midas_auto_calibrate` runs the
-  `midas_calibrate` package in-process. It falls back to `AutoCalibrateZarr.py`
-  (which now drives `CalibrantIntegratorOMP`) only if the native engine is
-  unavailable. Set `APEXA_USE_NATIVE_MIDAS=0` to force the subprocess path.
-- **`CalibrantPanelShiftsOMP` is archived** — never invoke it directly.
-  `CalibrantIntegratorOMP` is the active superset (integrated tilt/BC/Lsd +
-  panel shifts + outlier-ring rejection in one call).
-- **No `-StoppingStrain`** — removed. Use `n_iterations` instead.
-- **`lsd_guess` is in µm** — 650 mm = 650000 µm (auto-parsed from filename if `_650mm_` present)
-- **Output file has material suffix**: `refined_MIDAS_params_CeO2.txt`, not `refined_MIDAS_params.txt`
-- **PYTHONPATH / env** — handled automatically by `get_midas_env()`.
+**Zarr (`.zip`/`.zarr`) only works on the legacy path.** `midas_calibrate_v2` has no
+zarr reader, so `auto` routes zarr to legacy and `"v2"` refuses it.
 
-### `ImTransOpt` (image transformation) — auto-detected, but verify
+**On a pip-only host (the blessed MIDAS env, no clone) the legacy path does not
+exist.** Set `APEXA_MIDAS_BIN` to that environment's `bin/` and `auto` will find
+the canonical engine there. If `midas_auto_calibrate` reports
+`canonical-v2 skipped: ... No module named 'skimage'`, that is the whole problem:
+`midas-calibrate-v2` only declared scikit-image as a hard requirement from 0.22.0.
 
-`ImTransOpt` controls flip/transpose of the raw image to align with the MIDAS
-lab frame. Per `MIDAS/manuals/README.md` it is **detector-mount specific** — there
-is *no* reliable extension-based rule (a Pilatus TIFF can need `2`, a GE file
-can need `0`, depending on how the detector is physically oriented).
+### What the canonical recipe does
 
-The `midas_auto_calibrate` tool resolves it in this order:
+Read (sentinels zeroed, mask returned) → clean → **seed after cleaning** →
+load the template and overwrite BC/Lsd from the seed, zero the tilts and p0–p14 →
+build the spec → *(tiled only)* panel terms + no-expansion gauge + layout →
+`autocalibrate_four_stage` → write a v1-format parameter file.
 
-1. **`image_transform` kwarg** — explicit user value wins.
-2. **`ImTransOpt` line in the supplied `parameters_file`** — re-used as-is.
-3. **Sibling `parameters.txt` / `Parameters.txt` / `params.txt` next to the image** — auto-picked.
-4. **Fallback: `0` (no transform) + warning** — agent should flag this to the user.
+Three things APEXA handles that a hand-written script gets wrong:
 
-Codes (from `MIDAS/manuals/README.md`):
+- **`ImTransOpt` is applied exactly once**, at read time. On newer builds
+  `spec_from_v1_params` also lifts it from the template and the pipeline re-applies
+  it — flipping the frame back. APEXA clears the spec copy.
+- **`RhoD` is written in µm**, computed as `MaxRingRad_px × px_um`. The upstream
+  derivation is version-dependent (0.5.3 leaves it in *pixels*), and a pixel-valued
+  `RhoD` rescales every distortion coefficient with no error and a good strain number.
+- **`use_diplib=False`** — upstream flipped this default after diplib segfaulted on
+  one platform and hung a Windows kernel at import.
 
-| `ImTransOpt` | Effect |
-|---|---|
-| `0` | No transform |
-| `1` | Flip left/right |
-| `2` | Flip top/bottom |
-| `3` | Transpose |
+### The acceptance gate
 
-> **If calibration converges to nonsense or rings are mirrored, ImTransOpt is
-> the first thing to suspect.** Verify against a physical fiducial (beam-stop wire,
-> fiducial dot) whose position on the detector you can predict.
-
-Pass multiple transforms space-separated (applied in order):
 ```
-midas_auto_calibrate(..., image_transform="1 3")   # flip LR then transpose
+stage4_strain_uE_test  <  100 µε        # held-out, not the full set
+|held-out − full| small                 # a large gap means overfitting
 ```
 
-### Calibrant auto-detection from filename
+A calibrant refining worse than the gate **is not a calibration**, and APEXA
+returns `status: "error"` rather than reporting the numbers as a result.
 
-If the image filename contains these patterns, no param file needed for material/energy:
-- `ceo2`, `ceria` → CeO2, space group 225
-- `lab6` → LaB6, space group 221
-- `71p676keV` → wavelength 0.17298 Å
-- `650mm` → Lsd guess 650000 µm
+**But read it against the geometry, not as a universal bar.** The cap is a
+fraction, `|1 − R_obs/R_pred|`, so `strain ≈ Δpixel / R_ring`: a short
+sample-to-detector distance structurally reads a higher microstrain for the same
+real precision. A real ~350 mm setup, confirmed correct by ring overlay, read
+199 µε. The failure payload carries `ring_radius_window_px` and `lsd_um` so you can
+tell which case you are in. Halt **H3** is *stop and LOOK*, not *fail*: open the
+ring overlay before concluding the calibration is bad. Then either
+`strain_gate_ue=<n>` for that geometry, or `ignore_calibration_gate=True`
+deliberately.
 
-### Wavelength — ALWAYS derive it, never hand-compute
+Reference numbers from the handbook dataset: **66.1 µε held-out, 67.2 full.**
 
-The beam energy (e.g. `96keV` in the filename) → `--wavelength` MUST come from
-`xray_calculate("energy_to_wavelength", energy_kev=96)` — do NOT compute λ in your
-head. It uses the canonical beamline constant (λ = 12.398419057638671 / E[keV]); a
-hand-computed λ drifts (e.g. 0.12908 instead of 0.129150 Å for 96 keV = a 0.05 keV
-error baked into the geometry). For an edge-tuned run, pass `element=<symbol>` (au,
-w, pb, …) to use that element's K-edge energy — but a *sample* made of gold measured
-at 96 keV uses 96 keV, NOT the Au edge.
+### Preconditions APEXA checks before spending a fit
 
-### Output files (written to image directory)
+Each returns `nothing_was_run: true` rather than a wrong number.
 
-- `refined_MIDAS_params_<material>.txt` — **primary output**, use for integration and FF-HEDM
-- `autocal.log` — iteration history (subprocess/`AutoCalibrateZarr.py` path)
-- `<stem>.lineout.xy` — 2θ vs intensity for visual check
-- `*corr.csv` — per-ring residuals (`AutoCalibrateZarr.py`/`CalibrantIntegratorOMP`
-  path; view with `plot_calibrant_results`)
-
-> **`midas_auto_calibrate` writes the refined `.txt` only** — both its native engine
-> (v1 `midas_calibrate`, `result.params.write()`) and the `AutoCalibrateZarr.py`
-> fallback produce `refined_MIDAS_params_<material>.txt` as the canonical output.
-> The `calibration.json` + `residual_corr.bin` artifacts belong to the *separate*
-> `midas_calibrate_v2` one-shot `calibrate(output_dir=…)` API used in the package
-> notebooks — APEXA does **not** invoke that path today, so do not expect those
-> files from `midas_auto_calibrate`.
-
-### Convergence guide
-
-| MeanStrain | Quality |
+| check | why it exists |
 |---|---|
-| < 50 µε | Excellent |
-| 50–200 µε | Good |
-| 200–500 µε | Acceptable — try more iterations |
-| > 500 µε | Poor — check image, param file, rings |
+| `detector_scope_gate` | the only gate a converged fit cannot fool — the fitter does not fail when the rings fall off the detector, it *succeeds*. Halted 42 of 252 archive exposures; **26 had already produced a plausible-looking calibration.** |
+| dark is finite | one NaN in the dark poisons the whole frame |
+| dark shape matches | — |
+| `seed.threshold_rung == 0` | a relaxed threshold means the strict one found nothing; relaxed far enough, the arc finder fits noise. Reported always, warned when > 0. |
+| seed method is `make_seed` | hard rule 14 — `first_time_calibrate`'s own seeder matched 3 of 37 arcs on a masked frame |
 
-> **Saturation check:** unattenuated CeO2 saturates the detector at UINT32_MAX,
-> producing flat-topped rings that won't refine. If MeanStrain stays high, check
-> the `*_lineout.xy` signal-to-noise before suspecting the calibration code.
+### ImTransOpt
 
-### Visualize the result
+Detector-mount specific — there is no extension-based rule (a Pilatus TIFF may need
+`2`, a GE file `0`). Resolution order:
 
-After calibration, use [[midas-visualize]]:
-- `plot_calibrant_results` — ring-fit residuals (`*corr.csv`)
-- `plot_lineout_comparison` — measured lineout vs ideal calibrant ring positions
+1. the `image_transform` argument
+2. `ImTransOpt` in the supplied `parameters_file`
+3. a sibling `parameters.txt` / `Parameters.txt` / `params.txt`
+4. fallback `0` **with a warning** — surface that to the user
+
+| code | effect |
+|---|---|
+| `0` | none |
+| `1` | flip left/right |
+| `2` | flip top/bottom |
+| `3` | transpose |
+
+Multiple codes are space-separated and applied in order: `image_transform="1 3"`.
+It **cannot be checked after the fact** — the refiner absorbs a mirror and reports a
+good strain. Test it directly: the right value gave 0.039 px RMS about ideal on a
+2880² frame; the wrong one, 1.374 px, with ring contrast collapsing from 101 to 6.9.
+
+### Outputs
+
+| file | from |
+|---|---|
+| **`refined_MIDAS_params_v2.txt`** | canonical v2 — **the primary output**; feed this to integration and FF-HEDM |
+| `paramstest_v2.txt` | canonical v2, pre-merge (missing MaskFile and the ring/binning keys) |
+| `<...>_panelshifts.txt` | canonical v2, tiled detectors only |
+| `refined_MIDAS_params_<material>.txt` | native / pip console / legacy |
+| `autocal.log`, `*corr.csv` | legacy only |
+| `APEXA_calibration.json` | every path — the per-run outcome manifest |
+
+**Always cite `calibrated_parameters_file` from the result**, not a constructed
+name. Integration auto-discovers `refined_MIDAS_params*.txt` beside the image.
+
+### Wavelength — derive it, never hand-compute
+
+Use `xray_calculate("energy_to_wavelength", energy_kev=…)`, which goes through
+`apexa_units` (xrayutilities, CODATA-2018 fallback). Do not compute λ in your head:
+a hand-rounded value bakes an energy error into the geometry.
+
+And note **hard rule 9**: λ is *not* determined by a single-distance powder pattern.
+Wavelength and Lsd are degenerate — a 1 % energy error becomes a 1 % distance error
+and **the strain gate still passes**. Take λ from the beamline, cross-check it
+against the filename and metadata, and never try to recover it by calibrating at
+candidate energies and picking the lowest residual.
+
+### Auto-detection from the filename
+
+`ceo2`/`ceria` → CeO2 (SG 225) · `lab6` → LaB6 (SG 221) ·
+`61p332keV` → λ · `650mm` → Lsd guess 650000 µm. `lsd_guess` is in **µm**.
+
+### When it goes wrong
+
+`DIAGNOSIS.md` in the capsule is organised symptom → discriminating test → cause →
+lever. The entries worth knowing by name: `pixel.sentinel_unmasked` (a whole
+detector reading ~4.29e9), `geometry.rings_unreachable`, `tilt.collapsed_to_seed`
+(a near-zero tilt on a detector you know is tilted — **open, and the default path
+most people take**), `degeneracy.lambda_lsd`, and `fit failed: no ring points`.
+
+For a low-SNR frame that landed in a false basin, seed from a trusted neighbour:
+`midas_auto_calibrate(..., seed_from_params="<good refined_MIDAS_params*.txt>")`.

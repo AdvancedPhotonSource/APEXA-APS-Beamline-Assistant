@@ -80,9 +80,10 @@ User (natural language)
             +----------------+-----------------+      MIDAS viewer scripts
                              |
                   +----------+----------+
-                  |   core (10 tools)   |
-                  |   midas (50 tools)  |
+                  |   core (11 tools)   |
+                  |   midas (55 tools)  |
                   |   motor (13 tools)  |
+                  |   gsas2 (5 tools)   |
                   +---------------------+
 ```
 
@@ -97,20 +98,22 @@ User (natural language)
 ### MCP Servers (`servers.config`)
 | Server | File | Tools |
 |---|---|---|
-| core | `beamline_core_server.py` | 10 tools: file ops, shell commands, X-ray calculations |
-| midas | `midas_comprehensive_server.py` | 50 tools: FF/NF/PF-HEDM, calibration, single + **series/batch** integration, GSAS-II refinement, CIF fetcher, visualization, validation, stress, **data-driven workflow recommendation**, and the **8 new v0.1.0 capability packages** (PDF/G(r), defect analysis, grain-ODF, DFXM/XAF/2D forward models, pf-ODF, pink-beam) |
+| core | `beamline_core_server.py` | 11 tools: file ops, document reading, local + remote (SSH) shell commands, X-ray calculations |
+| midas | `midas_comprehensive_server.py` | 55 tools: FF/NF/PF-HEDM, calibration, single + **series/batch** integration, GSAS-II refinement, CIF fetcher, visualization, validation, stress, **data-driven workflow recommendation**, and the **8 new v0.1.0 capability packages** (PDF/G(r), defect analysis, grain-ODF, DFXM/XAF/2D forward models, pf-ODF, pink-beam) |
 | motor | `epics_motor_server.py` | 13 tools: EPICS motor control (read/move/jog/limits) |
 | gsas2 | `gsas2_server.py` | 5 tools: autonomous Rietveld refinement of any powder pattern, COD structure retrieval with M₂₀ ranking, in-situ series (submit/poll), per-result trust verdict |
 
 ### Agent Skills (`.agents/skills/`)
 Canonical MIDAS workflow reference — correct v11 flags, scripts, output files:
 - `midas-validate` — parameter-file / dataset validation (run first)
-- `midas-calibrate` — native `midas_calibrate` workflow (AutoCalibrateZarr fallback)
+- `midas-calibrate` — the canonical four-stage recipe (`calibration_engine="auto"`), with the native / pip-console / legacy engines as fallbacks
 - `midas-integrate` — single (`midas_integrate_2d_to_1d`), **series** (`midas_integrate_series`, many files, one call, per-frame darks), and GPU-streaming integration
 - `midas-hedm` / `midas-ff-hedm` — FF/NF/PF-HEDM full pipeline
 - `midas-gsasii` — GSAS-II refinement, live analysis pipeline, CIF fetcher
 - `gsas2-agentic` — autonomous Rietveld on **any** powder pattern (not MIDAS caked output): the agent picks its own parameter order, can retrieve its own starting structure, and returns a trust verdict
 - `midas-visualize` — MIDAS viewer scripts for lineouts, caked, grains, 3D spots/PF
+- `midas-mask` — build a MIDAS `MaskFile` (uint8 TIFF, 1 = masked) from dead/hot pixels, sentinels, module gaps
+- `midas-ffpipeline` — **deprecated**; use `midas-ff-hedm`
 
 ### Which GSAS-II path to use
 Two tools wrap GSAS-II and neither supersedes the other — pick by where the
@@ -183,26 +186,42 @@ Type these at the `APEXA>` prompt (CLI):
 | `help` | Show all commands |
 | `quit` | Exit (session is auto-saved; resume with `session resume`) |
 
-**Which model?** `gpt55` (default) or `gpt54` for tool-heavy execution (calibration/
-integration — reliable tool-call format). `claudeopus48` for planning/reasoning/writing
-(may drift on tool calls, so prefer GPT for running MIDAS tools). See `models` for the
-full list (GPT-5 family, Claude Opus 4.6–4.8 / Sonnet 4.5–4.6 / Haiku 4.5, Gemini 3.x).
+**Which model?** `claudeopus5` is the default — newest Opus, best for multi-step
+planning and agentic work. `gpt56sol` / `gpt55` / `gpt54` are strong alternatives for
+tool-heavy execution. Type `models` for what the gateway actually serves.
+
+> On `APEXA_LLM_MODE=proxy` against Argo's **native** endpoint, the Anthropic path
+> refuses non-streaming requests, so `claudeopus5` does not work there — use
+> `gpt56sol` or `gemini35flash`, or stay on the default `argo` transport.
 
 ### Environment switches (set before launch, or in `.env`)
 
 | Variable | Default | Effect |
 |---|---|---|
 | `APEXA_AGENT_MODE` | `single` | `single` = one persistent reasoning loop, full context across turns (Claude-Code style). `legacy` = keyword-routed specialists + guards. |
-| `ARGO_MODEL` | `gpt55` | Default model at startup (overridable in-session with `model`). |
-| `APEXA_FORCE_LEGACY_MIDAS` | *(unset)* | `1` = use the fast legacy C++ calibration/integration engine directly (skip the pip attempt). |
-| `APEXA_CALIB_TIMEOUT` | `1800` | Calibration subprocess timeout in seconds. |
+| `ARGO_MODEL` | `claudeopus5` | Default model at startup (overridable in-session with `model`). |
+| `APEXA_LLM_MODE` | `argo` | `argo` = legacy `/chat/`. `proxy` = OpenAI-compatible `/v1` with structured tool calls. See `docs/ARGO_NATIVE_ENDPOINT.md`. |
+| `APEXA_LLM_BASE_URL` | *(unset)* | The `/v1` base for `proxy` mode — Argo's native endpoint or a local argo-proxy. |
+| `APEXA_LLM_STRICT` | on with `proxy` | Abort startup on an unreachable endpoint rather than silently downgrading. |
+| `APEXA_NETWORK` | `internal` | `data` / `internal` / `web`. Beamline hosts are `internal`; only `fetch_cif_from_mp` needs `web`. |
+| **`APEXA_MIDAS_BIN`** | *(unset)* | **`bin/` of the pip `midas-suite` env.** Prepended to PATH with conda stripped. The primary MIDAS mechanism — no repo clone needed. |
+| `APEXA_MIDAS_DEVICE` | `cpu` | `cpu` / `cuda` / `auto` for the PyTorch MIDAS engines. |
+| `APEXA_FORCE_LEGACY_MIDAS` | *(unset)* | `1` = force the legacy C++ engine. Note it is also the **only** path that can read zarr (`.zip`). |
+| `APEXA_CALIB_TIMEOUT` | `1800` | Calibration subprocess timeout in seconds (7200 on the canonical v2 path). |
+| `APEXA_BEAMLINE` | *(unset)* | e.g. `1-ID-E`. Enables the capsule scope gate; `APEXA_IGNORE_SCOPE_GATE=1` overrides. |
+| `APEXA_STAGE_GUARDRAILS` | on | Inject each stage's skill + technique capsule as it is entered. |
 | `APEXA_SHOW_TIMING` | *(unset)* | `1` = show API response times (same as the `timing` command). |
-| `MIDAS_PATH` | *(auto)* | Path to the MIDAS install (auto-detected if unset). |
-| `MIDAS_PYTHON` | *(auto)* | Override the conda Python used for legacy MIDAS scripts. |
+| `MIDAS_PATH` | *(auto)* | A MIDAS **repo clone**. Needed only by the legacy C++ / AutoCalibrateZarr paths. |
+| `MIDAS_PYTHON` | *(auto)* | Override the interpreter used for those legacy scripts. |
 
-**Calibration engine:** legacy (v1, search-based) is the default and the robust path.
-The differentiable v2 engine is opt-in (`midas_auto_calibrate(..., calibration_engine="v2")`)
-— it needs a close initial beam-center guess and can fail on off-center detectors.
+**Calibration engine:** `calibration_engine="auto"` (the default) runs the canonical
+four-stage recipe from the MIDAS `calibrate-integrate` handbook when it can, and falls
+back to the native → pip-console → legacy cascade otherwise, recording *why* in the
+result. `"v2"` pins the canonical engine and refuses rather than downgrading; `"v1"` and
+`"legacy"` pin the older paths. The canonical engine needs `midas_calibrate_v2` **and
+`scikit-image`** in the interpreter `APEXA_MIDAS_BIN` points at; it cannot read zarr.
+Results are written as `refined_MIDAS_params_v2.txt`, and a calibration failing the
+held-out strain gate is reported as an error, not as a result.
 
 ---
 
@@ -211,16 +230,19 @@ The differentiable v2 engine is opt-in (`midas_auto_calibrate(..., calibration_e
 **User Settings** (`.env`):
 ```bash
 ANL_USERNAME=your_username
-ARGO_MODEL=gpt55             # default; or gpt54, claudeopus48, gemini35flash
+ARGO_MODEL=claudeopus5       # default; or gpt56sol, gpt55, gpt54, gemini35flash
 APEXA_AGENT_MODE=single      # single (default) | legacy
-MIDAS_PATH=~/Git/MIDAS       # Optional - auto-detected
-# APEXA_FORCE_LEGACY_MIDAS=1 # Optional - fast legacy calibration/integration
+APEXA_MIDAS_BIN=/home/beams12/S1IDUSER/opt/envs/midas/bin   # pip midas-suite env
+# MIDAS_PATH=~/Git/MIDAS     # Optional - only for the legacy C++ / zarr paths
+# APEXA_FORCE_LEGACY_MIDAS=1 # Optional - force the legacy engine
 ```
 
 **Server Configuration** (`servers.config`):
 ```bash
 core:beamline_core_server.py
 midas:midas_comprehensive_server.py
+motor:epics_motor_server.py
+gsas2:gsas2_server.py
 ```
 
 ---
@@ -229,17 +251,27 @@ midas:midas_comprehensive_server.py
 
 - **Python:** 3.13+ (with [`uv`](https://github.com/astral-sh/uv) package manager)
 - **Network:** ANL access for Argo Gateway
-- **MIDAS:** v11 with `midas_env` conda environment
+- **MIDAS:** `midas-suite` (pip) — set `APEXA_MIDAS_BIN`. A repo clone plus `diplib`
+  is needed only for the legacy C++ / zarr paths.
 - **Memory:** 16+ GB RAM (64+ GB recommended for FF-HEDM)
 
 `uv` handles the virtual environment automatically — users never need to activate it.
-`uv sync` installs all ~168 packages in ~1 second. Optional extras: `uv sync --extra extra`
+`uv sync` installs the locked dependency set in ~1 second. Optional extras:
+`uv sync --extra extra` (pyfai, vtk, seaborn…), `--extra mp` (Materials Project;
+online-only), `--extra alcf`.
+
+> **The lockfile is the deployment contract.** `uv.lock` is what makes an install
+> reproducible on an air-gapped beamline host — `uv sync --upgrade` on a laptop is a
+> production change for every host that later pulls. See `docs/OFFLINE_DEPLOYMENT.md`.
 
 ---
 
 ## MIDAS Auto-Detection
 
-APEXA searches for MIDAS in this order:
+**Preferred: set `APEXA_MIDAS_BIN`** to the pip `midas-suite` environment's `bin/`.
+That covers every current workflow and needs no repo clone. The search below applies
+to `MIDAS_PATH` — a clone, required only by the legacy C++ / AutoCalibrateZarr paths:
+
 1. `$MIDAS_PATH` environment variable
 2. `~/Git/MIDAS`
 3. `~/opt/MIDAS`
@@ -269,7 +301,7 @@ APEXA searches for MIDAS in this order:
 
 **Core Dependencies:**
 - [MIDAS](https://github.com/marinerhemant/MIDAS) v11 - Hemant Sharma
-- [FastMCP](https://github.com/jlowin/fastmcp) - MCP server framework
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) - `mcp.server.fastmcp.FastMCP` (the official SDK; not the third-party `jlowin/fastmcp` package)
 - [uv](https://github.com/astral-sh/uv) - Package manager
 - Argo Gateway - Argonne National Laboratory
 

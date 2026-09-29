@@ -147,7 +147,7 @@ midas:midas_comprehensive_server.py
 - **Python:** 3.13+
 - **Package Manager:** [uv](https://github.com/astral-sh/uv)
 - **Network:** ANL access for Argo Gateway
-- **MIDAS:** v11 with `midas_env` conda environment
+- **MIDAS:** `midas-suite` (pip) — set `APEXA_MIDAS_BIN`; a repo clone is needed only for the legacy C++ / zarr paths
 - **Memory:** 16+ GB RAM (64+ GB recommended for FF-HEDM)
 
 ---
@@ -192,7 +192,7 @@ See [USER_MANUAL.md](USER_MANUAL.md#troubleshooting) for detailed troubleshootin
 
 **Core Dependencies:**
 - [MIDAS](https://github.com/marinerhemant/MIDAS) - Hemant Sharma
-- [FastMCP](https://github.com/jlowin/fastmcp) - Marvin
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) - `mcp.server.fastmcp.FastMCP` (official SDK)
 - [uv](https://github.com/astral-sh/uv) - Astral
 - Argo Gateway - Argonne National Laboratory
 

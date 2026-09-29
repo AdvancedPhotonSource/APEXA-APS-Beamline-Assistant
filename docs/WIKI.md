@@ -83,7 +83,7 @@ hardcoded. See `DATA_README.md` in the OSF archive for the figure↔data map.
 ## 6. Getting started
 
 ```bash
-uv sync                              # install (~168 packages)
+uv sync                              # install (locked dependency set)
 cp .env.template .env                # set ANL_USERNAME, ARGO_MODEL
 ./start_beamline_assistant.sh        # CLI  (Windows: start_beamline_assistant.bat / launch.py)
 ./start_web_viewer.sh                # Web UI at http://localhost:8001

@@ -1,8 +1,20 @@
 # Deploying APEXA with the argo-proxy sidecar (beamline server)
 
-APEXA's structured tool-calling path (`APEXA_LLM_MODE=proxy`) requires
+> **The sidecar is now OPTIONAL.** Argo serves an OpenAI-compatible `/v1` surface
+> natively, so a beamline host no longer needs argo-proxy to get structured tool
+> calling — see [`ARGO_NATIVE_ENDPOINT.md`](ARGO_NATIVE_ENDPOINT.md), which also
+> documents the one catch (Argo's Anthropic path refuses non-streaming requests, so
+> `claudeopus5` does not work on that transport as the provider stands).
+>
+> This runbook remains correct and is still the right choice when you want the
+> gateway on loopback, or for **ALCF multi-user**, which forces proxy mode.
+> Note `APEXA_LLM_MODE` defaults to **`argo`** (the legacy `/chat/` endpoint):
+> nothing here takes effect until you set it to `proxy`.
+
+APEXA's structured tool-calling path (`APEXA_LLM_MODE=proxy`) can be served by
 [argo-proxy](https://github.com/Oaklight/argo-proxy) — an MIT-licensed, on-prem,
-OpenAI-compatible front end for the Argo Gateway. This document covers deploying it
+OpenAI-compatible front end for the Argo Gateway — or, since Argo began serving that
+surface itself, by the gateway directly. This document covers deploying it
 on a **beamline server**, which differs from a laptop in three ways that matter.
 
 **Verified 2026-08-14** against argo-proxy 3.2.3 / llm-rosetta 0.8.2, Argo PROD, 51

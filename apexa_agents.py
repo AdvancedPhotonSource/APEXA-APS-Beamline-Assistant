@@ -1013,7 +1013,7 @@ Capabilities (use the matching tool for each):
 - FF-HEDM reconstruction: run_ff_hedm_full_workflow
 - NF-HEDM mapping: run_nf_hedm_reconstruction
 - PF-HEDM pole figures: run_pf_hedm_workflow
-- Grain tracking/matching: run_ff_grain_tracking, match_grains (Hungarian algorithm)
+- Grain tracking/matching: match_grains (Hungarian algorithm)
 - Misorientation: calculate_misorientation
 - Dream3D export: convert_nf_to_dream3d
 - X-ray calculations: xray_calculate (NEVER compute manually)
@@ -1062,7 +1062,7 @@ Standard workflow:
   4. run_gsas_refinement for peak fitting / lattice refinement on .zarr.zip
   5. Or run_live_analysis for combined integration + refinement in one step
   6. run_ff_hedm_full_workflow or run_nf_hedm_reconstruction
-  7. Post-process: match_grains, run_ff_grain_tracking, overlay_ff_nf_results, extract_grain_centroids
+  7. Post-process: match_grains, overlay_ff_nf_results, extract_grain_centroids
   8. Export: convert_nf_to_dream3d
 
 POST-RECONSTRUCTION STRESS ANALYSIS — After FF-HEDM or NF-HEDM completes:
