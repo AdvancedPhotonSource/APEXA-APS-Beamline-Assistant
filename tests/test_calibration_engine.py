@@ -287,3 +287,27 @@ def test_force_local_beats_the_registry(monkeypatch):
     finally:
         monkeypatch.delenv("APEXA_FORCE_REMOTE_EXEC", raising=False)
         importlib.reload(R)
+
+
+def test_px_um_is_exposed_and_the_shape_heuristic_cannot_override_it():
+    """_detector_shape_and_px maps 2880x2880 -> 150 um (Varex 2923). A VarexD at
+    20-ID is 100 um, and passing the heuristic as --px-um overrode the template,
+    putting a 50% error straight into Lsd. px_um must exist and win.
+    """
+    import inspect
+    sig = inspect.signature(M.midas_auto_calibrate)
+    assert "px_um" in sig.parameters
+    assert sig.parameters["px_um"].default == 0.0
+
+    # the heuristic that made this dangerous, pinned so a change is deliberate
+    import tempfile, pathlib
+    src = inspect.getsource(M._detector_shape_and_px)
+    assert "150" in src and "2880" in src
+
+
+def test_read_param_value_finds_px_in_a_template(tmp_path):
+    """The template branch of the px precedence depends on this lookup."""
+    t = tmp_path / "t.txt"
+    t.write_text("NrPixelsY 2880\npx 100.0\nWavelength 0.1968\n")
+    assert float(M._read_param_value(t, "px")) == 100.0
+    assert M._read_param_value(t, "NotThere") in (None, "", 0)

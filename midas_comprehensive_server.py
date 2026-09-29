@@ -5234,7 +5234,7 @@ def _write_integration_outcome(out_dir, payload: dict,
         "energy_kev", "wavelength_angstrom", "seed_from_params", "threshold",
         "first_ring_nr", "lsd_guess", "bc_x_guess", "bc_y_guess",
         "image_transform", "data_loc", "template_param_file", "detector",
-        "strain_gate_ue", "ignore_calibration_gate")},
+        "strain_gate_ue", "ignore_calibration_gate", "px_um")},
 )
 async def midas_auto_calibrate(
     image_file: str,
@@ -5262,6 +5262,7 @@ async def midas_auto_calibrate(
     host: str = "",
     template_param_file: str = "",     # v1 params supplying detector size/px/lattice for the canonical recipe
     detector: str = "",                # preset alias (see detector_presets.json) → tiled panel layout
+    px_um: float = 0.0,                # detector pixel size in µm; overrides every guess
     strain_gate_ue: float = 100.0,     # held-out strain cap, µε (handbook §4)
     ignore_calibration_gate: bool = False,  # accept a result that fails the strain gate
 ) -> str:
@@ -5861,9 +5862,12 @@ async def midas_auto_calibrate(
                 _tmpl = str(param_path)
             else:
                 _auto_tmpl = _v2_out / f"{original_stem}_v2_template.txt"
+                _dk0, _dpre0 = _resolve_detector_preset(detector)
+                _syn_px = (float(px_um) if px_um and float(px_um) > 0
+                           else float((_dpre0 or {}).get("px_um") or _px2))
                 _ok_t, _err_t = _synthesize_calibration_params(
                     _auto_tmpl, calibrant=_calib_v2, wavelength=float(_resolved_wl),
-                    px_um=float(_px2), ny=int(_ny2), nz=int(_nz2),
+                    px_um=_syn_px, ny=int(_ny2), nz=int(_nz2),
                     lsd_um=float(lsd_guess if lsd_guess < 1_000_000
                                  else (lsd_from_filename if lsd_match else 1_000_000.0)),
                     bc_y=float(_nz2) / 2.0, bc_x=float(_ny2) / 2.0,
@@ -5887,15 +5891,32 @@ async def midas_auto_calibrate(
             _dark_abs = (str(Path(dark_file).expanduser().absolute())
                          if dark_file and Path(dark_file).expanduser().exists() else "")
             _run_started = time.time()
+            # Pixel size precedence: explicit argument > the template's own `px`
+            # line > a detector preset > the shape guess. Never let the guess
+            # override a stated value: _detector_shape_and_px maps 2880² to 150 µm
+            # (Varex 2923), but a VarexD at 20-ID is 100 µm, and silently
+            # substituting 150 puts a 50% error straight into Lsd.
+            _dk, _dpre = _resolve_detector_preset(detector)
+            _tmpl_px = _read_param_value(Path(_tmpl), "px")
+            if px_um and float(px_um) > 0:
+                _px_use, _px_src = float(px_um), "px_um argument"
+            elif _tmpl_px:
+                _px_use, _px_src = 0.0, f"template ({_tmpl_px} µm) — left to the runner"
+            elif _dpre and _dpre.get("px_um"):
+                _px_use, _px_src = float(_dpre["px_um"]), f"detector preset {_dk!r}"
+            else:
+                _px_use, _px_src = float(_px2), "image-shape heuristic (VERIFY THIS)"
+
             _cmd_v2 = [_eng["interpreter"], str(CALIBRATE_RUNNER_SCRIPT),
                        "--image", str(image_path),
                        "--template", _tmpl,
                        "--output-dir", str(_v2_out),
                        "--calibrant", _calib_v2,
                        "--wavelength", f"{float(_resolved_wl):.8f}",
-                       "--px-um", f"{float(_px2):.4f}",
                        "--strain-gate-ue", str(float(strain_gate_ue)),
                        "--device", os.environ.get("APEXA_MIDAS_DEVICE", "cpu")]
+            if _px_use > 0:
+                _cmd_v2 += ["--px-um", f"{_px_use:.4f}"]
             if _tr:
                 _cmd_v2 += ["--im-trans", str(_tr)]
             if _dark_abs:
@@ -5906,7 +5927,6 @@ async def midas_auto_calibrate(
                 _cmd_v2 += ["--ignore-gate"]
             # Tiled detectors: the layout comes from the sourced registry, which is
             # the only place a concrete panel geometry exists (Pilatus 2M today).
-            _dk, _dpre = _resolve_detector_preset(detector)
             if _dpre and isinstance(_dpre, dict) and _dpre.get("module_gaps"):
                 _mg = _dpre["module_gaps"]
                 _cmd_v2 += ["--panel-ny", str(_mg["NPanelsY"]),
@@ -5918,7 +5938,7 @@ async def midas_auto_calibrate(
 
             print(f"[engine] canonical v2 ({_eng['v2_version']}) via "
                   f"{_eng['interpreter']}: calibrant={_calib_v2} wl={_resolved_wl:.6f} "
-                  f"px={_px2} imtrans={_tr or 'none'}({_tr_src}) out={_v2_out}",
+                  f"px<-{_px_src} imtrans={_tr or 'none'}({_tr_src}) out={_v2_out}",
                   file=sys.stderr)
 
             # Clean env: the pip torch stack breaks under the C++ DYLD/LD injection
@@ -6016,6 +6036,7 @@ async def midas_auto_calibrate(
                 "panelshifts_file": _payload.get("panelshifts_file"),
                 "im_trans_applied": _payload.get("im_trans_applied"),
                 "im_trans_source": _tr_src,
+                "px_um_source": _px_src,
                 "scope_gate": _payload.get("scope_gate"),
                 "seed": _seed,
                 "gate": _gate,
