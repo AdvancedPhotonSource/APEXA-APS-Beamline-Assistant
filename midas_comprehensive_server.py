@@ -5814,6 +5814,40 @@ async def midas_auto_calibrate(
         # ("E-step produced no fitted points"). The model should pass dark_file,
         # but calibration must not depend on it remembering — same poka-yoke as
         # auto-detecting wavelength/calibrant/Lsd from the filename.
+        # A caller-supplied dark gets the SAME sanity checks as an auto-resolved
+        # one. _find_dark_for_image already refuses MIDAS intermediates and
+        # format-incompatible files -- it names dark_*.tif.ge.analysis.MIDAS.ge5 in
+        # its own comment -- but nothing applied those rules to an explicit
+        # dark_file, so a model that had merely SEEN such a file in a directory
+        # listing could hand it straight to an engine that cannot read it. Observed:
+        # the pip console died with "unknown image extension: .ge5" and the legacy
+        # engine with PIL's "cannot load this image", neither naming the real
+        # problem.
+        if dark_file and Path(dark_file).expanduser().exists():
+            _dk = Path(dark_file).expanduser()
+            _dname = _dk.name.lower()
+            _why = ""
+            if ".analysis." in _dname or ".midas." in _dname:
+                _why = ("it is a MIDAS-generated intermediate from a previous run, "
+                        "not a raw dark frame")
+            elif _dk.suffix.lower() != image_path.suffix.lower():
+                _why = (f"its format ({_dk.suffix}) does not match the image "
+                        f"({image_path.suffix}); the calibration engines read the "
+                        "dark with the image's reader")
+            if _why:
+                return format_result({
+                    "tool": "midas_auto_calibrate", "status": "error",
+                    "error": f"the supplied dark_file cannot be used: {_why}.",
+                    "dark_file": str(_dk), "image_file": str(image_path),
+                    "nothing_was_run": True,
+                    "fix": ("Pass a raw dark frame in the same format as the image, "
+                            "or omit dark_file entirely — APEXA auto-resolves one "
+                            "when a compatible raw dark exists beside the data. A "
+                            "wrong dark does not fail loudly in every engine: a "
+                            "wrong-exposure one moved a fitted Lsd from 1052 mm to "
+                            "578 mm without erroring."),
+                })
+
         if not (dark_file and Path(dark_file).expanduser().exists()):
             _auto_dark = _find_dark_for_image(image_path)
             if _auto_dark:

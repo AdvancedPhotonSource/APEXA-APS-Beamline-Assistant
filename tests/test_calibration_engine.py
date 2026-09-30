@@ -447,3 +447,30 @@ def test_endpoint_failure_hint_distinguishes_auth_from_reachability():
 
     proxy = hint("http://localhost:44497/v1", "APIConnectionError")
     assert "argo-proxy serve" in proxy
+
+
+def test_an_explicit_dark_gets_the_same_checks_as_an_auto_resolved_one(tmp_path):
+    """_find_dark_for_image refuses MIDAS intermediates and format-mismatched
+    files, but those rules never applied to a caller-supplied dark_file -- so a
+    model that had merely seen dark_*.tif.ge.analysis.MIDAS.ge5 in a listing could
+    hand it to an engine that dies on it with an unrelated message."""
+    import asyncio, json
+    img = tmp_path / "CeO2_650mm_61p332keV.tif"
+    img.write_bytes(b"\x00" * 64)
+    bad = tmp_path / "dark_CeO_000001.tif.ge.analysis.MIDAS.ge5"
+    bad.write_bytes(b"\x00" * 64)
+
+    out = asyncio.run(M.midas_auto_calibrate(
+        image_file=str(img), dark_file=str(bad), output_dir=str(tmp_path / "o")))
+    d = json.loads(out)
+    assert d["status"] == "error"
+    assert d["nothing_was_run"] is True
+    assert "intermediate" in d["error"]
+
+    # a format mismatch is caught too, and named as such
+    mismatch = tmp_path / "dark_plain.ge5"
+    mismatch.write_bytes(b"\x00" * 64)
+    d2 = json.loads(asyncio.run(M.midas_auto_calibrate(
+        image_file=str(img), dark_file=str(mismatch),
+        output_dir=str(tmp_path / "o2"))))
+    assert d2["status"] == "error" and "format" in d2["error"]
