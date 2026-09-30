@@ -423,3 +423,27 @@ def test_bound_pileup_is_reported():
     src = open(RUNNER).read()
     assert "at_bounds" in src and "bound" in src.lower()
     assert "at_bounds" in open(M.__file__).read()
+
+
+# --------------------------------------------------------------------------- #
+# endpoint failure advice must match the endpoint AND the failure kind
+# --------------------------------------------------------------------------- #
+
+def test_endpoint_failure_hint_distinguishes_auth_from_reachability():
+    """A 401 means the endpoint answered and rejected the credential. Reporting
+    it as "cannot reach argo-proxy ... is the sidecar running?" sent an operator
+    on an ALCF cluster chasing a sidecar that was never involved."""
+    from apexa_provider_openai import endpoint_failure_hint as hint
+
+    alcf = "https://inference-api.alcf.anl.gov/resource_server/sophia/vllm/v1"
+    auth = hint(alcf, "AuthenticationError")
+    assert "inference_auth_token.py" in auth and "--force" in auth
+    assert "argo-proxy" not in auth
+    conn = hint(alcf, "APIConnectionError")
+    assert "VPN" in conn and "argo-proxy serve" not in conn
+
+    argo = hint("https://apps.inside.anl.gov/argoapi/v1", "AuthenticationError")
+    assert "ANL_USERNAME" in argo
+
+    proxy = hint("http://localhost:44497/v1", "APIConnectionError")
+    assert "argo-proxy serve" in proxy

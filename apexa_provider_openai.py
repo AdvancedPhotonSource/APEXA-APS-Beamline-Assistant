@@ -56,6 +56,42 @@ DEFAULT_BASE_URL = "http://localhost:44497/v1"
 DEFAULT_MAX_TOKENS = 16000
 
 
+def endpoint_failure_hint(url: str, exc_name: str = "") -> str:
+    """Advice matched to the endpoint that actually failed, and to HOW it failed.
+
+    Two distinctions the old message collapsed. First, a 401/403 is not a
+    reachability problem -- the endpoint answered and rejected the credential, so
+    telling the operator to check whether a sidecar is running sends them the wrong
+    way. Second, APEXA now speaks to three different OpenAI-compatible endpoints
+    (a local argo-proxy, Argo's native /v1, and ALCF's per-user clusters) and the
+    remedy differs for each; the message named argo-proxy unconditionally, so an
+    expired ALCF Globus token read as a dead sidecar.
+    """
+    u = (url or "").lower()
+    auth = exc_name in ("AuthenticationError", "PermissionDeniedError")
+    if "alcf.anl.gov" in u:
+        if auth:
+            return ("ALCF rejected the credential. Globus access tokens last 48 h "
+                    "and need a full re-auth every 30 days: "
+                    "`python inference_auth_token.py authenticate --force`, then "
+                    "restart APEXA so the cached token is dropped. Check too that "
+                    "your Globus identity is entitled to this cluster.")
+        return ("Cannot reach the ALCF inference service. It needs the ANL network "
+                "or VPN, and APEXA_LLM_TOKEN_CMD must point at ALCF's "
+                "inference_auth_token.py helper (see docs/ALCF_MULTIUSER.md).")
+    if "apps.inside.anl.gov" in u or "argoapi" in u:
+        if auth:
+            return ("Argo rejected the credential — ANL_USERNAME is the API key on "
+                    "this endpoint; check it is set and correct.")
+        return ("Cannot reach Argo's native endpoint. It needs the ANL internal "
+                "network or VPN (see docs/ARGO_NATIVE_ENDPOINT.md).")
+    if auth:
+        return ("The endpoint rejected the credential. For argo-proxy the key is "
+                "your ANL username; for another gateway set APEXA_LLM_API_KEY.")
+    return ("Is the sidecar running (`argo-proxy serve`), is APEXA_LLM_BASE_URL "
+            "pointing at its port, and are you on the ANL network/VPN?")
+
+
 def proxy_mode_enabled() -> bool:
     """True when APEXA should route through the OpenAI-compatible proxy.
 
@@ -147,9 +183,12 @@ async def preflight(username: str, model: str) -> tuple[bool, str]:
     except ProviderUnavailable as e:
         return False, str(e)
     except Exception as e:
-        return False, (f"cannot reach argo-proxy at {p.url}: {type(e).__name__}: {e}. "
-                       f"Is the sidecar running (`argo-proxy serve`) and is "
-                       f"APEXA_LLM_BASE_URL pointing at its port?")
+        _n = type(e).__name__
+        _verb = ("rejected the credential at"
+                 if _n in ("AuthenticationError", "PermissionDeniedError")
+                 else "cannot reach")
+        return False, (f"{_verb} {p.url}: {_n}: {e}. "
+                       f"{endpoint_failure_hint(p.url, _n)}")
     finally:
         try:
             await p.close()
@@ -292,10 +331,13 @@ class OpenAICompatProvider:
             # the wrong port resolved "fine" and only failed at first query).
             if type(e).__name__ in ("APIConnectionError", "APITimeoutError",
                                     "AuthenticationError", "PermissionDeniedError"):
+                _n = type(e).__name__
+                _verb = ("rejected the credential at"
+                         if _n in ("AuthenticationError", "PermissionDeniedError")
+                         else "cannot reach")
                 raise ProviderUnavailable(
-                    f"cannot reach argo-proxy at {self.url}: {type(e).__name__}: {e}. "
-                    f"Is the sidecar running, and does APEXA_LLM_BASE_URL point at "
-                    f"its port?"
+                    f"{_verb} {self.url}: {_n}: {e}. "
+                    f"{endpoint_failure_hint(self.url, _n)}"
                 ) from e
             print(f"  \033[33m⚠ {self.url} does not support /models "
                   f"({type(e).__name__}) — using model id verbatim\033[0m",
@@ -480,10 +522,13 @@ class OpenAICompatProvider:
                     temperature=temperature,
                     error=f"retry_{name}" if (transient and attempt < retries - 1) else name))
 
-                if name == "APIConnectionError" and attempt == 0:
-                    print(f"  \033[33m⚠ cannot reach argo-proxy at {self.url} — "
-                          f"is `argo-proxy serve` running, and are you on the ANL "
-                          f"network/VPN?\033[0m", file=sys.stderr)
+                if name in ("APIConnectionError", "AuthenticationError",
+                            "PermissionDeniedError") and attempt == 0:
+                    _verb = ("rejected the credential at"
+                             if name != "APIConnectionError" else "cannot reach")
+                    print(f"  \033[33m⚠ {_verb} {self.url} — "
+                          f"{endpoint_failure_hint(self.url, name)}\033[0m",
+                          file=sys.stderr)
                 if transient and attempt < retries - 1:
                     wait = 2 ** attempt
                     print(f"  \033[33m⚠ {name}, retrying in {wait}s "
