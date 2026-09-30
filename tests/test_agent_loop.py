@@ -431,7 +431,14 @@ def test_unreachable_proxy_is_fatal_not_swallowed():
     p = _provider_whose_listing_raises(APIConnectionError("Connection error."))
     with pytest.raises(ProviderUnavailable) as e:
         asyncio.run(p._resolve_model())
-    assert "cannot reach argo-proxy" in str(e.value)
+    # Assert the BEHAVIOUR (fatal, names the endpoint and the remedy), not the
+    # exact wording: the message is now derived from which endpoint failed and
+    # whether it was reachability or the credential, so a literal "argo-proxy"
+    # would break every time that advice improves.
+    msg = str(e.value)
+    assert "cannot reach" in msg
+    assert "http://stub/v1" in msg          # names the endpoint that failed
+    assert "argo-proxy serve" in msg        # non-ANL host → sidecar advice
 
 
 def test_proxy_without_models_endpoint_still_works():
