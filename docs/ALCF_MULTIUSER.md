@@ -39,13 +39,25 @@ surface, but removing the server is the real control.)
 ## 1. Each user authenticates once
 
 ```bash
-pip install openai globus_sdk
+uv sync --extra alcf        # globus-sdk + openai, already in uv.lock
 # ALCF's helper — docs.alcf.anl.gov/services/inference-endpoints
-python inference_auth_token.py authenticate
+uv run python inference_auth_token.py authenticate
 ```
 
+**Use `uv run`, not bare `python`.** APEXA resolves the token by invoking the
+helper with `sys.executable` (`_default_token_cmd`), i.e. the `.venv` interpreter —
+so `globus_sdk` has to be importable *there*. A bare `python` hits the system
+interpreter, which typically has neither the package nor any relation to the
+environment APEXA will use, and the failure surfaces later as a 401 rather than as
+a missing module.
+
+`uv sync --extra alcf` installs from the existing lockfile and does **not** modify
+`uv.lock` — safe on an air-gapped host, unlike `uv sync --upgrade` (see
+`OFFLINE_DEPLOYMENT.md` §0.0).
+
 Access tokens last 48 h and auto-refresh; a full re-auth is required every 30 days
-(`--force`).
+(`--force`). **Restart APEXA after re-authenticating** — the token is cached in
+process, so a `model` switch alone will keep using the stale one.
 
 ## 2. Qualify the models — before trusting any of them
 
