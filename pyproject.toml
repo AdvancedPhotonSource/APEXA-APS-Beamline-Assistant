@@ -48,6 +48,12 @@ dependencies = [
     # Knowledge base / RAG
     "chromadb>=0.4.0",
     "sentence-transformers>=2.2.0",
+    # transformers 5.x removed BertModel.get_extended_attention_mask, which the
+    # Nomic embedder's trust_remote_code module (modeling_hf_nomic_bert.py) calls.
+    # Every query_hedm_knowledge and capsule retrieval fails with
+    # "'NomicBertModel' object has no attribute 'get_extended_attention_mask'".
+    # Lift only after the embedder is revalidated (or APEXA_EMBED_MODEL moves).
+    "transformers<5",
     # NOTE: sparse BM25 for hybrid retrieval is vendored in-tree
     # (knowledge_base/hybrid_retrieval.py: BM25Okapi, numpy-only) — NOT a pip dep.
     # rank-bm25 was pure-Python but its WHEEL still has to be fetched from PyPI at

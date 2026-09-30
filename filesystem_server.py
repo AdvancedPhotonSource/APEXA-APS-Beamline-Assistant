@@ -6,14 +6,14 @@ import stat
 import time
 import sys
 import logging
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer  # mcp>=2: FastMCP was renamed
 
 # Suppress verbose MCP server logging
 logging.getLogger("mcp").setLevel(logging.WARNING)
 logging.getLogger("fastmcp").setLevel(logging.WARNING)
 
 # Initialize FastMCP server for filesystem operations
-mcp = FastMCP("filesystem-operations")
+mcp = MCPServer("filesystem-operations")
 
 def format_file_info(path: Path) -> dict:
     """Get detailed file information"""
