@@ -461,7 +461,8 @@ def test_an_explicit_dark_gets_the_same_checks_as_an_auto_resolved_one(tmp_path)
     bad.write_bytes(b"\x00" * 64)
 
     out = asyncio.run(M.midas_auto_calibrate(
-        image_file=str(img), dark_file=str(bad), output_dir=str(tmp_path / "o")))
+        image_file=str(img), dark_file=str(bad), energy_kev=61.332,
+        output_dir=str(tmp_path / "o")))
     d = json.loads(out)
     assert d["status"] == "error"
     assert d["nothing_was_run"] is True
@@ -471,7 +472,7 @@ def test_an_explicit_dark_gets_the_same_checks_as_an_auto_resolved_one(tmp_path)
     mismatch = tmp_path / "dark_plain.ge5"
     mismatch.write_bytes(b"\x00" * 64)
     d2 = json.loads(asyncio.run(M.midas_auto_calibrate(
-        image_file=str(img), dark_file=str(mismatch),
+        image_file=str(img), dark_file=str(mismatch), energy_kev=61.332,
         output_dir=str(tmp_path / "o2"))))
     assert d2["status"] == "error" and "format" in d2["error"]
 
@@ -514,3 +515,79 @@ def test_edge_table_matches_the_beamline_script():
     assert M._EDGE_KEV == B.ELEMENT_EDGE_KEV
     for el, kev in (("lu", 63.314), ("yb", 61.332), ("re", 71.676), ("au", 80.726)):
         assert M._EDGE_KEV[el] == kev
+
+
+# --------------------------------------------------------------------------- #
+# APEXA does not assume what the instrument was set to
+# --------------------------------------------------------------------------- #
+
+def test_energy_from_a_filename_is_refused_not_assumed(tmp_path, monkeypatch):
+    """Beamline scientists' directive, after a measured failure: a filename
+    records what somebody typed. `Ceria_63keV_...` meant 63.314 (Lu K edge), and
+    the 0.496% error went into Lsd because lambda and Lsd are degenerate."""
+    import asyncio, json
+    monkeypatch.delenv("APEXA_ASSUME_SCAN_METADATA", raising=False)
+    img = tmp_path / "Ceria_63keV_900mm_att0.tif"
+    img.write_bytes(b"\x00" * 64)
+    d = json.loads(asyncio.run(M.midas_auto_calibrate(
+        image_file=str(img), output_dir=str(tmp_path / "o"))))
+    assert d["status"] == "needs_confirmation"
+    assert d["nothing_was_run"] is True
+    need = d["needs_confirmation"][0]
+    assert need["parameter"] == "energy_kev"
+    assert "filename" in need["inferred_from"]
+    # the K edge must be offered, with its consequence quantified
+    assert any("63.314" in c and "Lu" in c for c in need["candidates"])
+
+
+def test_an_explicit_energy_is_not_second_guessed(tmp_path, monkeypatch):
+    """The gate must not fire when the operator has stated the value -- otherwise
+    it blocks the very workflow it is meant to produce."""
+    import asyncio, json
+    monkeypatch.delenv("APEXA_ASSUME_SCAN_METADATA", raising=False)
+    img = tmp_path / "Ceria_63keV_900mm_att0.tif"
+    img.write_bytes(b"\x00" * 64)
+    d = json.loads(asyncio.run(M.midas_auto_calibrate(
+        image_file=str(img), energy_kev=63.314, output_dir=str(tmp_path / "o"))))
+    assert d["status"] != "needs_confirmation"
+
+
+def test_batch_escape_hatch(tmp_path, monkeypatch):
+    """Unattended reprocessing of a known dataset must not stop to ask."""
+    import asyncio, json
+    monkeypatch.setenv("APEXA_ASSUME_SCAN_METADATA", "1")
+    img = tmp_path / "Ceria_63keV_900mm_att0.tif"
+    img.write_bytes(b"\x00" * 64)
+    d = json.loads(asyncio.run(M.midas_auto_calibrate(
+        image_file=str(img), output_dir=str(tmp_path / "o"))))
+    assert d["status"] != "needs_confirmation"
+
+
+def test_integration_binning_must_be_stated(tmp_path, monkeypatch):
+    """r_bin_size / eta_bin_size define what the 1-D pattern IS. Unset, they fall
+    through to MIDAS defaults nobody saw, and two runs of 'the same' integration
+    can differ."""
+    import asyncio, json
+    monkeypatch.delenv("APEXA_ASSUME_SCAN_METADATA", raising=False)
+    d = json.loads(asyncio.run(M.midas_integrate_2d_to_1d(
+        image_file=str(tmp_path / "x.tif"))))
+    assert d["status"] == "needs_confirmation"
+    params = {n["parameter"] for n in d["needs_confirmation"]}
+    assert params == {"r_bin_size", "eta_bin_size"}
+    # each must name the parameter-file key that would also satisfy it
+    assert {n["param_file_key"] for n in d["needs_confirmation"]} == {
+        "RBinSize", "EtaBinSize"}
+
+
+def test_tilt_tolerance_is_controllable():
+    """20-ID rotation series: tz marched ~1 deg/scan from -4.5 to +1.5, and the
+    scan whose true tz was about -3.5 railed at exactly -3.000000 -- the
+    CalibrationParams tolTilts default -- failing at 162 ue while its neighbours
+    passed at ~5. Three distortion retries could never have moved a tilt bound."""
+    import inspect
+    assert "tol_tilts_deg" in inspect.signature(M.midas_auto_calibrate).parameters
+    src = open(RUNNER).read()
+    assert "--tol-tilts-deg" in src and "v1.tolTilts" in src
+    # the bound advice must name the lever that matches the railed parameter
+    assert "raise tol_tilts_deg" in src
+    assert "raise lsd_tol_um" in src

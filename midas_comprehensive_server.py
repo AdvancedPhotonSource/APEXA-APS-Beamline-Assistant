@@ -4076,6 +4076,45 @@ async def midas_integrate_2d_to_1d(
     integrated, which depends on what the user wants to study (specific rings, full eta,
     sub-sector, etc.). See midas-integrate SKILL.md for the recommended prompting flow.
     """
+    # Binning is not APEXA's to choose either. r_bin_size / eta_bin_size and the
+    # ranges set what the 1-D pattern IS; left unset they fall through to MIDAS
+    # defaults that nobody saw, and two runs of "the same" integration can differ.
+    # Beamline scientists asked for the same confirmation as the energy, for the
+    # same reason: the parameter file is a statement, a default is an assumption.
+    _int_need = []
+    _calib_for_bins = calibration_file or ""
+    for _arg, _key, _param, _desc in (
+            (r_bin_size,   "RBinSize",   "r_bin_size",   "radial bin size (px)"),
+            (eta_bin_size, "EtaBinSize", "eta_bin_size", "azimuthal bin size (deg)"),
+    ):
+        if _arg is not None:
+            continue
+        _in_file = False
+        try:
+            if _calib_for_bins and Path(_calib_for_bins).expanduser().exists():
+                _in_file = _read_param_value(
+                    Path(_calib_for_bins).expanduser(), _key) not in (None, "")
+        except Exception:
+            _in_file = False
+        if not _in_file:
+            _int_need.append({
+                "parameter": _param,          # the tool argument to pass
+                "param_file_key": _key,       # the parameter-file key it maps to
+                "inferred_value": None,
+                "inferred_from": "MIDAS built-in default",
+                "why": (f"{_desc} was not given and is not in the parameter file, "
+                        "so the integrator's own default would silently define the "
+                        "pattern"),
+            })
+    if _int_need and not _assume_ok():
+        return _needs_confirmation(
+            "midas_integrate_2d_to_1d", _int_need,
+            image=str(image_file), calibration_file=_calib_for_bins or None,
+            hint=("Ask the beamline scientist for the radial and azimuthal "
+                  "binning, or point calibration_file at a parameter file that "
+                  "states RBinSize / EtaBinSize (a refined_MIDAS_params*.txt "
+                  "from calibration normally does)."))
+
     try:
         image_path = Path(image_file).expanduser().absolute()
 
@@ -5558,6 +5597,47 @@ def _edge_energy_check(energy_kev, source_text=""):
         return None
 
 
+def _assume_ok() -> bool:
+    """Batch escape hatch for the confirmation gates below.
+
+    Unattended reprocessing of a known dataset should not stop to ask. Set
+    APEXA_ASSUME_SCAN_METADATA=1 and APEXA accepts inferred values again, with
+    the inference still reported in the payload.
+    """
+    return str(os.environ.get("APEXA_ASSUME_SCAN_METADATA", "")).strip().lower() \
+        in ("1", "true", "yes", "on")
+
+
+def _needs_confirmation(tool: str, items: list, **extra) -> str:
+    """Refuse, and say exactly what APEXA would have assumed and where from.
+
+    Beamline scientists asked for this after a measured failure: the filename
+    read `Ceria_63keV_...`, APEXA took 63.000 keV, and the monochromator was on
+    the Lu K edge at 63.314. Wavelength and Lsd are degenerate (hard rule 9), so
+    the 0.496 % error went into the fitted distance and the strain gate did not
+    catch it -- 3057 ue, and ~5 ue once the real energy was supplied.
+
+    A filename records what somebody typed. Acquisition metadata records what the
+    file contains, not always what the instrument did. Neither is a measurement of
+    the beam, so APEXA states its inference and stops rather than quietly adopting
+    it. The agent relays the question, the operator answers once, and the value is
+    then explicit for every downstream run -- which also makes it citable.
+    """
+    return format_result({
+        "tool": tool,
+        "status": "needs_confirmation",
+        "nothing_was_run": True,
+        "needs_confirmation": items,
+        "error": ("APEXA will not assume these values. " +
+                  "; ".join(f"{i['parameter']}: {i['why']}" for i in items)),
+        "fix": ("Ask the operator, then pass them explicitly. They are then "
+                "recorded in the run manifest and citable. For unattended "
+                "reprocessing of a known dataset, set "
+                "APEXA_ASSUME_SCAN_METADATA=1 to accept the inferred values."),
+        **extra,
+    })
+
+
 def _calibration_handbook_rules(refs):
     """Resolve handbook rule NUMBERS to their text from the vendored capsule.
 
@@ -5722,7 +5802,7 @@ def _write_integration_outcome(out_dir, payload: dict,
         "first_ring_nr", "lsd_guess", "bc_x_guess", "bc_y_guess",
         "image_transform", "data_loc", "template_param_file", "detector",
         "strain_gate_ue", "ignore_calibration_gate", "px_um",
-        "lsd_tol_um", "trust_seed_lsd", "refine_distortion")},
+        "lsd_tol_um", "trust_seed_lsd", "refine_distortion", "tol_tilts_deg")},
 )
 async def midas_auto_calibrate(
     image_file: str,
@@ -5753,6 +5833,7 @@ async def midas_auto_calibrate(
     px_um: float = 0.0,                # detector pixel size in µm; overrides every guess
     lsd_tol_um: float = 0.0,           # override the Lsd bound (µm); default = template tolLsd (MIDAS: 15000)
     refine_distortion: str = "full",   # full | radial | none | "p2,p4,p5" — hard rule 11
+    tol_tilts_deg: float = 0.0,        # ty/tz bound in degrees; default = template tolTilts (MIDAS: 3.0)
     trust_seed_lsd: bool = False,      # take the seeder's distance even if it contradicts the recorded one
     strain_gate_ue: float = 100.0,     # held-out strain cap, µε (handbook §4)
     ignore_calibration_gate: bool = False,  # accept a result that fails the strain gate
@@ -6253,6 +6334,39 @@ async def midas_auto_calibrate(
                   "will need a param file or will error. Pass energy_kev=<value> "
                   "to set it explicitly.", file=sys.stderr)
 
+        # The energy is not APEXA's to guess. A filename token and an HDF5 probe
+        # are both inferences; only an explicit argument or a parameter file is a
+        # statement. Hard rule 9 makes this consequential rather than pedantic:
+        # lambda is degenerate with Lsd, so a wrong energy is absorbed into the
+        # distance and the gate still passes.
+        _wl_inferred = bool(_wl_source) and (
+            "filename" in _wl_source or "HDF5" in _wl_source or "hdf5" in _wl_source)
+        if _resolved_wl and _wl_inferred and not param_path and not _assume_ok():
+            _cands = []
+            if _edge_warn:
+                _cands.append(f"{_edge_warn['edge_kev']} keV "
+                              f"({_edge_warn['nearest_edge']} K edge — "
+                              f"{_edge_warn['lsd_bias_percent']}% Lsd bias if this "
+                              f"is the right one)")
+            try:
+                from apexa_units import angstrom_to_kev as _a2k
+                _cands.append(f"{_a2k(_resolved_wl):.4f} keV (as inferred)")
+            except Exception:
+                pass
+            return _needs_confirmation(
+                "midas_auto_calibrate",
+                [{"parameter": "energy_kev",
+                  "inferred_value": round(_a2k(_resolved_wl), 4),
+                  "inferred_from": _wl_source,
+                  "candidates": _cands,
+                  "why": (f"taken from {_wl_source}, which records what someone "
+                          "typed, not what the monochromator was set to")}],
+                image=str(image_path),
+                energy_edge_check=_edge_warn,
+                hint=("Ask the beamline scientist for the incident energy. If the "
+                      "station is edge-tuned, it is the tabulated K edge of the "
+                      "foil, not the rounded number in the filename."))
+
         # Extract Lsd guess from original filename if present (e.g. 650mm, 210mm)
         lsd_match = re.search(
             r'(?:^|[_\-])([\d]+(?:[p.][\d]+)?)mm(?:[_\-.]|$)',
@@ -6461,6 +6575,8 @@ async def midas_auto_calibrate(
                 _cmd_v2 += ["--trust-seed-lsd"]
             if refine_distortion and str(refine_distortion).strip().lower() != "full":
                 _cmd_v2 += ["--refine-distortion", str(refine_distortion).strip()]
+            if tol_tilts_deg and float(tol_tilts_deg) > 0:
+                _cmd_v2 += ["--tol-tilts-deg", f"{float(tol_tilts_deg):.4f}"]
             if _tr:
                 _cmd_v2 += ["--im-trans", str(_tr)]
             if _dark_abs:
@@ -6589,6 +6705,7 @@ async def midas_auto_calibrate(
                 "lsd": _payload.get("lsd"),
                 "at_bounds": _payload.get("at_bounds"),
                 "refine_distortion": _payload.get("refine_distortion"),
+                "tol_tilts_deg": _payload.get("tol_tilts_deg"),
                 "gate": _gate,
                 "capabilities": _payload.get("capabilities"),
                 "output_dir": str(_v2_out),

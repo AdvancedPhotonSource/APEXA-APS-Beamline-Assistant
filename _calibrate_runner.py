@@ -124,6 +124,11 @@ def build_parser():
                         "(iso_R2/R4/R6 only) | none | an explicit comma list of v1 "
                         "p-keys. Hard rule 11: azimuthal harmonics need azimuth to "
                         "be identifiable and rail at their bounds without it.")
+    p.add_argument("--tol-tilts-deg", type=float, default=0.0,
+                   help="override the ty/tz bound (degrees). Default: the "
+                        "template's tolTilts, which CalibrationParams sets to 3.0 "
+                        "— too tight for a rotation series that sweeps the "
+                        "detector further than that.")
     p.add_argument("--trust-seed-lsd", action="store_true",
                    help="take the seeder's distance even when it disagrees with "
                         "--expected-lsd-um")
@@ -442,6 +447,16 @@ def main(argv=None):
         v1.tolLsd = float(args.lsd_tol_um)
     lsd_info["tol_um"] = float(v1.tolLsd)
 
+    # spec_from_v1_params turns tolTilts into the ty/tz bound as init +/- tol, and
+    # the recipe starts the tilts at 0 -- so the default 3.0 deg box is +/-3 deg
+    # absolute. Measured at 20-ID on a rotation series: tz marched ~1 deg per scan
+    # from -4.5 to +1.5, and the scan whose true tz was about -3.5 railed at
+    # exactly -3.000000 and failed the gate at 162 ue while its neighbours passed
+    # at ~5. Nothing about that frame was bad; the box was too small.
+    if args.tol_tilts_deg > 0:
+        v1.tolTilts = float(args.tol_tilts_deg)
+    tilt_tol = float(v1.tolTilts or 0)
+
     v1.tx = v1.ty = v1.tz = 0.0
     for n in [f"p{i}" for i in range(15)]:
         setattr(v1, n, 0.0)
@@ -623,13 +638,31 @@ def main(argv=None):
     except Exception as e:
         notes.append(f"could not check parameter bounds: {e}")
     if at_bounds:
-        rule_refs.add(11)
+        # Which lever to reach for depends on WHICH parameter railed, and getting
+        # that wrong wastes runs: at 20-ID a railed tz was read as a distortion
+        # problem and the full -> radial -> none ladder was tried three times,
+        # none of which can move a tilt bound.
+        names = [b["parameter"] for b in at_bounds]
+        tilts = [n for n in names if n in ("ty", "tz", "tx")]
+        dist = [n for n in names if n.startswith(("a", "phi", "iso_", "p"))]
+        lsd_b = [n for n in names if n == "Lsd"]
+        fixes = []
+        if tilts:
+            fixes.append(f"{', '.join(tilts)} on the tilt bound (±{tilt_tol:g}°) — "
+                         "raise tol_tilts_deg. A rotation series sweeps the "
+                         "detector past the 3° default.")
+        if lsd_b:
+            fixes.append("Lsd on its bound — raise lsd_tol_um, or the nominal "
+                         "distance is wrong.")
+        if dist:
+            fixes.append(f"{', '.join(dist)} on a distortion bound — hard rule 11; "
+                         "try refine_distortion radial, then none.")
+        if dist:
+            rule_refs.add(11)
         notes.append(
             f"{len(at_bounds)} refined parameter(s) finished ON a bound "
-            f"({', '.join(b['parameter'] for b in at_bounds)}) — the fit ran out of "
-            "room rather than converging. For azimuthal harmonics this is the "
-            "signature hard rule 11 describes; try --refine-distortion radial, "
-            "then none.")
+            f"({', '.join(names)}) — the fit ran out of room rather than "
+            "converging. " + "  ".join(fixes))
 
     strain_test = _f(getattr(res, "stage4_strain_uE_test", None))
     strain_full = _f(getattr(res, "stage4_strain_uE", None))
@@ -671,6 +704,7 @@ def main(argv=None):
         "lsd": lsd_info,
         "at_bounds": at_bounds,
         "refine_distortion": _rd,
+        "tol_tilts_deg": tilt_tol,
         "scope_gate": scope,
         "gate": gate,
         "notes": notes,
