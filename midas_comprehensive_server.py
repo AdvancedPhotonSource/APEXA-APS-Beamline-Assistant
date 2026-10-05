@@ -788,6 +788,38 @@ def _collect_ff_outputs_remote(run_host, result_str, start_layer, end_layer,
     return layer_outputs, fresh_grains, stale_grains, any_fresh_output, remote_note
 
 
+def midas_c_binary_dirs() -> list:
+    """Directories to search for MIDAS C executables, in priority order.
+
+    Covers every native-build layout AND an install located *anywhere* via the
+    ``MIDAS_HOME`` env var. The forward-simulation manual
+    (manuals/Forward_Simulation.md) states the C binaries self-locate their
+    helpers (e.g. GetHKLList) relative to the executable or via ``MIDAS_HOME``,
+    "so MIDAS does not need to be installed at a fixed path" — honouring it here
+    lets a native build at a non-default location be found without editing env
+    constants. pip ``midas-suite`` does NOT ship these binaries
+    (ForwardSimulationCompressed / simulateNF are C-only), so the pip env bin
+    (APEXA_MIDAS_BIN) is deliberately NOT searched here.
+
+    Order: the git-clone constants (build/bin, FF_HEDM/bin, NF_HEDM/bin) first
+    for backward-compatibility, then MIDAS_HOME-derived dirs. De-duplicated,
+    order preserved.
+    """
+    dirs = [MIDAS_BIN, MIDAS_FF_BIN, MIDAS_NF_BIN]
+    home = os.environ.get("MIDAS_HOME", "").strip()
+    if home:
+        hp = Path(home).expanduser()
+        dirs += [hp / "build" / "bin", hp / "FF_HEDM" / "bin",
+                 hp / "NF_HEDM" / "bin", hp / "bin", hp]
+    seen, out = set(), []
+    for d in dirs:
+        s = str(d)
+        if s not in seen:
+            seen.add(s)
+            out.append(d)
+    return out
+
+
 def run_midas_executable(executable: str, param_file: str, cwd: str = None,
                          timeout: int = 3600, env: dict = None,
                          extra_args: list = None) -> dict:
@@ -800,12 +832,9 @@ def run_midas_executable(executable: str, param_file: str, cwd: str = None,
     `simulateNF <ParameterFile> <InputMicFile> <OutputPrefix> [nCPUs]`; with
     `extra_args=None` the command is byte-for-byte the original `[exe, param]`.
     """
-    # Try multiple possible locations for executables
-    possible_paths = [
-        MIDAS_BIN / executable,
-        MIDAS_FF_BIN / executable,
-        MIDAS_NF_BIN / executable
-    ]
+    # Try every native-build location, including MIDAS_HOME (see
+    # midas_c_binary_dirs) so a clone at a non-default path is still found.
+    possible_paths = [d / executable for d in midas_c_binary_dirs()]
 
     exe_path = None
     for p in possible_paths:
@@ -3511,6 +3540,12 @@ async def validate_midas_installation(
             midas_root / "NF_HEDM" / "bin",
             midas_root / "bin",
         ]
+        # Also search any MIDAS_HOME-located build (the same dirs the runner
+        # probes via midas_c_binary_dirs), so a native clone at a non-default
+        # path validates too.
+        for _d in midas_c_binary_dirs():
+            if _d not in bin_candidates:
+                bin_candidates.append(_d)
         existing_bins = [b for b in bin_candidates if b.exists()]
         bin_path = existing_bins[0] if existing_bins else bin_candidates[0]
         validation["bin_directory"] = str(bin_path)
@@ -3557,6 +3592,44 @@ async def validate_midas_installation(
             validation["executables"][exe] = _exe_exists(exe)
         validation["optional_executables"] = {
             exe: _exe_exists(exe) for exe in optional_executables
+        }
+
+        # --- Capability modes (route-aware preflight) --------------------------
+        # APEXA routes to whatever MIDAS the host has, and the two install paths
+        # provide DIFFERENT capabilities, so a single pass/fail is misleading:
+        #   * pip `midas-suite` CLIs -> calibration, integration, FF/PF/NF/tomo
+        #     reconstruction. Does NOT ship the forward-sim C binaries.
+        #   * native C build         -> the full C binary set, and the ONLY source
+        #     of forward simulation (ForwardSimulationCompressed / simulateNF).
+        #     No pip CLI exists for forward sim.
+        # Report each mode independently so a pip-only host reads as
+        # "reconstruction ready" (not "rebuild MIDAS"), and forward sim is only
+        # flagged when its C binaries are genuinely absent.
+        recon_clis = ("midas-pipeline", "midas-nf-pipeline", "midas-calibrate-v2")
+        pip_recon_ready = any(
+            _shutil.which(c, path=midas_search_path()) for c in recon_clis
+        )
+        fwdsim_bins = {
+            "ForwardSimulationCompressed": _exe_exists("ForwardSimulationCompressed"),
+            "simulateNF": _exe_exists("simulateNF"),
+        }
+        fwdsim_ready = all(fwdsim_bins.values())
+        validation["modes"] = {
+            "pip_reconstruction": {
+                "available": pip_recon_ready,
+                "provides": "calibration, integration, FF/PF/NF/tomo reconstruction",
+                "clis": list(recon_clis),
+                "how": ("pip install 'midas-suite[all]', or point APEXA_MIDAS_BIN "
+                        "at its bin/"),
+            },
+            "forward_simulation": {
+                "available": fwdsim_ready,
+                "binaries": fwdsim_bins,
+                "requires": ("native C build — ForwardSimulationCompressed / "
+                             "simulateNF are C-only, not shipped by pip midas-suite"),
+                "how": ("build a MIDAS clone (./build.sh) and set MIDAS_PATH or "
+                        "MIDAS_HOME"),
+            },
         }
 
         # Check Python workflows (legacy scripts — may be superseded by pip packages)
@@ -3613,32 +3686,47 @@ async def validate_midas_installation(
         validation["statistics"] = {
             "executables": f"{exe_found}/{exe_total}",
             "python_scripts": f"{scripts_found}/{scripts_total}",
-            "dependencies": f"{deps_found}/{deps_total}"
+            "dependencies": f"{deps_found}/{deps_total}",
+            "pip_reconstruction": "ready" if pip_recon_ready else "unavailable",
+            "forward_simulation": "ready" if fwdsim_ready else "unavailable",
         }
 
-        # Determine overall status
-        if exe_found == exe_total and scripts_found == scripts_total and deps_found == deps_total:
+        # Determine overall status (route-aware). A host is USABLE if EITHER
+        # route works: the pip reconstruction CLIs, or a native C build. Forward
+        # sim being unavailable is one missing capability (reported in `modes`),
+        # not a broken install — so it no longer forces "insufficient" / a
+        # blanket rebuild.
+        deps_ok = deps_found >= deps_total * 0.8
+        c_build_present = exe_found >= exe_total * 0.5
+        any_mode = pip_recon_ready or c_build_present
+        if (pip_recon_ready and fwdsim_ready and deps_ok) or (
+                exe_found == exe_total and deps_found == deps_total):
             validation["overall_status"] = "excellent"
-        elif exe_found >= exe_total * 0.8 and scripts_found >= 2 and deps_found >= deps_total * 0.8:
+        elif any_mode and deps_ok:
             validation["overall_status"] = "good"
-        elif exe_found >= exe_total * 0.5:
+        elif any_mode:
             validation["overall_status"] = "partial"
         else:
             validation["overall_status"] = "insufficient"
 
-        # Recommendations
+        # Recommendations — honest and mode-specific (never a blanket "rebuild").
         validation["recommendations"] = []
-        if exe_found < exe_total:
+        if not any_mode:
             validation["recommendations"].append(
-                f"Rebuild MIDAS: cd {midas_root} && ./build.sh --build-type Release"
+                "No usable MIDAS found. Install the pip suite "
+                "(pip install 'midas-suite[all]' and set APEXA_MIDAS_BIN), or "
+                f"build a native clone (cd {midas_root} && ./build.sh)."
+            )
+        if not fwdsim_ready:
+            validation["recommendations"].append(
+                "Forward simulation unavailable: ForwardSimulationCompressed / "
+                "simulateNF are C-only (not shipped by pip midas-suite). Build a "
+                "native MIDAS clone (./build.sh) and set MIDAS_PATH or MIDAS_HOME. "
+                "Calibration / integration / reconstruction are unaffected."
             )
         if deps_found < deps_total:
             validation["recommendations"].append(
                 "Install missing Python packages: conda env create -f environment.yml"
-            )
-        if not validation["bin_exists"]:
-            validation["recommendations"].append(
-                "Run MIDAS build script to compile executables"
             )
 
         # Check MIDAS Python packages (midas-params and midas-stress)
@@ -5414,6 +5502,62 @@ def _calibration_interpreter():
     return _CALIB_INTERP_CACHE
 
 
+#: Element K-edge energies (keV), same table and same source as
+#: beamline_core_server.ELEMENT_EDGE_KEV -- the beamline's own e2lambda.sh.
+_EDGE_KEV = {"ho": 55.615, "yb": 61.332, "lu": 63.314, "hf": 65.350,
+             "ta": 67.411, "w": 69.525, "re": 71.676, "ir": 76.112,
+             "au": 80.726, "pb": 88.005, "bi": 90.529}
+
+
+def _edge_energy_check(energy_kev, source_text=""):
+    """Is this energy a ROUNDED label for a monochromator parked on a K edge?
+
+    Hard rule 9: lambda and Lsd are degenerate, so a wrong wavelength is absorbed
+    into the fitted distance and the strain gate still passes. The rule also says
+    where the right number comes from -- at an edge-tuned station the mono is set
+    to a foil K edge and left there, and over 116 beamtimes 74 of the 82 with a
+    logged energy sat within 0.3 % of one.
+
+    A filename says what someone typed. `Ceria_63keV_...` is 63.000 to a parser
+    and 63.314 keV (Lu) to the beamline. Measured at 20-ID: that 0.496 % gap put
+    the fitted Lsd at 895.44 mm on a 900 mm setup -- within 98 um of exactly what
+    the degeneracy predicts.
+
+    Returns None, or a dict describing the suspicion. Never raises, never changes
+    the value: only the operator knows whether the mono was on an edge.
+    """
+    try:
+        e = float(energy_kev)
+        if e <= 0:
+            return None
+        # Only flag values that look like a LABEL: integral, or one decimal.
+        rounded = abs(e - round(e)) < 1e-9 or abs(e * 10 - round(e * 10)) < 1e-9
+        if not rounded:
+            return None
+        best = min(_EDGE_KEV.items(), key=lambda kv: abs(kv[1] - e))
+        el, edge = best
+        rel = abs(edge - e) / edge
+        if rel == 0 or rel > 0.01:          # within 1 %, but not already exact
+            return None
+        return {
+            "given_kev": e,
+            "nearest_edge": el.capitalize(),
+            "edge_kev": edge,
+            "relative_error": round(rel, 5),
+            "lsd_bias_percent": round(rel * 100, 3),
+            "note": (f"{e:g} keV looks like a rounded label and sits "
+                     f"{rel*100:.3f} % from the {el.capitalize()} K edge "
+                     f"({edge} keV). Wavelength and Lsd are degenerate (hard rule "
+                     f"9), so if the monochromator is parked on that edge this "
+                     f"biases the fitted distance by the same {rel*100:.3f} % "
+                     f"and the strain gate will not catch it. Pass "
+                     f"energy_kev={edge} if the run is edge-tuned."),
+            "source": source_text,
+        }
+    except Exception:
+        return None
+
+
 def _calibration_handbook_rules(refs):
     """Resolve handbook rule NUMBERS to their text from the vendored capsule.
 
@@ -6092,9 +6236,18 @@ async def midas_auto_calibrate(
                 _resolved_wl = _wl_probe
                 _wl_source = _probe_src
 
+        _edge_warn = None
         if _resolved_wl:
             print(f"✓ Wavelength resolved from {_wl_source}: λ = {_resolved_wl:.6f} Å",
                   file=sys.stderr)
+            # Cross-check against the foil K edges, as hard rule 9 instructs.
+            try:
+                from apexa_units import angstrom_to_kev as _a2k
+                _edge_warn = _edge_energy_check(_a2k(_resolved_wl), _wl_source or "")
+            except Exception:
+                _edge_warn = None
+            if _edge_warn:
+                print(f"  ⚠ energy check: {_edge_warn['note']}", file=sys.stderr)
         else:
             print("  ⚠ No wavelength from arg / filename / HDF5 metadata. MIDAS "
                   "will need a param file or will error. Pass energy_kev=<value> "
@@ -6429,6 +6582,8 @@ async def midas_auto_calibrate(
                 "im_trans_applied": _payload.get("im_trans_applied"),
                 "im_trans_source": _tr_src,
                 "px_um_source": _px_src,
+                "wavelength_source": _wl_source,
+                "energy_edge_check": _edge_warn,
                 "scope_gate": _payload.get("scope_gate"),
                 "seed": _seed,
                 "lsd": _payload.get("lsd"),

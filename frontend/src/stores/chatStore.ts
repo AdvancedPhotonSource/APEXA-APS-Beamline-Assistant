@@ -238,10 +238,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }))
     get()._persist()
 
+    const threadId = get().currentSessionId ?? undefined
     if (wsManager.connected) {
-      wsManager.send({ type: 'chat', message: content })
+      wsManager.send({ type: 'chat', message: content, thread_id: threadId })
     } else {
-      sendChatHttp(content)
+      sendChatHttp(content, threadId)
         .then(({ response }) => {
           const msgId = genId()
           const { toolResults, artifacts } = processResponse(response, msgId)
@@ -312,6 +313,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   deleteSession: (id) => {
+    // Drop the thread's server-side memory bucket too, so a deleted
+    // conversation can't resurface or bleed into a later thread.
+    if (wsManager.connected) wsManager.send({ type: 'delete_thread', thread_id: id })
     set((s) => {
       const sessions = s.sessions.filter((x) => x.id !== id)
       let currentSessionId = s.currentSessionId

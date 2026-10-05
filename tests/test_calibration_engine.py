@@ -474,3 +474,43 @@ def test_an_explicit_dark_gets_the_same_checks_as_an_auto_resolved_one(tmp_path)
         image_file=str(img), dark_file=str(mismatch),
         output_dir=str(tmp_path / "o2"))))
     assert d2["status"] == "error" and "format" in d2["error"]
+
+
+# --------------------------------------------------------------------------- #
+# hard rule 9: a rounded filename energy hides an edge-tuned monochromator
+# --------------------------------------------------------------------------- #
+
+def test_rounded_energy_near_a_k_edge_is_flagged():
+    """Measured at 20-ID: `Ceria_63keV_...` parsed as 63.000 keV while the mono
+    sat on the Lu K edge at 63.314. Lambda and Lsd are degenerate, so the 0.496%
+    energy error became a 0.496% distance error -- fitted Lsd 895.44 mm on a
+    900 mm setup, within 98 um of what the degeneracy predicts -- and the strain
+    gate did not catch it, exactly as hard rule 9 says it cannot.
+    """
+    r = M._edge_energy_check(63.0)
+    assert r is not None
+    assert r["nearest_edge"] == "Lu" and r["edge_kev"] == 63.314
+    assert abs(r["lsd_bias_percent"] - 0.496) < 0.01
+    assert "63.314" in r["note"]
+
+
+def test_edge_check_does_not_cry_wolf():
+    """It must fire on a LABEL, not on a measurement. An energy already at the
+    edge, or one carrying real precision, or one nowhere near a foil edge, is
+    left alone -- otherwise the warning becomes noise and gets ignored."""
+    assert M._edge_energy_check(63.314) is None     # already the edge
+    assert M._edge_energy_check(61.332) is None     # Yb, exact
+    assert M._edge_energy_check(63.2871) is None    # has real precision
+    assert M._edge_energy_check(42.0) is None       # no edge nearby
+    assert M._edge_energy_check(0) is None
+    assert M._edge_energy_check("nonsense") is None
+
+
+def test_edge_table_matches_the_beamline_script():
+    """Same values as 20-ID's /home/beams/S20HEDM/bin/e2lambda.sh and as
+    beamline_core_server.ELEMENT_EDGE_KEV. If these drift apart, APEXA and the
+    beamline disagree about what energy a run was taken at."""
+    import beamline_core_server as B
+    assert M._EDGE_KEV == B.ELEMENT_EDGE_KEV
+    for el, kev in (("lu", 63.314), ("yb", 61.332), ("re", 71.676), ("au", 80.726)):
+        assert M._EDGE_KEV[el] == kev

@@ -24,9 +24,11 @@ export async function uploadFile(file: File): Promise<{ file_id: string; filenam
   return { file_id: j.file_id, filename: j.filename, path: j.saved_path ?? j.path }
 }
 
-export async function sendChatHttp(message: string): Promise<{ response: string }> {
+export async function sendChatHttp(message: string, threadId?: string): Promise<{ response: string }> {
   const form = new FormData()
   form.append('message', message)
+  // Thread id → backend keeps per-thread conversation memory (HTTP fallback).
+  if (threadId) form.append('thread_id', threadId)
   const res = await fetch(`${BASE}/api/chat`, { method: 'POST', body: form })
   if (!res.ok) throw new Error(`Chat failed: ${res.status}`)
   return res.json()
@@ -91,5 +93,49 @@ export async function fetchPixelValue(fileId: string, x: number, y: number) {
 export async function fetchColormaps(): Promise<{ colormaps: string[] }> {
   const res = await fetch(`${BASE}/api/viewer/colormaps`)
   if (!res.ok) throw new Error(`Colormaps failed: ${res.status}`)
+  return res.json()
+}
+
+// ── Feedback ────────────────────────────────────────────────────────────────
+// Records stay on this machine (JSONL under ~/.apexa/feedback). Nothing is
+// posted outside ANL — beamline hosts run at network tier `internal` or `data`
+// and may reach nothing external at all.
+
+export type FeedbackKind = 'up' | 'down' | 'report'
+
+export type FeedbackCategory =
+  | 'wrong_result' | 'failed_to_run' | 'misleading' | 'slow'
+  | 'feature_request' | 'other'
+
+export interface FeedbackContext {
+  model?: string | null
+  servers?: string[]
+  versions?: Record<string, string>
+  tools?: { name: string; status: string; elapsed_s?: number }[]
+}
+
+/** What APEXA would attach to a report — fetched so the dialog can show the
+ *  user the real payload before they send it, not a description of it. */
+export async function fetchFeedbackContext(): Promise<FeedbackContext> {
+  const res = await fetch(`${BASE}/api/feedback/context`)
+  if (!res.ok) throw new Error(`Feedback context failed: ${res.status}`)
+  return res.json()
+}
+
+export async function sendFeedback(payload: {
+  kind: FeedbackKind
+  comment?: string
+  category?: FeedbackCategory | ''
+  session_id?: string
+  message_id?: string
+  model?: string
+  context?: FeedbackContext | Record<string, unknown>
+  redact?: boolean
+}): Promise<{ ok: boolean; id?: string; error?: string }> {
+  const res = await fetch(`${BASE}/api/feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
   return res.json()
 }

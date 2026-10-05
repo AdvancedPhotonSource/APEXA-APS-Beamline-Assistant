@@ -30,7 +30,7 @@ from PIL import Image
 import tifffile
 from scipy import ndimage
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Form, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -739,7 +739,8 @@ async def quick_phase_identification(
 async def chat_with_assistant(
     message: str = Form(...),
     file_id: Optional[str] = Form(None),
-    model: str = Form("")
+    model: str = Form(""),
+    thread_id: str = Form("")
 ):
     """Chat with the AI assistant"""
     if not mcp_client:
@@ -766,8 +767,13 @@ async def chat_with_assistant(
         full_query = message
         if image_path:
             full_query = f"Image file: {image_path}\n\n{message}"
-        response = await mcp_client.run_query(full_query)
-        
+        # Per-thread memory (HTTP fallback mirrors the WS path): activate the
+        # frontend thread, run, persist — serialized under the thread lock.
+        async with mcp_client._web_thread_lock:
+            await mcp_client.activate_web_thread(thread_id or None)
+            response = await mcp_client.run_query(full_query)
+            mcp_client._save_web_thread()
+
         return {"response": response}
         
     except Exception as e:
@@ -896,10 +902,19 @@ async def websocket_endpoint(websocket: WebSocket):
                             except Exception as e:
                                 print(f"Warning: tool_result WS send failed: {e}")
 
-                        response = await mcp_client.run_query(
-                            user_message, on_tool_result=_on_tool_result,
-                            permission_callback=_web_permission,
-                        )
+                        # Per-thread memory: the frontend sends the localStorage
+                        # thread id so APEXA remembers within a conversation (and
+                        # across restarts) instead of starting fresh each turn.
+                        # Serialize activate→run→save under the client's thread
+                        # lock (one shared orchestrator, single beamline user).
+                        thread_id = message_data.get("thread_id")
+                        async with mcp_client._web_thread_lock:
+                            await mcp_client.activate_web_thread(thread_id)
+                            response = await mcp_client.run_query(
+                                user_message, on_tool_result=_on_tool_result,
+                                permission_callback=_web_permission,
+                            )
+                            mcp_client._save_web_thread()
                         clean_response = _ansi_re.sub('', response)
                         # FF-HEDM graph mode (APEXA_WORKFLOW_MODE=graph): if this turn
                         # ended on a human-in-the-loop gate, flag it so the UI can mark
@@ -964,6 +979,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         "model": message_data["model"]
                     }, websocket)
 
+            elif mtype == "delete_thread":
+                # Frontend deleted a conversation — drop its server-side memory
+                # bucket so it can't resurface (or bleed into) a later thread.
+                if mcp_client:
+                    async with mcp_client._web_thread_lock:
+                        mcp_client.delete_web_thread(message_data.get("thread_id"))
+
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         # Fail-safe: unblock any pending deletion prompts as DENY so orphaned
@@ -984,6 +1006,64 @@ async def get_status():
         "upload_directory": str(upload_dir),
         "available_models": list(mcp_client.available_models.keys()) if mcp_client else []
     }
+
+@app.post("/api/feedback")
+async def post_feedback(payload: dict = Body(...)):
+    """Record user feedback on a specific answer.
+
+    The client sends what the USER saw and approved, not whatever the server
+    could scrape: the web UI shows the attached context in the dialog and lets it
+    be removed before sending. Nothing here reaches the network — records are
+    appended to JSONL under ~/.apexa/feedback (APEXA_FEEDBACK_DIR to override),
+    which is the only option that works at network tier `internal`/`data`.
+    """
+    import apexa_feedback as fb
+    ok, detail = fb.record(
+        str(payload.get("kind", "")),
+        comment=str(payload.get("comment", "") or ""),
+        category=str(payload.get("category", "") or ""),
+        session_id=str(payload.get("session_id", "") or ""),
+        message_id=str(payload.get("message_id", "") or ""),
+        model=str(payload.get("model", "") or ""),
+        context=payload.get("context") or {},
+        do_redact=bool(payload.get("redact", True)),
+    )
+    if not ok:
+        return JSONResponse(status_code=400, content={"ok": False, "error": detail})
+    return {"ok": True, "id": detail}
+
+
+@app.get("/api/feedback/summary")
+async def feedback_summary():
+    """Triage view. Same data as `python apexa_feedback.py summary`."""
+    import apexa_feedback as fb
+    return fb.summarize()
+
+
+@app.get("/api/feedback/context")
+async def feedback_context():
+    """What APEXA would attach to a report, so the dialog can show it BEFORE the
+    user sends anything. Deliberately a separate call: the user reviews the real
+    payload, not a description of it."""
+    import apexa_feedback as fb
+    ctx = {
+        "model": (mcp_client.selected_model if mcp_client else None),
+        "servers": (list(mcp_client.sessions.keys()) if mcp_client else []),
+        "versions": fb._apexa_versions(),
+    }
+    try:                       # the executed-tool trace for the last turn
+        led = getattr(mcp_client, "ledger", None)
+        entries = getattr(led, "entries", None) if led is not None else None
+        if entries:
+            ctx["tools"] = [
+                {"name": e.name, "status": e.status,
+                 "elapsed_s": round(getattr(e, "elapsed_s", 0.0), 2)}
+                for e in list(entries)[-12:]
+            ]
+    except Exception:
+        pass
+    return ctx
+
 
 @app.get("/api/models")
 async def get_available_models():

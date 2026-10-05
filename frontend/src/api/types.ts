@@ -51,11 +51,15 @@ export interface VizArtifact {
 }
 
 export interface WsOutgoing {
-  type: 'chat' | 'change_model' | 'confirm_response'
+  type: 'chat' | 'change_model' | 'confirm_response' | 'delete_thread'
   message?: string
   model?: string
   confirm_id?: string
   approved?: boolean
+  // Frontend thread id (localStorage session) so the backend keeps per-thread
+  // conversation memory instead of one global history. Sent on every chat turn;
+  // and on delete_thread to drop that thread's server-side memory bucket.
+  thread_id?: string
 }
 
 export interface WsIncoming {

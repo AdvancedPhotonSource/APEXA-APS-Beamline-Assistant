@@ -1,3 +1,6 @@
+import { useState } from 'react'
+import { sendFeedback } from '../../api/endpoints'
+import { FeedbackDialog } from '../feedback/FeedbackDialog'
 import type { ChatMessage } from '@/api/types'
 import { ToolCallBox } from '@/components/cards/ToolCallBox'
 import { useVizStore } from '@/stores/vizStore'
@@ -63,6 +66,19 @@ const mdComponents: Components = {
 }
 
 export function MessageBubble({ message }: { message: ChatMessage }) {
+  // One click is the whole interaction for a rating: anything more and people
+  // stop rating. The dialog is reserved for a report, where prose earns its cost.
+  const [rated, setRated] = useState<'up' | 'down' | null>(null)
+  const [reporting, setReporting] = useState(false)
+
+  async function rate(kind: 'up' | 'down') {
+    setRated(kind)                       // optimistic; a lost rating is not worth a spinner
+    await sendFeedback({ kind, message_id: message.id })
+    // A thumbs-down usually means the person has something to say. Offer the
+    // dialog rather than making them hunt for it -- but never block on it.
+    if (kind === 'down') setReporting(true)
+  }
+
   const setActive = useVizStore((s) => s.setActive)
   const pushToPanel = useChatStore((s) => s.pushToPanel)
   const isUser = message.role === 'user'
@@ -138,11 +154,37 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                   </svg>
                 </ActionButton>
+                <ActionButton onClick={() => rate('up')}
+                              label={rated === 'up' ? 'Thanks' : ''} title="Good answer">
+                  <svg width="13" height="13" viewBox="0 0 24 24"
+                       fill={rated === 'up' ? 'currentColor' : 'none'}
+                       stroke="currentColor" strokeWidth="2">
+                    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.3a2 2 0 0 0 2-1.7l1.4-9A2 2 0 0 0 19.7 9z" />
+                  </svg>
+                </ActionButton>
+                <ActionButton onClick={() => rate('down')}
+                              label={rated === 'down' ? 'Noted' : ''} title="Bad answer">
+                  <svg width="13" height="13" viewBox="0 0 24 24"
+                       fill={rated === 'down' ? 'currentColor' : 'none'}
+                       stroke="currentColor" strokeWidth="2">
+                    <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.7a2 2 0 0 0-2 1.7l-1.4 9A2 2 0 0 0 4.3 15z" />
+                  </svg>
+                </ActionButton>
+                <ActionButton onClick={() => setReporting(true)} label="Report">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 9v4M12 17h.01" />
+                    <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+                  </svg>
+                </ActionButton>
               </>
             )}
           </div>
         )}
       </div>
+
+      {reporting && (
+        <FeedbackDialog messageId={message.id} onClose={() => setReporting(false)} />
+      )}
 
       {isUser && (
         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white flex items-center justify-center shrink-0 mt-1 shadow-sm">
@@ -156,10 +198,12 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
   )
 }
 
-function ActionButton({ onClick, label, children }: { onClick: () => void; label: string; children: React.ReactNode }) {
+function ActionButton({ onClick, label, children, title }: { onClick: () => void; label: string; children: React.ReactNode; title?: string }) {
   return (
     <button
       onClick={onClick}
+      title={title ?? label}
+      aria-label={title ?? label}
       className="text-[11px] text-[var(--apexa-text-muted)] hover:text-blue-400 bg-transparent border-none cursor-pointer flex items-center gap-1 px-2 py-1 rounded-md hover:bg-[var(--apexa-surface-3)] transition-all duration-150"
     >
       {children}
