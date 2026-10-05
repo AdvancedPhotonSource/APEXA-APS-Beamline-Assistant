@@ -75,20 +75,34 @@ dependencies = [
     "autogen-agentchat>=0.7.5",
     "autogen-ext>=0.7.5",
     "einops>=0.8.2",
-    # MIDAS native stack (midas-index, midas-fit-grain, ...) compiles C/C++/CUDA and
-    # has no Windows wheels — skip it on native Windows so `uv sync` installs cleanly
-    # (CLI/agent/core work; run MIDAS HEDM tools under WSL2/Linux). Unchanged elsewhere.
-    # Floor at 0.7.3: the suite's own dep list floors correctness fixes that a
-    # stale >=0.4.0 pin would let a locked/offline install resolve *below* —
-    # process-grains>=0.7.0 (grain-selection keys silently parsed-then-DISCARDED:
-    # 23710 vs 6132 grains; GrainRadius 5.5x low), fit-grain>=0.7.0, pipeline>=0.8.2,
-    # nf-pipeline>=0.6.1. `nf` extra added (APEXA has NF tools: run_nf_hedm_reconstruction,
-    # refine_nf_parameters, preprocess_nf_data).
-    "midas-suite[ff,nf,pdf,defect,dfxm,xaf,ultrafast,grain-odf,pf-odf,pink]>=0.7.3 ; sys_platform != 'win32'",
+    # NOTE: midas-suite moved OUT of base to the opt-in `[midas]` extra below.
+    # APEXA routes to a NATIVE MIDAS install (point APEXA_MIDAS_BIN at the
+    # operator's gate-checked pip env's bin/), so bundling a second copy into
+    # APEXA's own .venv only invites version skew — the exact class of failure
+    # that produced a void calibration (APEXA .venv midas-calibrate-v2 0.5.3 vs
+    # the operator's gate-checked 0.22.0). Install with `uv sync --extra midas`
+    # only on a host WITHOUT a native MIDAS to route to.
     "pywebview>=6.2.1",
 ]
 
 [project.optional-dependencies]
+# Native MIDAS reconstruction stack, pip flavor. OPT-IN — do NOT add to base.
+# Prefer routing to an existing native install via APEXA_MIDAS_BIN; install this
+# extra only on a host that has no native MIDAS to point at (e.g. a dev laptop).
+# Keeping it opt-in avoids installing a second midas-suite into APEXA's .venv that
+# can drift from the operator's gate-checked version (the calibration-void failure).
+# midas-suite native stack (midas-index, midas-fit-grain, ...) compiles C/C++/CUDA
+# and has no Windows wheels — the `sys_platform` guard keeps `uv sync --extra midas`
+# clean on native Windows (run MIDAS HEDM tools under WSL2/Linux instead).
+# Floor at 0.7.3: the suite's own dep list floors correctness fixes that a stale
+# >=0.4.0 pin would let a locked/offline install resolve *below* —
+# process-grains>=0.7.0 (grain-selection keys silently parsed-then-DISCARDED:
+# 23710 vs 6132 grains; GrainRadius 5.5x low), fit-grain>=0.7.0, pipeline>=0.8.2,
+# nf-pipeline>=0.6.1.
+midas = [
+    "midas-suite[ff,nf,pdf,defect,dfxm,xaf,ultrafast,grain-odf,pf-odf,pink]>=0.7.3 ; sys_platform != 'win32'",
+]
+
 # ALCF Inference Service (multi-user, per-user Globus identity).
 # Only needed for APEXA_LLM_PRESET=alcf-*; see docs/ALCF_MULTIUSER.md
 alcf = ["globus-sdk>=3.40", "openai>=1.40"]

@@ -396,7 +396,6 @@ dependencies = [
     { name = "langgraph-checkpoint-sqlite" },
     { name = "matplotlib" },
     { name = "mcp" },
-    { name = "midas-suite", extra = ["defect", "dfxm", "ff", "grain-odf", "nf", "pdf", "pf-odf", "pink", "ultrafast", "xaf"], marker = "sys_platform != 'win32'" },
     { name = "numpy" },
     { name = "openai" },
     { name = "openpyxl" },
@@ -442,6 +441,9 @@ extra = [
     { name = "typer" },
     { name = "vtk" },
 ]
+midas = [
+    { name = "midas-suite", extra = ["defect", "dfxm", "ff", "grain-odf", "nf", "pdf", "pf-odf", "pink", "ultrafast", "xaf"], marker = "sys_platform != 'win32'" },
+]
 mp = [
     { name = "mp-api" },
 ]
@@ -465,7 +467,7 @@ requires-dist = [
     { name = "lmfit", marker = "extra == 'extra'", specifier = ">=1.3.4" },
     { name = "matplotlib", specifier = ">=3.10.6" },
     { name = "mcp", specifier = ">=1.14.1" },
-    { name = "midas-suite", extras = ["ff", "nf", "pdf", "defect", "dfxm", "xaf", "ultrafast", "grain-odf", "pf-odf", "pink"], marker = "sys_platform != 'win32'", specifier = ">=0.7.3" },
+    { name = "midas-suite", extras = ["ff", "nf", "pdf", "defect", "dfxm", "xaf", "ultrafast", "grain-odf", "pf-odf", "pink"], marker = "sys_platform != 'win32' and extra == 'midas'", specifier = ">=0.7.3" },
     { name = "mp-api", marker = "extra == 'mp'", specifier = ">=0.41.0" },
     { name = "numpy", specifier = ">=2.3.3" },
     { name = "openai", specifier = ">=1.40" },
@@ -504,7 +506,7 @@ requires-dist = [
     { name = "xrayutilities", specifier = ">=1.7.12" },
     { name = "zarr", specifier = ">=2.18.0,<3" },
 ]
-provides-extras = ["alcf", "mp", "extra"]
+provides-extras = ["midas", "alcf", "mp", "extra"]
 
 [[package]]
 name = "bibtexparser"

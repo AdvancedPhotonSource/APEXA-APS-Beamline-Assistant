@@ -35,44 +35,72 @@ echo ""
 echo "Step 2: AI Model Selection"
 echo "-------------------------"
 echo "Available models:"
-echo "  1) gpt4o (GPT-4o - Fast, recommended)"
-echo "  2) claudesonnet4 (Claude Sonnet 4)"
-echo "  3) gemini25pro (Gemini 2.5 Pro)"
-echo "  4) gpt4turbo (GPT-4 Turbo)"
+echo "  1) claudeopus5  (Claude Opus 5 - newest, best planning/agentic - DEFAULT)"
+echo "  2) gpt56sol     (GPT-5.6 frontier - reliable tool calling)"
+echo "  3) gpt54        (GPT-5.4 - strong all-round, lower cost, 1M ctx)"
+echo "  4) claudesonnet5 (Claude Sonnet 5 - newest Sonnet)"
 echo ""
 read -p "Select model [1]: " model_choice
 model_choice=${model_choice:-1}
 
 case $model_choice in
-    1) ARGO_MODEL="gpt4o" ;;
-    2) ARGO_MODEL="claudesonnet4" ;;
-    3) ARGO_MODEL="gemini25pro" ;;
-    4) ARGO_MODEL="gpt4turbo" ;;
-    *) ARGO_MODEL="gpt4o" ;;
+    1) ARGO_MODEL="claudeopus5" ;;
+    2) ARGO_MODEL="gpt56sol" ;;
+    3) ARGO_MODEL="gpt54" ;;
+    4) ARGO_MODEL="claudesonnet5" ;;
+    *) ARGO_MODEL="claudeopus5" ;;
 esac
 
-# MIDAS path
+# MIDAS runtime
 echo ""
-echo "Step 3: MIDAS Installation"
+echo "Step 3: MIDAS Runtime"
 echo "-------------------------"
-echo "The system will automatically search for MIDAS in this order:"
-echo "  1. ~/Git/MIDAS"
-echo "  2. ~/opt/MIDAS"
-echo "  3. /home/beams/S*USER/opt/MIDAS (beamline systems)"
-echo "  4. ~/MIDAS"
-echo "  5. /opt/MIDAS"
-echo "  6. ~/.MIDAS"
+echo "APEXA routes to a NATIVE MIDAS install -- it does not bundle its own copy"
+echo "(a bundled copy drifts from the operator's gate-checked env and voids runs)."
+echo "The primary mechanism is APEXA_MIDAS_BIN = the pip midas-suite env's bin/."
 echo ""
-read -p "Do you want to specify a custom MIDAS path? (y/N): " -n 1 -r
+echo "Probing for a native MIDAS (midas-pipeline) ..."
+
+# Auto-detect the pip midas-suite env's bin/ from midas-pipeline on PATH or in the
+# common APS/dev locations. The bin dir is what APEXA_MIDAS_BIN must point at.
+APEXA_MIDAS_BIN=""
+_mp="$(command -v midas-pipeline 2>/dev/null || true)"
+if [ -n "$_mp" ]; then
+    APEXA_MIDAS_BIN="$(cd "$(dirname "$_mp")" && pwd)"
+else
+    for _cand in \
+        /home/beams*/*/opt/envs/midas/bin \
+        "$HOME"/opt/envs/midas/bin \
+        "$HOME"/miniconda3/envs/midas*/bin \
+        "$HOME"/anaconda3/envs/midas*/bin \
+        /opt/conda/envs/midas*/bin ; do
+        if [ -x "$_cand/midas-pipeline" ]; then
+            APEXA_MIDAS_BIN="$_cand"
+            break
+        fi
+    done
+fi
+
+if [ -n "$APEXA_MIDAS_BIN" ]; then
+    echo "  ✓ native MIDAS found -> APEXA_MIDAS_BIN=$APEXA_MIDAS_BIN"
+    echo "    Reconstruction / calibration / integration will route here."
+else
+    echo "  ⚠ no native MIDAS (midas-pipeline) found on this host."
+    echo "    After setup, install the pip stack INTO APEXA's own .venv with:"
+    echo "        uv sync --extra midas"
+    echo "    (midas-suite is an opt-in extra, intentionally not bundled in base.)"
+fi
+
+# Optional: a MIDAS *repo clone* (MIDAS_PATH) -- needed ONLY for forward simulation
+# (ForwardSimulationCompressed / simulateNF are C-only) and legacy C tools.
+echo ""
+read -p "Do you have a MIDAS C build / repo clone (for forward simulation)? (y/N): " -n 1 -r
 echo
 
 MIDAS_PATH=""
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    read -p "Enter MIDAS path: " MIDAS_PATH
-    # Expand ~ to home directory
+    read -p "Enter MIDAS clone path (MIDAS_PATH): " MIDAS_PATH
     MIDAS_PATH="${MIDAS_PATH/#\~/$HOME}"
-
-    # Check if path exists
     if [ ! -d "$MIDAS_PATH" ]; then
         echo "⚠️  Warning: Directory $MIDAS_PATH does not exist"
         read -p "Continue anyway? (y/N): " -n 1 -r
@@ -144,13 +172,23 @@ ARGO_MODEL=$ARGO_MODEL
 #   offline so the server cannot hang at startup on a model download.
 APEXA_NETWORK=$APEXA_NETWORK
 
-# MIDAS Installation Path
+# MIDAS Runtime
 EOF
 
+# APEXA_MIDAS_BIN -- the native pip midas-suite env (primary route).
+if [ -n "$APEXA_MIDAS_BIN" ]; then
+    echo "APEXA_MIDAS_BIN=$APEXA_MIDAS_BIN" >> .env
+else
+    echo "# No native MIDAS detected. Either set APEXA_MIDAS_BIN to a midas-suite" >> .env
+    echo "# env's bin/, or run 'uv sync --extra midas' to install it into .venv." >> .env
+    echo "# APEXA_MIDAS_BIN=" >> .env
+fi
+
+# MIDAS_PATH -- a repo clone, only for forward simulation / legacy C tools.
 if [ -n "$MIDAS_PATH" ]; then
     echo "MIDAS_PATH=$MIDAS_PATH" >> .env
 else
-    echo "# MIDAS_PATH will be auto-detected" >> .env
+    echo "# MIDAS_PATH (repo clone) will be auto-detected; needed only for forward sim." >> .env
 fi
 
 # Set secure permissions
@@ -163,10 +201,15 @@ echo "Configuration saved to .env:"
 echo "  - ANL Username: $ANL_USERNAME"
 echo "  - AI Model: $ARGO_MODEL"
 echo "  - Network tier: $APEXA_NETWORK"
-if [ -n "$MIDAS_PATH" ]; then
-    echo "  - MIDAS Path: $MIDAS_PATH"
+if [ -n "$APEXA_MIDAS_BIN" ]; then
+    echo "  - MIDAS runtime: native env ($APEXA_MIDAS_BIN)"
 else
-    echo "  - MIDAS Path: Auto-detect"
+    echo "  - MIDAS runtime: none detected -> run 'uv sync --extra midas' (or set APEXA_MIDAS_BIN)"
+fi
+if [ -n "$MIDAS_PATH" ]; then
+    echo "  - MIDAS clone (forward sim): $MIDAS_PATH"
+else
+    echo "  - MIDAS clone (forward sim): auto-detect (needed only for forward simulation)"
 fi
 echo ""
 echo "File permissions set to 600 (owner read/write only)"
