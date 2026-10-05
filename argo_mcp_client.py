@@ -1603,6 +1603,21 @@ class APEXAClient:
         # fail-safe DENY (no interface can confirm → deletion is blocked).
         self.permission_callback = None
 
+        # ── Web-UI per-thread conversation memory ────────────────────────────
+        # The web/desktop frontend keeps ChatGPT-style threads in localStorage
+        # but the orchestrator has ONE global conversation_history. Without a
+        # thread→memory mapping the web UI "starts fresh every time" (the
+        # in-memory global is lost on restart) and bleeds context across threads.
+        # We bucket the orchestrator's history+summary per frontend thread_id and
+        # persist each bucket to disk so a thread survives a restart — mirroring
+        # the frontend's own localStorage durability. Kept in a dedicated dir,
+        # separate from the CLI ExperimentContext session store (no pollution).
+        # activate_web_thread()/_save_web_thread() are serialized by this lock
+        # because there is a single shared orchestrator.
+        self._web_threads_dir = Path.home() / ".apexa" / "web_threads"
+        self._active_web_thread: Optional[str] = None
+        self._web_thread_lock = asyncio.Lock()
+
         if not self.anl_username:
             raise ValueError("ANL_USERNAME must be set in environment (.env file)")
 
@@ -1729,7 +1744,10 @@ class APEXAClient:
                     "function": {
                         "name":        tool.name,
                         "description": f"[{name.upper()}] {tool.description}",
-                        "parameters":  tool.inputSchema,
+                        # MCP 2.x renamed the Python attribute to ``input_schema``
+                        # (``inputSchema`` is now only the wire-serialization alias,
+                        # not an attribute). getattr-fallback keeps 1.x working too.
+                        "parameters":  getattr(tool, "input_schema", None) or getattr(tool, "inputSchema", None),
                     },
                 })
         return len(response.tools)
@@ -2002,6 +2020,88 @@ class APEXAClient:
             return error_msg
         finally:
             self._busy_server = None
+
+    # ── Web-UI per-thread memory helpers ─────────────────────────────────────
+    def _web_thread_file(self, thread_id: str) -> Path:
+        """Path of the on-disk bucket for a frontend thread_id.
+
+        The id comes from the browser (localStorage `sess-…`); sanitize it to a
+        safe filename so a crafted id can never escape the buckets dir.
+        """
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", thread_id or "")[:128] or "_default"
+        return self._web_threads_dir / f"{safe}.json"
+
+    async def activate_web_thread(self, thread_id: Optional[str]) -> None:
+        """Make ``thread_id``'s conversation the orchestrator's active memory.
+
+        Saves the currently-active thread's history to disk, then loads the
+        requested thread's bucket (full-fidelity in single mode). A thread the
+        backend has never seen (new chat, or first message after a restart with
+        no saved bucket) starts empty. No-op when the thread is already active or
+        when there is no orchestrator. Caller MUST hold ``_web_thread_lock`` so
+        the swap is atomic against the single shared orchestrator.
+        """
+        if not self.orchestrator or not thread_id:
+            return
+        if thread_id == self._active_web_thread:
+            return
+        # Flush the outgoing thread so its latest turns aren't lost on the swap.
+        if self._active_web_thread is not None:
+            self._save_web_thread()
+        # Load the incoming thread (or start clean if it has no bucket yet).
+        loaded = False
+        try:
+            f = self._web_thread_file(thread_id)
+            if f.exists():
+                data = json.loads(f.read_text())
+                self.orchestrator.clear_history()
+                self.orchestrator.import_history(data.get("conversation_history", []))
+                self.orchestrator.import_summary(data.get("running_summary", ""))
+                loaded = True
+        except Exception as e:
+            print(f"  (web thread load skipped for {thread_id}: {e})",
+                  file=sys.stderr)
+        if not loaded:
+            self.orchestrator.clear_history()
+        self._active_web_thread = thread_id
+
+    def _save_web_thread(self) -> None:
+        """Persist the active thread's history+summary to its on-disk bucket.
+
+        Best-effort and atomic (tmp then replace): a failed save must never crash
+        a chat turn. Called after every web turn so the bucket survives a restart.
+        """
+        if not self.orchestrator or self._active_web_thread is None:
+            return
+        try:
+            self._web_threads_dir.mkdir(parents=True, exist_ok=True)
+            record = {
+                "conversation_history": self.orchestrator.export_history(),
+                "running_summary": self.orchestrator.export_summary(),
+                "saved_at": datetime.now().isoformat(),
+            }
+            f = self._web_thread_file(self._active_web_thread)
+            tmp = f.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(record, indent=2))
+            os.replace(tmp, f)
+        except Exception as e:
+            print(f"  (web thread save skipped: {e})", file=sys.stderr)
+
+    def delete_web_thread(self, thread_id: str) -> None:
+        """Drop a thread's on-disk bucket (frontend deleted the conversation).
+
+        If it was the active thread, also clear the live orchestrator memory so
+        the next turn genuinely starts fresh. Best-effort."""
+        if not thread_id:
+            return
+        try:
+            self._web_thread_file(thread_id).unlink(missing_ok=True)
+        except Exception as e:
+            print(f"  (web thread delete skipped: {e})", file=sys.stderr)
+        if thread_id == self._active_web_thread:
+            if self.orchestrator:
+                self.orchestrator.clear_history()
+            self._active_web_thread = None
 
     async def run_query(self, query: str, use_history: bool = True,
                         on_tool_result=None, permission_callback=None) -> str:
