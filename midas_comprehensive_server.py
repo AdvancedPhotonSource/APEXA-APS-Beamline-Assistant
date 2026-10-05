@@ -789,8 +789,17 @@ def _collect_ff_outputs_remote(run_host, result_str, start_layer, end_layer,
 
 
 def run_midas_executable(executable: str, param_file: str, cwd: str = None,
-                         timeout: int = 3600, env: dict = None) -> dict:
-    """Run a MIDAS C executable and return results."""
+                         timeout: int = 3600, env: dict = None,
+                         extra_args: list = None) -> dict:
+    """Run a MIDAS C executable and return results.
+
+    `extra_args` are appended after the parameter file, in order, so a binary
+    whose documented contract is more than `<exe> <ParameterFile>` can be driven
+    faithfully. The manual (manuals/Forward_Simulation.md) requires
+    `ForwardSimulationCompressed <ParameterFile> <nCPUs>` and
+    `simulateNF <ParameterFile> <InputMicFile> <OutputPrefix> [nCPUs]`; with
+    `extra_args=None` the command is byte-for-byte the original `[exe, param]`.
+    """
     # Try multiple possible locations for executables
     possible_paths = [
         MIDAS_BIN / executable,
@@ -818,6 +827,8 @@ def run_midas_executable(executable: str, param_file: str, cwd: str = None,
             env = get_midas_env()
         _warn_deprecated_cpp(f"C++ binary {executable}")
         cmd = [str(exe_path), str(param_file)]
+        if extra_args:
+            cmd.extend(str(a) for a in extra_args)
         print(f"  $ {' '.join(cmd)}", file=sys.stderr)
         result = subprocess.run(
             cmd,
@@ -2659,123 +2670,378 @@ async def calculate_misorientation(
             "error": str(e)
         })
 
+# =============================================================================
+# FORWARD SIMULATION (manuals/Forward_Simulation.md v11.0) — two C binaries:
+#   FF: ForwardSimulationCompressed <ParameterFile> <nCPUs>
+#   NF: simulateNF <ParameterFile> <InputMicFile> <OutputPrefix> [nCPUs]
+# Both are C executables (FF_HEDM/bin, NF_HEDM/bin) — NOT pip entry points — so
+# they require a built MIDAS clone (MIDAS_PATH) and run through
+# run_midas_executable (which sets DYLD/LD paths via get_midas_env()).
+# Methodology/traps inject via the midas-forward-sim skill (skill_registry).
+# =============================================================================
+
+def _fwdsim_remote_guard(tool: str, *data_paths: str, host: str = ""):
+    """Fail-closed locality guard for the forward-sim C binaries.
+
+    The simulators write their outputs next to the input param/grain files, so a
+    wrong-host run silently writes to the wrong filesystem. These binaries are
+    also not guaranteed to be *built* on a pip-only analysis host, and shipping a
+    bare binary name over SSH is unverified. So — exactly like midas_auto_calibrate
+    — when the data resolves to a remote host we REFUSE with an actionable message
+    rather than simulate blind. Returns a format_result error string to return, or
+    None when the run is local and may proceed.
+    """
+    d = decide_exec_host(*[p for p in data_paths if p], host=host)
+    if d.get("error"):
+        return format_result({"tool": tool, "status": "error",
+                              "nothing_was_run": True,
+                              "error": d.get("reason")})
+    if d.get("is_remote"):
+        _ch = d.get("host")
+        return format_result({
+            "tool": tool, "status": "error", "is_remote": True, "host": _ch,
+            "nothing_was_run": True,
+            "locality_reason": d.get("reason"),
+            "diagnosis": d.get("diagnosis") or {},
+            "if_this_is_the_data_host": (
+                "Then this refusal is wrong and the registry name simply does not "
+                "match this machine's hostname. Do NOT hand-drive the binary over "
+                "run_remote_command (that bypasses the skill methodology and the "
+                "output verifier). Set APEXA_FORCE_REMOTE_EXEC=0 (forces local) or "
+                "APEXA_LOCAL_HOSTNAMES=<registry name for this host>, then re-run."),
+            "error": (
+                f"Simulation inputs resolve to remote host '{_ch}', but the forward-"
+                "simulation C binaries are not routed over SSH (they are not pip "
+                "entry points and may not be built on the data host). NOTHING was "
+                "run — no wrong-host simulation was attempted. Options: (1) run the "
+                "simulation on the analysis host directly, or (2) stage the param + "
+                "input files locally and re-run this tool."),
+        })
+    return None
+
+
+def _fwdsim_verify_outputs(files, run_start: float):
+    """Classify simulation outputs as fresh (written this run) vs. stale.
+
+    Honest-status contract: an output must be newer than the run start, else a
+    pre-existing file from a prior run could be reported as this run's result.
+    Returns (fresh, stale) lists of path strings. 2 s tolerance for coarse mtime.
+    """
+    fresh, stale = [], []
+    for f in files:
+        try:
+            if f.stat().st_mtime >= run_start - 2:
+                fresh.append(str(f))
+            else:
+                stale.append(str(f))
+        except OSError:
+            pass
+    return fresh, stale
+
+
 @mcp.tool()
 async def run_forward_simulation(
     input_grains_file: str,
     param_file: str,
     output_prefix: str,
+    n_cpus: int = 4,
     compressed: bool = True,
-    scanning_mode: bool = False
+    scanning_mode: bool = False,
+    host: str = ""
 ) -> str:
-    """Forward simulate diffraction from known microstructure.
+    """Far-field forward simulation (MIDAS `ForwardSimulationCompressed`).
 
-    Simulates what diffraction patterns would look like for a given
-    grain structure. Used for testing reconstruction algorithms and
-    validating experimental data.
+    Simulates FF-HEDM detector images from a known microstructure (grain
+    orientations/positions/strains) and experimental geometry — for testing
+    reconstruction pipelines and validating experimental data. Follows
+    manuals/Forward_Simulation.md §1: runs `ForwardSimulationCompressed
+    <ParameterFile> <nCPUs>` and produces `<prefix>_scanNr_X.zip` (Zarr) plus
+    an optional `SpotMatrixGen.csv` (when `WriteSpots 1`). `hkls.csv` is
+    auto-generated by the bundled `GetHKLList` (needs SpaceGroup/LatticeConstant/
+    Wavelength in the param file). For NEAR-FIELD, use `run_nf_forward_simulation`.
 
     Args:
-        input_grains_file: Path to input Grains.csv with known orientations
-        param_file: Path to Parameters.txt with experimental geometry
-        output_prefix: Prefix for output files
-        compressed: Use compressed output format
-        scanning_mode: Simulate scanning (PF) mode instead of FF mode
+        input_grains_file: Input grain data — Grains.csv, EBSD text
+            (X Y Z Eul1 Eul2 Eul3, degrees), .vtk, or .bin (written as InFileName).
+        param_file: Parameters.txt with geometry/detector/material keywords.
+        output_prefix: Base name for outputs (written as OutFileName).
+        n_cpus: CPU threads for the simulation (manual's required 2nd argument;
+            best set to the machine's physical core count). Default 4.
+        compressed: Retained for back-compat; the non-compressed binary was
+            archived in v11, so this always uses ForwardSimulationCompressed.
+        scanning_mode: Deprecated — PF/scanning simulation was removed in v11.
+        host: Force a specific exec host (locality decision); normally unset.
 
     Returns:
-        JSON with simulation status and output files
+        JSON with simulation status, output files, and freshness verification.
     """
+    tool = "run_forward_simulation"
+    temp_params = None
     try:
         # Validate inputs
         valid, grains_path = validate_file(input_grains_file)
         if not valid:
-            return format_result({"error": grains_path, "status": "failed"})
+            return format_result({"tool": tool, "error": grains_path, "status": "failed"})
 
         valid, param_path = validate_file(param_file)
         if not valid:
-            return format_result({"error": param_path, "status": "failed"})
+            return format_result({"tool": tool, "error": param_path, "status": "failed"})
+
+        # PF/scanning simulation was removed in MIDAS v11.
+        if scanning_mode:
+            return format_result({
+                "tool": tool, "status": "error",
+                "error": (
+                    "Scanning/PF forward simulation (SimulateScanning) was removed "
+                    "in MIDAS v11. For NEAR-FIELD simulation use "
+                    "run_nf_forward_simulation (simulateNF). For PF, use the "
+                    "differentiable forward model in midas_diffract "
+                    "(midas_diffract.simulate_panel_zarrs) or run a PF pipeline on "
+                    "real data via run_pf_hedm_workflow."
+                ),
+            })
+
+        # Fail-closed locality guard (outputs land next to the data).
+        guard = _fwdsim_remote_guard(tool, param_path, grains_path, host=host)
+        if guard is not None:
+            return guard
 
         work_dir = Path(param_path).parent
-        _announce_output("run_forward_simulation", work_dir, params=Path(param_path).name)
+        _announce_output(tool, work_dir, params=Path(param_path).name,
+                         prefix=output_prefix, n_cpus=n_cpus)
 
-        # Update parameter file with input grains and output prefix
-        # This is a simplified approach - actual implementation may need
-        # to properly parse and modify the parameter file
+        # Rewrite the param file: set InFileName/OutFileName. The manual makes
+        # both param KEYWORDS (the binary itself takes only <param> <nCPUs>), so
+        # unlike the old replace-only pass we APPEND either keyword if the
+        # template omitted it — otherwise a silent drop left the binary with no
+        # input/output name.
+        saw_in = saw_out = False
         temp_params = work_dir / "sim_params.txt"
         with open(param_path, 'r') as fin, open(temp_params, 'w') as fout:
             for line in fin:
                 if line.startswith('InFileName'):
-                    fout.write(f'InFileName {grains_path}\n')
+                    fout.write(f'InFileName {grains_path}\n'); saw_in = True
                 elif line.startswith('OutFileName'):
-                    fout.write(f'OutFileName {output_prefix}\n')
+                    fout.write(f'OutFileName {output_prefix}\n'); saw_out = True
                 else:
                     fout.write(line)
+            if not saw_in:
+                fout.write(f'InFileName {grains_path}\n')
+            if not saw_out:
+                fout.write(f'OutFileName {output_prefix}\n')
 
-        # Choose executable. MIDAS v11 archived the non-compressed
-        # ForwardSimulation and the standalone SimulateScanning binaries;
-        # ForwardSimulationCompressed is the only surviving C simulator and
-        # handles the FF case. Scanning/PF simulation now lives in the
-        # differentiable midas_diffract model (no CLI yet) — flag clearly
-        # instead of invoking a binary that no longer exists.
-        if scanning_mode:
-            return format_result({
-                "tool": "run_forward_simulation",
-                "status": "error",
-                "error": (
-                    "Scanning/PF forward simulation (SimulateScanning) was "
-                    "removed in MIDAS v11. Use the differentiable forward model "
-                    "in the midas_diffract package "
-                    "(midas_diffract.simulate_panel_zarrs), or run a PF pipeline "
-                    "on real data via run_pf_hedm_workflow."
-                ),
-            })
+        # Multi-scan precondition (manual §1.2.1.B): nScans>1 needs positions.csv
+        # in the working directory. Surface it rather than let the binary fail.
+        notes = []
+        n_scans = 1
+        try:
+            for line in Path(param_path).read_text().splitlines():
+                if line.strip().startswith('nScans'):
+                    parts = line.split()
+                    if len(parts) > 1:
+                        n_scans = int(float(parts[1]))
+        except (ValueError, OSError):
+            pass
+        if n_scans > 1 and not (work_dir / "positions.csv").exists():
+            notes.append(
+                f"nScans={n_scans} but positions.csv is missing from {work_dir} — "
+                "the manual requires one sample-offset value per scan (microns).")
+
         exe = "ForwardSimulationCompressed"
         if not compressed:
             print("[FWD-SIM] non-compressed ForwardSimulation archived in v11; "
                   "using ForwardSimulationCompressed.", file=sys.stderr)
-        print(f"Running {exe} simulation", file=sys.stderr)
+        print(f"Running {exe} simulation ({n_cpus} cpus)", file=sys.stderr)
 
-        result = run_midas_executable(exe, str(temp_params), cwd=str(work_dir), timeout=1800)
+        run_start = time.time()
+        result = run_midas_executable(
+            exe, str(temp_params), cwd=str(work_dir), timeout=1800,
+            extra_args=[int(n_cpus)])
 
-        # Find output files
-        output_files = []
-        for pattern in [f"{output_prefix}*.zip", f"{output_prefix}*.tif",
-                       f"{output_prefix}*.h5"]:
-            output_files.extend(work_dir.glob(pattern))
+        # Output discovery per manual §1.3: <prefix>_scanNr_X.zip (Zarr) and the
+        # optional SpotMatrixGen.csv. (The old *.tif/*.h5 globs never matched.)
+        output_files = sorted(work_dir.glob(f"{output_prefix}_scanNr_*.zip"))
+        if not output_files:  # fall back to any prefix-zip, in case of naming drift
+            output_files = sorted(work_dir.glob(f"{output_prefix}*.zip"))
+        spot_matrix = work_dir / "SpotMatrixGen.csv"
+        # Only report the spot CSV if THIS run wrote it (else a prior run's file
+        # would be claimed as ours). WriteSpots 1 regenerates it each run.
+        sm_fresh, _ = _fwdsim_verify_outputs([spot_matrix], run_start)
+        fresh, stale = _fwdsim_verify_outputs(output_files, run_start)
 
         simulation_info = {
             "input_grains": grains_path,
             "param_file": param_path,
+            "temp_param_file_used": str(temp_params),
             "output_prefix": output_prefix,
+            "n_cpus": int(n_cpus),
+            "n_scans": n_scans,
+            "simulation_mode": "FF-HEDM",
             "n_output_files": len(output_files),
-            "output_files": [str(f) for f in output_files[:10]],  # Limit listing
-            "simulation_mode": "PF-HEDM" if scanning_mode else "FF-HEDM"
+            "output_files": [str(f) for f in output_files[:10]],
+            "fresh_outputs": fresh,
+            "stale_outputs": stale,
+            "spot_matrix_csv": sm_fresh[0] if sm_fresh else None,
         }
-
-        # Count input grains
         try:
             with open(grains_path, 'r') as f:
-                simulation_info["n_grains_simulated"] = sum(1 for line in f) - 1
-        except:
+                simulation_info["n_grains_simulated"] = sum(1 for _ in f) - 1
+        except OSError:
             pass
 
-        # Clean up temp file
-        if temp_params.exists():
-            temp_params.unlink()
+        # Honest status: the binary can exit 0 yet write nothing new. A fresh
+        # output is either a new ZIP (images) or a new SpotMatrixGen.csv (the
+        # intended WriteImage 0 / WriteSpots 1 path). Downgrade only when neither
+        # is fresh, so a stale file from a prior run is never claimed as ours.
+        if result["success"] and (fresh or sm_fresh):
+            status = "completed"
+            if not fresh and sm_fresh:
+                notes.append(
+                    "No new ZIP, but a fresh SpotMatrixGen.csv — consistent with "
+                    "WriteImage 0 (spots only, no images).")
+        elif result["success"]:
+            status = "warning"
+            notes.append(
+                "Binary exited 0 but no output ZIP or SpotMatrixGen.csv is newer "
+                "than run start — the simulation produced nothing this run (check "
+                "geometry/WriteImage/WriteSpots and that the grain file has data).")
+        else:
+            status = "failed"
 
-        return format_result({
-            "tool": "run_forward_simulation",
-            "status": "completed" if result["success"] else "failed",
-            "workflow": "Forward Diffraction Simulation",
+        payload = {
+            "tool": tool,
+            "status": status,
+            "workflow": "Far-Field Forward Diffraction Simulation",
+            "command": f"ForwardSimulationCompressed {Path(temp_params).name} {int(n_cpus)}",
             "execution": result,
             "simulation": simulation_info,
-            "usage_note": "Use simulated data to test reconstruction pipelines"
-        })
+            "usage_note": "Use simulated data to test FF reconstruction pipelines",
+        }
+        if notes:
+            payload["notes"] = notes
+        return format_result(payload)
 
     except Exception as e:
-        return format_result({
-            "tool": "run_forward_simulation",
-            "status": "error",
-            "error": str(e)
-        })
+        return format_result({"tool": tool, "status": "error", "error": str(e)})
+    finally:
+        if temp_params is not None and Path(temp_params).exists():
+            try:
+                Path(temp_params).unlink()
+            except OSError:
+                pass
+
+
+@mcp.tool()
+async def run_nf_forward_simulation(
+    param_file: str,
+    mic_file: str,
+    output_prefix: str,
+    n_cpus: int = 1,
+    host: str = ""
+) -> str:
+    """Near-field forward simulation (MIDAS `simulateNF`).
+
+    The NF counterpart to run_forward_simulation. Produces hit-count images
+    (each pixel = how many diffraction spots illuminated it) — the format the NF
+    reconstruction pipeline expects. Follows manuals/Forward_Simulation.md §2:
+    runs `simulateNF <ParameterFile> <InputMicFile> <OutputPrefix> [nCPUs]`.
+
+    Args:
+        param_file: NF Parameters.txt — per-layer nDistances/Lsd/BC, omega
+            (StartNr/EndNr/OmegaStart/OmegaStep/OmegaRange/BoxSize), material
+            (SpaceGroup/LatticeParameter/Wavelength/MaxRingRad/RingsToUse),
+            detector (NrPixelsY/Z/px/tilts/Wedge). See skill midas-forward-sim.
+        mic_file: Input .mic microstructure. IMPORTANT: Euler angles must be in
+            RADIANS (manual §2.3); the code converts to degrees internally.
+        output_prefix: Base name. Produces `<prefix>`, `<prefix>.bin`,
+            `SpotsInfo.bin`, `SimulatedSpots.csv`, and (WriteImage 1) `<prefix>.zip`.
+        n_cpus: OpenMP threads (optional 4th arg; manual default 1).
+        host: Force a specific exec host; normally unset.
+
+    Returns:
+        JSON with simulation status, output files, and freshness verification.
+    """
+    tool = "run_nf_forward_simulation"
+    try:
+        valid, param_path = validate_file(param_file)
+        if not valid:
+            return format_result({"tool": tool, "error": param_path, "status": "failed"})
+
+        valid, mic_path = validate_file(mic_file)
+        if not valid:
+            return format_result({"tool": tool, "error": mic_path, "status": "failed"})
+        if not str(mic_path).lower().endswith(".mic"):
+            # Not fatal (the binary reads by content) but almost always a mistake.
+            print(f"[NF-SIM] warning: input {mic_path} is not a .mic file",
+                  file=sys.stderr)
+
+        guard = _fwdsim_remote_guard(tool, param_path, mic_path, host=host)
+        if guard is not None:
+            return guard
+
+        work_dir = Path(param_path).parent
+        _announce_output(tool, work_dir, params=Path(param_path).name,
+                         mic=Path(mic_path).name, prefix=output_prefix, n_cpus=n_cpus)
+
+        print(f"Running simulateNF ({n_cpus} cpus)", file=sys.stderr)
+        run_start = time.time()
+        # simulateNF <ParameterFile> <InputMicFile> <OutputPrefix> [nCPUs]
+        result = run_midas_executable(
+            "simulateNF", str(param_path), cwd=str(work_dir), timeout=3600,
+            extra_args=[str(mic_path), str(output_prefix), int(n_cpus)])
+
+        # Output discovery per manual §2.4.
+        candidates = [
+            work_dir / output_prefix,
+            work_dir / f"{output_prefix}.bin",
+            work_dir / "SpotsInfo.bin",
+            work_dir / "SimulatedSpots.csv",
+            work_dir / f"{output_prefix}.zip",
+        ]
+        present = [p for p in candidates if p.exists()]
+        fresh, stale = _fwdsim_verify_outputs(present, run_start)
+
+        simulation_info = {
+            "param_file": param_path,
+            "mic_file": mic_path,
+            "output_prefix": output_prefix,
+            "n_cpus": int(n_cpus),
+            "simulation_mode": "NF-HEDM",
+            "n_output_files": len(present),
+            "output_files": [str(p) for p in present],
+            "fresh_outputs": fresh,
+            "stale_outputs": stale,
+        }
+
+        notes = []
+        if result["success"] and fresh:
+            status = "completed"
+        elif result["success"] and not fresh:
+            status = "warning"
+            notes.append(
+                "simulateNF exited 0 but no expected output is newer than run "
+                "start — the simulation may have produced no spots (check geometry/"
+                "RingsToUse/OmegaRange) or the .mic Euler angles may be in degrees "
+                "instead of radians (manual §2.3).")
+        else:
+            status = "failed"
+
+        payload = {
+            "tool": tool,
+            "status": status,
+            "workflow": "Near-Field Forward Diffraction Simulation",
+            "command": (f"simulateNF {Path(param_path).name} {Path(mic_path).name} "
+                        f"{output_prefix} {int(n_cpus)}"),
+            "execution": result,
+            "simulation": simulation_info,
+            "usage_note": "Use simulated hit-count data to validate NF reconstruction",
+        }
+        if notes:
+            payload["notes"] = notes
+        return format_result(payload)
+
+    except Exception as e:
+        return format_result({"tool": tool, "status": "error", "error": str(e)})
 
 @mcp.tool()
 async def extract_grain_centroids(
@@ -3218,10 +3484,47 @@ async def validate_midas_installation(
                 "validation": validation
             })
 
-        # Check for key executables
-        bin_path = midas_root / "bin"
+        # Resolve executables the SAME way APEXA actually locates them at run
+        # time, so this preflight can never disagree with the runner and never
+        # hard-codes one machine's layout. A MIDAS install can take several forms:
+        #   * pip `midas-suite`  -> console scripts on PATH (APEXA_MIDAS_BIN) —
+        #                           the preferred install; no repo clone at all
+        #   * CMake build        -> <clone>/build/bin   (where ./build.sh writes)
+        #   * classic make build -> <clone>/FF_HEDM/bin, <clone>/NF_HEDM/bin
+        #   * flat install       -> <clone>/bin
+        # Two complementary lookups cover every host:
+        #   (1) shutil.which() against get_midas_env()'s PATH — this is the exact
+        #       search APEXA uses to run binaries (APEXA_MIDAS_BIN first, then
+        #       build/bin, then MIDAS/bin, then the system PATH), so it finds a
+        #       pip/system install wherever it lives.
+        #   (2) the conventional build-output dirs under the *supplied* midas_path,
+        #       so validating a clone at a non-default location (not on PATH) also
+        #       works, in any build layout.
+        # (Checking only midas_root/bin was the bug: it produced a FALSE
+        # "0/N executables -> rebuild MIDAS" halt on a perfectly good build/bin or
+        # pip install.)
+        import shutil as _shutil
+        runtime_path = get_midas_env().get("PATH", "")
+        bin_candidates = [
+            midas_root / "build" / "bin",
+            midas_root / "FF_HEDM" / "bin",
+            midas_root / "NF_HEDM" / "bin",
+            midas_root / "bin",
+        ]
+        existing_bins = [b for b in bin_candidates if b.exists()]
+        bin_path = existing_bins[0] if existing_bins else bin_candidates[0]
         validation["bin_directory"] = str(bin_path)
-        validation["bin_exists"] = bin_path.exists()
+        validation["bin_directories_searched"] = [str(b) for b in bin_candidates]
+        validation["bin_resolution"] = "shutil.which(get_midas_env PATH) + build-output dirs"
+        validation["bin_exists"] = bool(existing_bins) or bool(_shutil.which("ForwardSimulationCompressed", path=runtime_path))
+
+        def _exe_exists(name: str) -> bool:
+            """True if `name` is runnable: on APEXA's runtime PATH (pip/system
+            install) OR present in a conventional build-output dir under
+            midas_path. Matches how run_midas_executable / the pip CLIs resolve."""
+            if _shutil.which(name, path=runtime_path):
+                return True
+            return any((b / name).exists() for b in bin_candidates)
 
         # MIDAS v11 reality: most workflows now run through pip-package CLIs /
         # in-process native engines (see native_packages above), NOT raw C
@@ -3251,10 +3554,9 @@ async def validate_midas_installation(
         ]
 
         for exe in key_executables:
-            exe_path = bin_path / exe
-            validation["executables"][exe] = exe_path.exists()
+            validation["executables"][exe] = _exe_exists(exe)
         validation["optional_executables"] = {
-            exe: (bin_path / exe).exists() for exe in optional_executables
+            exe: _exe_exists(exe) for exe in optional_executables
         }
 
         # Check Python workflows (legacy scripts — may be superseded by pip packages)
