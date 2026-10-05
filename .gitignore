@@ -277,3 +277,9 @@ tests/__pycache__/
 # Runtime crash dumps
 error_dumps/
 scratch-cal/
+
+# Genesis demo deck: ~694 MB each (embedded media). Committing these would add
+# ~2 GB to history permanently, and git cannot forget it afterwards.
+tutorials-demo/2610-Genesis-Demo.pptx
+tutorials-demo/2610-Genesis-Demo.NEW.pptx
+tutorials-demo/2610-Genesis-Demo.BACKUP.pptx

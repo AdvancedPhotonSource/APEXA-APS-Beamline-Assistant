@@ -50,7 +50,10 @@ SKILL_FOR_TOOL = {
     "extract_grain_centroids": "midas-hedm",
     "preprocess_nf_data": "midas-hedm",
     "run_pf_hedm_workflow": "midas-hedm",
-    "run_forward_simulation": "midas-hedm",
+    # forward simulation (FF ForwardSimulationCompressed / NF simulateNF) —
+    # dedicated skill carrying manuals/Forward_Simulation.md procedure + traps
+    "run_forward_simulation": "midas-forward-sim",
+    "run_nf_forward_simulation": "midas-forward-sim",
     "match_grains": "midas-hedm",
     "calculate_misorientation": "midas-hedm",
     "read_grains_summary": "midas-hedm",

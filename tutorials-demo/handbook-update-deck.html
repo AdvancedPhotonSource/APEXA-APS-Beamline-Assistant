@@ -1,0 +1,557 @@
+<title>APEXA — A context-engineering fix</title>
+<style>
+  :root{
+    --bg:#F4F6F9; --surface:#FFFFFF; --surface-2:#EDF1F6;
+    --ink:#131A22; --muted:#586675; --hairline:#D5DDE6;
+    --accent:#0B5FAE; --accent-soft:#E4EEF9;
+    --good:#0E9384; --good-soft:#DBF3EF;
+    --danger:#D24E1B; --danger-soft:#FBE7DC;
+    --amber:#B7791F; --amber-soft:#FBEFD6;
+    --shadow:0 1px 2px rgba(19,26,34,.06),0 8px 24px rgba(19,26,34,.08);
+    --ring:rgba(11,95,174,.16);
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#0E1319; --surface:#161D26; --surface-2:#1E2732;
+      --ink:#E9EEF4; --muted:#94A2B2; --hairline:#2A3542;
+      --accent:#4E9BEC; --accent-soft:#16283D;
+      --good:#2DBFAC; --good-soft:#123029;
+      --danger:#F0743F; --danger-soft:#331A10;
+      --amber:#E0B25A; --amber-soft:#2E2410;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+      --ring:rgba(78,155,236,.18);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0E1319; --surface:#161D26; --surface-2:#1E2732;
+    --ink:#E9EEF4; --muted:#94A2B2; --hairline:#2A3542;
+    --accent:#4E9BEC; --accent-soft:#16283D;
+    --good:#2DBFAC; --good-soft:#123029;
+    --danger:#F0743F; --danger-soft:#331A10;
+    --amber:#E0B25A; --amber-soft:#2E2410;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.45);
+    --ring:rgba(78,155,236,.18);
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;scroll-snap-type:y mandatory;overflow-x:hidden}
+  .mono{font-family:ui-monospace,"SF Mono","Cascadia Code",Menlo,monospace}
+
+  .slide{min-height:100vh;min-height:100dvh;scroll-snap-align:start;
+    display:flex;flex-direction:column;justify-content:center;
+    padding:clamp(26px,4.4vw,72px);position:relative;border-bottom:1px solid var(--hairline)}
+  .inner{width:100%;max-width:1120px;margin:0 auto;position:relative;z-index:1}
+
+  .eyebrow{display:flex;align-items:center;gap:12px;font-size:.72rem;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:18px}
+  .eyebrow .num{font-family:ui-monospace,monospace;color:var(--accent);
+    border:1px solid var(--hairline);border-radius:999px;padding:3px 10px;background:var(--surface)}
+  .eyebrow .rule{height:1px;flex:1;background:var(--hairline)}
+
+  h1{font-size:clamp(2rem,5vw,3.8rem);line-height:1.04;margin:0 0 .45em;
+    font-weight:800;letter-spacing:-.02em;text-wrap:balance}
+  h2{font-size:clamp(1.5rem,3.3vw,2.4rem);line-height:1.1;margin:0 0 .3em;
+    font-weight:800;letter-spacing:-.015em;text-wrap:balance}
+  .lead{font-size:clamp(1.02rem,1.55vw,1.24rem);line-height:1.5;color:var(--muted);
+    max-width:64ch;margin:0 0 1.2em;text-wrap:pretty}
+  .accent{color:var(--accent)} p{line-height:1.55}
+
+  .rings-bg{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+  .rings-bg svg{position:absolute;right:-16%;top:50%;transform:translateY(-50%);
+    width:min(120vh,1050px);height:min(120vh,1050px)}
+
+  /* generic term / glossary strip */
+  .terms{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:22px}
+  .term{background:var(--surface);border:1px solid var(--hairline);border-radius:12px;
+    padding:13px 15px;box-shadow:var(--shadow)}
+  .term .k{font-weight:800;font-size:.96rem;margin-bottom:3px;display:flex;align-items:center;gap:7px}
+  .term .k .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:none}
+  .term .k.g .dot{background:var(--good)} .term .k.d .dot{background:var(--danger)}
+  .term .k.a .dot{background:var(--amber)}
+  .term .v{font-size:.86rem;color:var(--muted);line-height:1.45}
+  .term .v b{color:var(--ink)}
+
+  /* context-window illustration */
+  .ctxrow{display:grid;grid-template-columns:minmax(280px,1fr) 1.1fr;gap:30px;align-items:center;margin-top:6px}
+  @media (max-width:820px){.ctxrow{grid-template-columns:1fr}}
+  .ctxwin{background:var(--surface-2);border:2px solid var(--accent);border-radius:16px;
+    padding:14px;box-shadow:var(--shadow)}
+  .ctxwin .head{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);
+    font-weight:800;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
+  .ctxwin .head .cap{color:var(--muted);font-weight:700;letter-spacing:.02em;text-transform:none;font-size:.74rem}
+  .blk{border-radius:9px;padding:9px 12px;margin-bottom:8px;border:1px solid var(--hairline);
+    background:var(--surface);display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+  .blk .n{font-weight:700;font-size:.92rem}
+  .blk .s{font-size:.75rem;color:var(--muted);text-align:right}
+  .blk.sys{border-left:4px solid var(--accent)}
+  .blk.tools{border-left:4px solid var(--amber)}
+  .blk.rag{border-left:4px solid var(--good)}
+  .blk.hist,.blk.user{border-left:4px solid var(--muted)}
+  .blk.miss{background:transparent;border:1.5px dashed var(--danger);color:var(--danger)}
+  .blk.miss .s{color:var(--danger)}
+  .blk.inject{border-left:4px solid var(--good);background:var(--good-soft);animation:pop .5s ease}
+  @keyframes pop{from{transform:translateX(-8px);opacity:0}to{transform:none;opacity:1}}
+  @media (prefers-reduced-motion:reduce){.blk.inject{animation:none}}
+  .budget{margin-top:4px;font-size:.72rem;color:var(--muted);font-family:ui-monospace,monospace}
+
+  .callout{background:var(--surface);border:1px solid var(--hairline);border-radius:14px;
+    padding:18px 20px;box-shadow:var(--shadow)}
+  .callout h3{margin:0 0 8px;font-size:1.1rem}
+  .callout p{margin:0;color:var(--muted);font-size:.95rem;line-height:1.5}
+  .callout p+p{margin-top:10px}
+  .callout .mono{background:var(--surface-2);padding:2px 6px;border-radius:5px;border:1px solid var(--hairline)}
+
+  /* problem: figure + gap */
+  .prob{display:grid;grid-template-columns:1.15fr 1fr;gap:26px;align-items:center;margin-top:4px}
+  @media (max-width:860px){.prob{grid-template-columns:1fr}}
+  .fig{background:var(--surface);border:1px solid var(--hairline);border-radius:16px;padding:16px;box-shadow:var(--shadow)}
+  .fig.bad{border-color:var(--danger)} .fig.good{border-color:var(--good)}
+  .fig svg{width:100%;height:auto;display:block}
+  .figduo{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:520px){.figduo{grid-template-columns:1fr}}
+  .cap{margin-top:9px} .cap .t{font-weight:700;font-size:.92rem}
+  .tag{display:inline-block;font-size:.74rem;font-weight:800;padding:3px 9px;border-radius:999px;margin-top:6px}
+  .tag.good{background:var(--good-soft);color:var(--good)} .tag.bad{background:var(--danger-soft);color:var(--danger)}
+
+  /* timeline (pre-load vs JIT) */
+  .tl{margin-top:8px}
+  .track{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+  .stp{flex:1;min-width:120px;background:var(--surface);border:1px solid var(--hairline);
+    border-radius:12px;padding:13px 14px;box-shadow:var(--shadow);position:relative;margin:6px 14px 6px 0}
+  .stp:last-child{margin-right:0}
+  .stp .p{font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:800}
+  .stp .t{font-weight:700;font-size:.98rem;margin-top:3px}
+  .stp .d{font-size:.8rem;color:var(--muted);margin-top:4px;line-height:1.4}
+  .stp.inject{border-color:var(--good);background:var(--good-soft)}
+  .stp.act{border-color:var(--accent)}
+  .stp.gate{border-color:var(--danger)}
+  .stp::after{content:"→";position:absolute;right:-15px;top:50%;transform:translateY(-50%);
+    color:var(--muted);font-weight:800;font-size:1.1rem}
+  .stp:last-child::after{content:""}
+  @media (max-width:640px){.stp::after{content:"↓";right:50%;top:auto;bottom:-20px;transform:translateX(50%)}}
+  .jit{margin-top:22px;background:var(--surface-2);border:1px dashed var(--muted);border-radius:12px;
+    padding:14px 16px;color:var(--muted);font-size:.9rem;line-height:1.5}
+  .jit b{color:var(--danger)}
+
+  /* fix layers + result */
+  .layers{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:6px}
+  @media (max-width:760px){.layers{grid-template-columns:1fr}}
+  .layer{background:var(--surface);border:1px solid var(--hairline);border-radius:16px;padding:20px;
+    box-shadow:var(--shadow);display:flex;flex-direction:column;gap:9px}
+  .layer.enforce{border-color:var(--danger)}
+  .layer .step{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:800}
+  .layer .t{font-size:1.18rem;font-weight:800;line-height:1.15}
+  .layer p{margin:0;font-size:.92rem;color:var(--muted);line-height:1.5}
+  .layer .code{font-size:.82rem;background:var(--surface-2);border:1px solid var(--hairline);
+    border-radius:8px;padding:8px 11px;margin-top:auto;line-height:1.5}
+  .layer.enforce .code{color:var(--danger)}
+
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:6px 0 20px}
+  @media (max-width:760px){.ba{grid-template-columns:1fr}}
+  .col{border-radius:16px;padding:18px 20px;border:1px solid var(--hairline);box-shadow:var(--shadow)}
+  .col.after{background:var(--accent-soft);border-color:var(--accent)}
+  .col .lbl{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;font-weight:800;margin-bottom:11px}
+  .col.before .lbl{color:var(--muted)} .col.after .lbl{color:var(--accent)}
+  .col ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:10px}
+  .col li{display:flex;gap:9px;font-size:.94rem;line-height:1.4}
+  .col li .mk{flex:none;font-weight:800}
+  .col.before li .mk{color:var(--danger)} .col.after li .mk{color:var(--good)}
+  .takeaways{display:flex;gap:12px;flex-wrap:wrap}
+  .chip{background:var(--surface);border:1px solid var(--hairline);border-radius:999px;
+    padding:9px 16px;font-size:.9rem;font-weight:600;box-shadow:var(--shadow)}
+  .chip b{color:var(--accent)}
+
+  /* RAG haystack vs Skills push */
+  .panels{display:grid;grid-template-columns:1.25fr 1fr;gap:22px;margin-top:6px;align-items:stretch}
+  @media (max-width:900px){.panels{grid-template-columns:1fr}}
+  .panel{background:var(--surface);border:1px solid var(--hairline);border-radius:16px;padding:18px 20px;
+    box-shadow:var(--shadow);display:flex;flex-direction:column}
+  .panel.rag{border-top:4px solid var(--good)}
+  .panel.skills{border-top:4px solid var(--accent)}
+  .panel .ph{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:4px}
+  .panel .ph .t{font-size:1.12rem;font-weight:800}
+  .panel .ph .m{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;font-weight:800;color:var(--muted)}
+  .panel .sub{font-size:.86rem;color:var(--muted);line-height:1.45;margin:0 0 12px}
+  .hay{display:grid;grid-template-columns:repeat(12,1fr);gap:4px;margin-bottom:10px}
+  @media (max-width:520px){.hay{grid-template-columns:repeat(9,1fr)}}
+  .hay i{aspect-ratio:1;border-radius:3px;background:var(--surface-2);border:1px solid var(--hairline);display:block}
+  .hay i.needle{background:var(--danger);border-color:var(--danger);box-shadow:0 0 0 2px var(--danger-soft)}
+  .hay i.picked{outline:2px solid var(--good);outline-offset:1px;background:var(--good-soft)}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:.78rem;color:var(--muted);margin-bottom:10px}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .legend .sw{width:11px;height:11px;border-radius:3px;flex:none}
+  .verdict{margin-top:auto;font-size:.88rem;line-height:1.45;border-radius:10px;padding:10px 13px;font-weight:600}
+  .verdict.bad{background:var(--danger-soft);color:var(--danger)}
+  .verdict.good{background:var(--accent-soft);color:var(--accent)}
+  /* skills push mini-flow */
+  .push{display:flex;flex-direction:column;gap:9px;margin-bottom:10px}
+  .pnode{border:1px solid var(--hairline);border-radius:10px;padding:9px 12px;background:var(--surface-2);
+    font-size:.88rem;display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .pnode .cnt{font-family:ui-monospace,monospace;font-size:.76rem;color:var(--muted)}
+  .pnode.win{background:var(--accent-soft);border-color:var(--accent)}
+  .pnode.card{border-left:4px solid var(--accent);font-weight:700}
+  .parrow{text-align:center;color:var(--muted);font-weight:800;font-size:.9rem;line-height:.5}
+
+  /* pipeline flowchart (FF-HEDM case study) — fault vs. symptom */
+  .flow{margin-top:8px}
+  .pipe{display:flex;align-items:stretch;flex-wrap:wrap}
+  .node{flex:1;min-width:150px;background:var(--surface);border:1px solid var(--hairline);
+    border-radius:12px;padding:12px 13px 13px;box-shadow:var(--shadow);position:relative;
+    margin:7px 22px 7px 0;display:flex;flex-direction:column;gap:5px}
+  .node:last-child{margin-right:0}
+  .node::after{content:"→";position:absolute;right:-16px;top:50%;transform:translateY(-50%);
+    color:var(--muted);font-weight:800;font-size:1.15rem}
+  .node:last-child::after{content:""}
+  @media (max-width:820px){.node::after{content:"↓";right:50%;top:auto;bottom:-19px;transform:translateX(50%)}}
+  .node .st{font-size:.64rem;letter-spacing:.1em;text-transform:uppercase;font-weight:800;color:var(--muted)}
+  .node .nm{font-weight:800;font-size:.92rem;line-height:1.1;font-family:ui-monospace,monospace}
+  .node .msg{font-size:.76rem;color:var(--muted);line-height:1.35}
+  .node.ok{border-top:3px solid var(--good)} .node.ok .st{color:var(--good)}
+  .node.warn{border-top:3px solid var(--amber)} .node.warn .st{color:var(--amber)}
+  .node.fault{border:2px solid var(--danger);background:var(--danger-soft)} .node.fault .st{color:var(--danger)}
+  .node.symptom{border:2px dashed var(--danger)} .node.symptom .st{color:var(--danger)}
+  .node .flag{position:absolute;top:-11px;left:11px;font-size:.62rem;font-weight:800;letter-spacing:.08em;
+    text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--danger);color:#fff}
+  .node.symptom .flag{background:var(--surface);color:var(--danger);border:1.5px dashed var(--danger)}
+  .misdir{margin-top:20px;background:var(--danger-soft);border:1px solid var(--danger);border-radius:12px;
+    padding:13px 16px;color:var(--danger);font-size:.9rem;line-height:1.5}
+  .misdir b{font-weight:800}
+  .flowlegend{display:flex;gap:18px;flex-wrap:wrap;font-size:.78rem;color:var(--muted);margin:14px 0 2px}
+  .flowlegend span{display:flex;align-items:center;gap:7px}
+  .flowlegend .sw{width:13px;height:13px;border-radius:4px;flex:none;border:1px solid var(--hairline)}
+  .fixline{margin-top:auto;font-size:.84rem;font-weight:700;color:var(--good);
+    background:var(--good-soft);border:1px solid var(--good);border-radius:8px;padding:8px 11px;line-height:1.4}
+  .fixline .mono{font-weight:700}
+
+  .nav{position:fixed;right:20px;top:50%;transform:translateY(-50%);z-index:20;display:flex;flex-direction:column;gap:11px}
+  .nav a{width:11px;height:11px;border-radius:50%;background:var(--hairline);border:1px solid var(--muted);
+    transition:background .2s,transform .2s;cursor:pointer}
+  .nav a.on{background:var(--accent);border-color:var(--accent);transform:scale(1.25)}
+  @media (max-width:640px){.nav{display:none}}
+  .toggle{position:fixed;right:18px;top:16px;z-index:20;background:var(--surface);border:1px solid var(--hairline);
+    color:var(--muted);border-radius:999px;padding:7px 12px;font-size:.78rem;font-weight:700;cursor:pointer;box-shadow:var(--shadow)}
+  .foot{position:fixed;left:18px;bottom:14px;z-index:20;font-size:.74rem;color:var(--muted);
+    letter-spacing:.04em;font-family:ui-monospace,monospace}
+</style>
+
+<nav class="nav" aria-label="slides">
+  <a data-go="0" class="on"></a><a data-go="1"></a><a data-go="2"></a><a data-go="3"></a><a data-go="4"></a><a data-go="5"></a><a data-go="6"></a><a data-go="7"></a>
+</nav>
+<button class="toggle" id="themeBtn">◐ Theme</button>
+<div class="foot" id="foot">01 / 08</div>
+
+<main class="deck">
+
+  <!-- ═══ 1 · TITLE ═══ -->
+  <section class="slide" id="s0">
+    <div class="rings-bg" aria-hidden="true"><svg viewBox="0 0 400 400" fill="none">
+      <g stroke="var(--ring)" stroke-width="1.5">
+        <circle cx="200" cy="200" r="60"/><circle cx="200" cy="200" r="105"/>
+        <circle cx="200" cy="200" r="150"/><circle cx="200" cy="200" r="192"/></g></svg></div>
+    <div class="inner">
+      <div class="eyebrow"><span class="num">01</span><span>APEXA · beamline update · Aug 2026</span><span class="rule"></span></div>
+      <h1>A <span class="accent">context-engineering</span> fix<br>for our beamline AI</h1>
+      <p class="lead">APEXA is a multi-agent LLM assistant that writes MIDAS parameter files and runs HEDM analysis from a plain-language request. It kept making a specific class of mistake — and the root cause was <b>not the model</b>, but <b>what we put in front of it</b>. This is a context-engineering story.</p>
+      <div class="terms" style="max-width:900px">
+        <div class="term"><div class="k"><span class="dot"></span>LLM agent</div><div class="v">A model in a <b>plan → act → observe</b> loop with tools. APEXA routes a request to a specialist agent (calibration, analysis, …).</div></div>
+        <div class="term"><div class="k"><span class="dot"></span>Context engineering</div><div class="v">Deciding <b>what</b> information enters the model’s context, <b>in what form</b>, and <b>when</b> — so it reliably does the right thing.</div></div>
+        <div class="term"><div class="k"><span class="dot"></span>The symptom</div><div class="v">It wrote <span class="mono">Width 7.5</span> into a field that expects <b>microns</b> — wrong units, empty result, wasted beamtime, no error.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 2 · PRIMER: THE CONTEXT WINDOW ═══ -->
+  <section class="slide" id="s1">
+    <div class="inner">
+      <div class="eyebrow"><span class="num">02</span><span>Primer · what the model actually sees</span><span class="rule"></span></div>
+      <h2>Everything happens inside the context window</h2>
+      <p class="lead">On each call, the model sees only what we assemble into its <b>context window</b> — its entire working memory for that step. If a fact isn’t in the window, the model falls back on training memory, which is unreliable for exact, project-specific values.</p>
+      <div class="ctxrow">
+        <div class="ctxwin">
+          <div class="head"><span>Context window</span><span class="cap">finite token budget</span></div>
+          <div class="blk sys"><span class="n">System prompt</span><span class="s">standing instructions<br>+ knowledge</span></div>
+          <div class="blk tools"><span class="n">Tool definitions</span><span class="s">what it can call</span></div>
+          <div class="blk rag"><span class="n">Retrieved docs (RAG)</span><span class="s">pulled in on demand</span></div>
+          <div class="blk hist"><span class="n">Conversation history</span><span class="s">prior turns</span></div>
+          <div class="blk user"><span class="n">User request</span><span class="s">“run FF-HEDM…”</span></div>
+          <div class="budget">tokens ▓▓▓▓▓▓░░░░  ·  everything competes for the same budget</div>
+        </div>
+        <div class="terms" style="grid-template-columns:1fr;margin-top:0">
+          <div class="term"><div class="k"><span class="dot"></span>Context window</div><div class="v">The tokens the model can see on one call. Finite — everything below shares the budget.</div></div>
+          <div class="term"><div class="k"><span class="dot"></span>System prompt</div><div class="v">Top-of-window instructions/knowledge — the <b>highest-salience</b> real estate.</div></div>
+          <div class="term"><div class="k a"><span class="dot"></span>Tool / function calling</div><div class="v">Model emits a structured call (<span class="mono">name + args</span>) the app runs — vs. narrating in prose, which can be fabricated.</div></div>
+          <div class="term"><div class="k g"><span class="dot"></span>RAG (retrieval)</div><div class="v">Fetch documents from a store and paste them into the window — but <b>only when triggered</b>.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 3 · THE PROBLEM ═══ -->
+  <section class="slide" id="s2">
+    <div class="inner">
+      <div class="eyebrow"><span class="num">03</span><span>The problem</span><span class="rule"></span></div>
+      <h2>The procedure never entered the window</h2>
+      <p class="lead">APEXA’s handbook knowledge lived in two places that <b>never reached the context window before the action</b>: a RAG store (only searched if explicitly triggered) and “Skills” that were <b>named but never loaded</b>. So the model set parameters from <b>parametric memory</b> — and guessed the units.</p>
+      <div class="prob">
+        <div class="figduo">
+          <div class="fig good"><svg viewBox="0 0 300 210" aria-label="wide band captures peaks"></svg>
+            <div class="cap"><div class="t"><span class="mono">Width 1500</span> µm</div><br><span class="tag good" id="cntGood">✓</span></div></div>
+          <div class="fig bad"><svg viewBox="0 0 300 210" aria-label="hairline band misses peaks"></svg>
+            <div class="cap"><div class="t"><span class="mono">Width 7.5</span> (px)</div><br><span class="tag bad" id="cntBad">✗</span></div></div>
+        </div>
+        <div>
+          <div class="ctxwin" style="border-color:var(--danger)">
+            <div class="head" style="color:var(--danger)"><span>Context window at decision time</span></div>
+            <div class="blk sys"><span class="n">System prompt</span><span class="s">generic</span></div>
+            <div class="blk miss"><span class="n">Handbook procedure</span><span class="s">MISSING — never loaded</span></div>
+            <div class="blk user"><span class="n">User request</span><span class="s">“run FF-HEDM…”</span></div>
+            <div class="budget" style="color:var(--danger)">→ model fills the gap from training memory → guesses units → <span class="mono">Width 7.5</span></div>
+          </div>
+          <div class="terms" style="grid-template-columns:1fr 1fr;margin-top:14px">
+            <div class="term"><div class="k d"><span class="dot"></span>Parametric memory</div><div class="v">What the model recalls from training weights — not your exact, project-specific values.</div></div>
+            <div class="term"><div class="k d"><span class="dot"></span>Silent failure</div><div class="v">Tool returned “success” with an <b>empty</b> result. No error — the waste showed up later.</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 4 · WHY RAG MISSED IT ═══ -->
+  <section class="slide" id="s3a">
+    <div class="inner">
+      <div class="eyebrow"><span class="num">04</span><span>Why the handbook was <i>in</i> RAG — yet still missed</span><span class="rule"></span></div>
+      <h2>Retrieval is a gamble; a pre-loaded Skill is a guarantee</h2>
+      <p class="lead">The trap <i>was</i> in the knowledge base. But RAG is <b>pull</b> — it only helps if (a) a search actually fires and (b) that one-line needle out-ranks thousands of other chunks. At a parameter-writing step, neither held.</p>
+      <div class="panels">
+        <div class="panel rag">
+          <div class="ph"><span class="t">RAG store</span><span class="m">pull · ranked · conditional</span></div>
+          <p class="sub">Thousands of handbook chunks. A broad query (“set up FF-HEDM”) returns the <b>top-k</b> most similar — and the tiny <span class="mono">“Width is µm, not px”</span> line isn’t among them. Worse: while <i>writing</i> params the agent issued no knowledge query at all, so retrieval never ran.</p>
+          <div class="legend">
+            <span><span class="sw" style="background:var(--danger)"></span>the needle (Width µm trap)</span>
+            <span><span class="sw" style="outline:2px solid var(--good);background:var(--good-soft)"></span>top-k retrieved</span>
+          </div>
+          <div class="hay" id="hay" aria-label="a large grid of document chunks; the needle chunk is not among the retrieved ones"></div>
+          <div class="verdict bad">✕ Needle not retrieved → the fact never enters the context window → model guesses.</div>
+        </div>
+        <div class="panel skills">
+          <div class="ph"><span class="t">Skills, pre-loaded</span><span class="m">push · scoped · guaranteed</span></div>
+          <p class="sub">A fixed <b>tool → skill map</b> means the Analysis agent’s FF Skill is <b>always</b> placed in its system prompt — no query, no ranking. A small, curated set, so it sits high-salience instead of competing with the whole corpus.</p>
+          <div class="push">
+            <div class="pnode">Analysis agent’s tools <span class="cnt">run_ff_hedm_full_workflow …</span></div>
+            <div class="parrow">↓ mapped</div>
+            <div class="pnode card">FF-HEDM Skill (units, traps) <span class="cnt">~1 of 3</span></div>
+            <div class="parrow">↓ injected</div>
+            <div class="pnode win">System prompt · context window <span class="cnt">always present</span></div>
+          </div>
+          <div class="verdict good">✓ The right card is in the window <b>before</b> the model writes a value.</div>
+        </div>
+      </div>
+      <div class="terms" style="margin-top:16px">
+        <div class="term"><div class="k g"><span class="dot"></span>Top-k retrieval / recall</div><div class="v">RAG returns the <b>k</b> nearest chunks by embedding similarity. If the needle ranks below k, it’s simply absent — a <b>recall miss</b>.</div></div>
+        <div class="term"><div class="k d"><span class="dot"></span>Needle in a haystack</div><div class="v">One critical line diluted among a large corpus is easy to miss — and bigger corpora make it <b>harder</b>, not easier.</div></div>
+        <div class="term"><div class="k"><span class="dot"></span>Push vs. pull context</div><div class="v">Skills <b>push</b> the right material in deterministically; RAG waits to be <b>pulled</b>, and only if asked.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 5 · FIX / LEARN ═══ -->
+  <section class="slide" id="s3">
+    <div class="inner">
+      <div class="eyebrow"><span class="num">05</span><span>The fix · part 1 — learn</span><span class="rule"></span></div>
+      <h2>Pre-load the procedure — right place, before acting</h2>
+      <p class="lead">Move the canonical Skill (the written procedure: fields, units, traps) <b>into the system prompt</b> of the relevant specialist agent — <b>ahead of</b> the moment it writes parameters. This is <b>pre-loading</b>, not just-in-time retrieval.</p>
+      <div class="tl">
+        <div class="track">
+          <div class="stp"><div class="p">step 1</div><div class="t">Request arrives</div><div class="d">Routed to the Analysis agent.</div></div>
+          <div class="stp inject"><div class="p">step 2 · new</div><div class="t">Inject Skill → system prompt</div><div class="d">Handbook procedure loaded into the context window <b>now</b>.</div></div>
+          <div class="stp act"><div class="p">step 3</div><div class="t">Model writes params</div><div class="d">Grounded in the procedure — units correct.</div></div>
+          <div class="stp"><div class="p">step 4</div><div class="t">Run</div><div class="d">MIDAS reconstruction.</div></div>
+        </div>
+        <div class="jit"><b>Why not just-in-time (JIT) retrieval?</b> Reactive retrieval fires <i>after</i> the model already needs the fact — too late to stop the wrong value being written. Pre-loading puts the knowledge in the highest-salience slot <i>before</i> the decision. (Deep “why” questions still use RAG — see next slide.)</div>
+      </div>
+      <div class="terms">
+        <div class="term"><div class="k g"><span class="dot"></span>Pre-loading vs. just-in-time</div><div class="v"><b>When</b> you assemble context: ahead of the action (into the system prompt) vs. fetched reactively mid-loop.</div></div>
+        <div class="term"><div class="k"><span class="dot"></span>Skills</div><div class="v">Packaged, reusable <b>procedural context</b> — a written SOP the agent loads, not just a tool name.</div></div>
+        <div class="term"><div class="k g"><span class="dot"></span>Grounding</div><div class="v">Tying output to <b>provided source</b> (the handbook) rather than model memory.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 5 · FIX / ENFORCE + RESULT ═══ -->
+  <section class="slide" id="s4">
+    <div class="inner">
+      <div class="eyebrow"><span class="num">06</span><span>The fix · part 2 — enforce · result</span><span class="rule"></span></div>
+      <h2>Enforce what you can’t afford to prompt</h2>
+      <p class="lead">Context alone is <i>guidance</i> — the model can still slip. So the unambiguous rules get a <b>deterministic guardrail</b>: a code-level check, independent of the model, that runs before dispatch.</p>
+      <div class="layers">
+        <div class="layer enforce">
+          <div class="step">Layer 2 · enforce</div>
+          <div class="t">Deterministic guardrail</div>
+          <p>A hard check inspects the parameter file <b>before the run starts</b>. Units in pixels where µm is required → the run is <b>blocked</b>, with an actionable message. Like a hutch interlock: no “please remember,” just enforced.</p>
+          <div class="code mono">⛔ Width is in µm, not pixels — 7.5 µm ≈ 0.04 px, rejects every peak. Nothing was run.</div>
+        </div>
+        <div class="layer">
+          <div class="step">Layer 3 · depth</div>
+          <div class="t">RAG, on demand</div>
+          <p>The full FF/NF handbook stays searchable for the deep rationale — unchanged, now backed by pre-loaded procedure (Layer 1) and the guardrail (Layer 2).</p>
+          <div class="code mono">principle: don’t prompt what you can enforce.</div>
+        </div>
+      </div>
+      <div class="ba" style="margin-top:22px">
+        <div class="col before"><div class="lbl">Before</div><ul>
+          <li><span class="mk">✕</span><span>Procedure lived in RAG + named Skills — never in the window before acting.</span></li>
+          <li><span class="mk">✕</span><span>Model used parametric memory → wrong units → silent empty run.</span></li></ul></div>
+        <div class="col after"><div class="lbl">After</div><ul>
+          <li><span class="mk">✓</span><span>Procedure <b>pre-loaded</b> into the agent’s context before it writes params.</span></li>
+          <li><span class="mk">✓</span><span>Unit error <b>blocked deterministically</b> before any beamtime is spent.</span></li></ul></div>
+      </div>
+      <div class="takeaways">
+        <div class="chip">🎯 Right knowledge · <b>right place</b> · right time</div>
+        <div class="chip">📖 Every rule cited to <b>handbook §</b></div>
+        <div class="chip">✅ Verified — <b>12 automated tests</b></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 7 · CASE STUDY — THE ERROR CHAIN (FLOWCHART) ═══ -->
+  <section class="slide" id="s5">
+    <div class="inner">
+      <div class="eyebrow"><span class="num">07</span><span>Case study · a live FF-HEDM debug — the error chain</span><span class="rule"></span></div>
+      <h2>937 peaks in. Zero grains out. Where did they go?</h2>
+      <p class="lead">A real gold-sample reconstruction crashed with <span class="mono">mmap Data.bin failed</span> at the <b>last</b> stage. But the peaks were fine — the fault was <b>two stages upstream</b>, hidden until something finally tried to read a file that had been silently zeroed.</p>
+      <div class="flow">
+        <div class="pipe">
+          <div class="node ok"><div class="st">stage 1</div><div class="nm">peakfit</div><div class="msg">937 peaks found across the ω sweep</div></div>
+          <div class="node ok"><div class="st">stage 2</div><div class="nm">merge_overlaps</div><div class="msg">duplicate reflections merged</div></div>
+          <div class="node ok"><div class="st">stage 3 · last good</div><div class="nm">calc_radius</div><div class="msg">Radius_*.csv — real Y, Z, ω, ring #</div></div>
+          <div class="node fault"><span class="flag">fault</span><div class="st">stage 4</div><div class="nm">transforms</div><div class="msg">degenerate <span class="mono">BoxSize</span> → filter rejects all 937 → <b>InputAll.csv geometry all-zero</b></div></div>
+          <div class="node warn"><div class="st">stage 5 · silent</div><div class="nm">binning</div><div class="msg">RingNumber col = 0 → ring radius 0 → <b>0-byte Data.bin</b></div></div>
+          <div class="node symptom"><span class="flag">symptom</span><div class="st">stage 6 · crashes</div><div class="nm">indexing</div><div class="msg">No of hkls: 0 · <span class="mono">mmap Data.bin failed</span></div></div>
+        </div>
+        <div class="flowlegend">
+          <span><span class="sw" style="background:var(--good)"></span>healthy stage</span>
+          <span><span class="sw" style="background:var(--danger-soft);border-color:var(--danger)"></span>fault — where it actually broke</span>
+          <span><span class="sw" style="background:var(--surface);border:1.5px dashed var(--danger)"></span>symptom — where it surfaced</span>
+          <span><span class="sw" style="background:var(--surface);border-top:3px solid var(--amber)"></span>silent consequence</span>
+        </div>
+        <div class="misdir">⚠ <b>The crash lies about its location.</b> It prints at <span class="mono">indexing</span>, but the last stage whose output was correct is <span class="mono">calc_radius</span>. A zero-filled file only errors when something finally reads it — so chase the <b>first stage whose <i>output</i> is wrong</b>, not the stage that threw.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 8 · CASE STUDY — THE PATTERN + FIX ═══ -->
+  <section class="slide" id="s6">
+    <div class="inner">
+      <div class="eyebrow"><span class="num">08</span><span>Case study · the pattern &amp; the fix</span><span class="rule"></span></div>
+      <h2>One bug class, hit twice: a missing line becomes a degenerate default</h2>
+      <p class="lead">The parameter file omitted two lines. Each fell back to a default that is <b>not</b> a safe no-op — it is a <b>zero-width window that rejects the entire dataset</b>. Same trap, two stages, both invisible until far downstream.</p>
+      <div class="layers">
+        <div class="layer enforce">
+          <div class="step">Act 1 · transforms · keep filter</div>
+          <div class="t">Missing <span class="mono">BoxSize</span></div>
+          <p>Default virtual-detector box has a <b>zero Z-span</b> (Zmin = Zmax = 0) — no spot lands exactly on it, so all 937 are dropped and <span class="mono">InputAll.csv</span> is zero-filled. Surfaced as <span class="mono">mmap Data.bin failed</span>.</p>
+          <div class="code mono">BoxSize -10000.000000 0.000000 0.000000 0.000000</div>
+          <div class="fixline">✓ Fix — permissive box: <span class="mono">BoxSize -1e6 1e6 -1e6 1e6</span> → 937 real spots reach indexing.</div>
+        </div>
+        <div class="layer enforce">
+          <div class="step">Act 2 · transforms · seed filter</div>
+          <div class="t">Missing <span class="mono">Min/MaxOmeSpotIDsToIndex</span></div>
+          <p>Seed ω-window defaults to <span class="mono">0.0 / 0.0</span> — a single point at ω = 0°. The spots sit at ω ≈ −160°, so <span class="mono">SpotsToIndex.csv</span> ends up empty. The indexer still <i>loads</i> all 937 spots (so it looks like it ran) but gets <b>0 seeds</b> → 0 grains. Surfaced as <span class="mono">0 / 0 seeds indexed</span>.</p>
+          <div class="code mono">MinOmeSpotIDsToIndex 0.0   MaxOmeSpotIDsToIndex 0.0</div>
+          <div class="fixline">✓ Fix — open the window to the full sweep: <span class="mono">MinOme -180 · MaxOme 180</span>. The reference ±90 would clip the −160° spots.</div>
+        </div>
+      </div>
+      <div class="result" style="margin-top:18px;padding:16px 18px;border-radius:12px;background:var(--good-soft);border:1px solid var(--good);display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 20px">
+        <span style="font-weight:700;color:var(--good)">✓ Confirmed on re-run</span>
+        <span>seeds <b>0 → 279</b> (38 with non-zero data)</span>
+        <span><b>7 grains</b> written to <span class="mono">Grains.csv</span></span>
+        <span>a ≈ <b>4.079 Å</b>, SG 225 · confidence 0.62–0.91</span>
+        <span style="opacity:.8">c-omp over-segments the 2 true grains (parent + Σ3 twin) into ~6–7 fragments, as ground truth predicted</span>
+      </div>
+      <div class="jit" style="margin-top:18px"><b>False lead worth remembering:</b> the first guess — add <span class="mono">RingNumbers 1 2 3 4 5</span> — was a no-op. Rings are derived from <span class="mono">RingThresh</span>; <span class="mono">RingNumbers</span>/<span class="mono">RingRadii</span> are <i>outputs</i> the transforms stage <i>writes</i> to paramstest, not inputs it reads. And re-running with <span class="mono">--resume</span> reused the stale zeroed files, so the "fix" never actually executed — always re-run clean into a fresh directory.</div>
+      <div class="takeaways" style="margin-top:16px">
+        <div class="chip">🚫 A missing line ≠ a <b>safe</b> default</div>
+        <div class="chip">🕳️ A degenerate default reads as <b>“no data”</b> downstream</div>
+        <div class="chip">🛡️ Exactly a <b>deterministic-lint</b> job — like the Width-µm gate</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+(function(){
+  "use strict";
+  var NS="http://www.w3.org/2000/svg";
+  function el(n,a){var e=document.createElementNS(NS,n);for(var k in a)e.setAttribute(k,a[k]);return e;}
+  function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim();}
+
+  var RINGS=[44,74,98], ANGLES=[18,58,96,140,175,212,250,292,330];
+  var JIT=[6,-4,8,-7,3,-9,5,-2,7,-6,4,9,-3,2,-8,6,-5,8,3,-7,9,-4,5,-6,2,-9,7];
+  function draw(svg,mode){
+    var cx=150,cy=105,halfBand=mode==='wide'?9:0.9;
+    var good=css('--good'),danger=css('--danger'),muted=css('--muted'),hair=css('--hairline'),accent=css('--accent');
+    svg.appendChild(el('rect',{x:6,y:6,width:288,height:198,rx:10,fill:'none',stroke:hair,'stroke-width':1}));
+    var collected=0,total=0,j=0;
+    RINGS.forEach(function(R){
+      svg.appendChild(el('circle',{cx:cx,cy:cy,r:R,fill:'none',stroke:(mode==='wide'?good:danger),
+        'stroke-width':(mode==='wide'?18:2),'stroke-opacity':(mode==='wide'?0.20:0.9),'stroke-linecap':'round'}));
+      svg.appendChild(el('circle',{cx:cx,cy:cy,r:R,fill:'none',stroke:muted,'stroke-width':1,'stroke-dasharray':'3 4','stroke-opacity':0.7}));
+      ANGLES.forEach(function(a){
+        var off=JIT[j%JIT.length];j++;var rr=R+off,rad=a*Math.PI/180;
+        var x=cx+rr*Math.cos(rad),y=cy+rr*Math.sin(rad);total++;
+        var hit=Math.abs(off)<=halfBand;if(hit)collected++;
+        svg.appendChild(el('circle',{cx:x.toFixed(1),cy:y.toFixed(1),r:hit?3.4:2.6,
+          fill:hit?good:'none',stroke:hit?good:muted,'stroke-width':hit?0:1.4,
+          'fill-opacity':hit?1:0,'stroke-opacity':hit?1:0.7}));
+      });
+    });
+    svg.appendChild(el('circle',{cx:cx,cy:cy,r:2.2,fill:accent}));
+    return {collected:collected,total:total};
+  }
+  function render(){
+    var f=document.querySelectorAll('.figduo svg');if(f.length<2)return;
+    f[0].innerHTML='';f[1].innerHTML='';
+    var g=draw(f[0],'wide'),b=draw(f[1],'thin');
+    document.getElementById('cntGood').textContent=g.collected+'/'+g.total+' peaks ✓';
+    document.getElementById('cntBad').textContent=b.collected+'/'+b.total+' peaks ✗';
+  }
+  render();
+
+  // haystack: many chunks, one needle, a few (top-k) picked — needle NOT picked
+  (function(){
+    var hay=document.getElementById('hay');if(!hay)return;
+    var N=72, needle=41, picked=[7,23,34,55,66]; // fixed, deterministic
+    for(var i=0;i<N;i++){
+      var t=document.createElement('i');
+      if(i===needle)t.className='needle';
+      else if(picked.indexOf(i)>-1)t.className='picked';
+      hay.appendChild(t);
+    }
+  })();
+
+  var slides=[].slice.call(document.querySelectorAll('.slide'));
+  var dots=[].slice.call(document.querySelectorAll('.nav a'));
+  var foot=document.getElementById('foot');
+  function pad(n){return(n<10?'0':'')+n;}
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){
+    var i=slides.indexOf(e.target);dots.forEach(function(d,di){d.classList.toggle('on',di===i);});
+    foot.textContent=pad(i+1)+' / '+pad(slides.length);}});},{threshold:0.5});
+  slides.forEach(function(s){io.observe(s);});
+  dots.forEach(function(d){d.addEventListener('click',function(){slides[+d.dataset.go].scrollIntoView({behavior:'smooth'});});});
+  function cur(){var mid=innerHeight/2,best=0,bd=1e9;slides.forEach(function(s,i){var r=s.getBoundingClientRect();
+    var d=Math.abs(r.top+r.height/2-mid);if(d<bd){bd=d;best=i;}});return best;}
+  addEventListener('keydown',function(e){var i=cur();
+    if(['ArrowDown','ArrowRight','PageDown',' '].indexOf(e.key)>-1){e.preventDefault();if(i<slides.length-1)slides[i+1].scrollIntoView({behavior:'smooth'});}
+    else if(['ArrowUp','ArrowLeft','PageUp'].indexOf(e.key)>-1){e.preventDefault();if(i>0)slides[i-1].scrollIntoView({behavior:'smooth'});}});
+
+  var btn=document.getElementById('themeBtn');
+  btn.addEventListener('click',function(){var r=document.documentElement;
+    var isDark=(r.getAttribute('data-theme')==='dark')||(!r.getAttribute('data-theme')&&matchMedia('(prefers-color-scheme:dark)').matches);
+    r.setAttribute('data-theme',isDark?'light':'dark');render();});
+  matchMedia('(prefers-color-scheme:dark)').addEventListener('change',render);
+})();
+</script>

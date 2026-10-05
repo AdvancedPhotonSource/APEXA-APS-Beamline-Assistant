@@ -92,6 +92,7 @@ _FILLER = (
 class Trial:
     model: str
     preset: str
+    transport: str                  # structured | text
     condition: str
     distance_tokens: int
     n_distractors: int
@@ -202,6 +203,120 @@ def run_trial(client, model: str, target: str, distractors: List[str],
     return "no_chain", None, "did not converge"
 
 
+# ── TEXT TRANSPORT (APEXA's legacy `argo` mode) ──────────────────────────────
+# In APEXA's `argo` path the gateway flattens every message to {role, content:str},
+# so tools cannot be sent structurally. Tools are instead DESCRIBED in the system
+# prompt in the TOOL_CALL:/ARGUMENTS: format, the model emits calls as TEXT, APEXA
+# parses that text, and the tool RESULT is fed back as a PLAIN-TEXT turn. This is
+# the fabrication-prone path the paper compares against the structured transport.
+#
+# PARSER ROUTE (documented per the task): we IMPORT AgentRunner and reuse its REAL
+# `_parse_text_tool_calls` — the exact method the legacy text path runs in
+# production (Format A: `TOOL_CALL:\s*([A-Za-z_]\w*)` + `ARGUMENTS:` + a
+# brace-balanced JSON scan via `_extract_balanced_json`; plus Format B key:value
+# and Format C <tool_use>). Importing the provider stack does NO network at import
+# time, so offline --self-test still works. We construct one AgentRunner with a
+# no-op execute fn (Format-A parsing never touches self._execute). Reusing the
+# genuine parser — rather than a re-implementation — is what makes this a faithful
+# APEXA-transport comparison and avoids inflating the fabrication rate with a
+# weaker parser.
+_text_parser = None
+
+
+def _parse_tool_calls_text(text: str) -> List[tuple]:
+    """(name, args_dict) list from model text, via APEXA's real Format-A parser."""
+    global _text_parser
+    if _text_parser is None:
+        from apexa_agents import AgentRunner
+        _text_parser = AgentRunner(lambda *a, **k: None)
+    return [(c.name, c.arguments) for c in _text_parser._parse_text_tool_calls(text)]
+
+
+def _text_preamble(distractors: List[str]) -> str:
+    """Task-scoped mirror of APEXA's `_TOOL_PREAMBLE` format block: describe the
+    available tools in prose and quote the exact TOOL_CALL:/ARGUMENTS: format the
+    model must emit (no structured tools are sent)."""
+    lines = "\n".join(f"- {n}(param_file): MIDAS analysis routine." for n in distractors)
+    return (
+        "You do NOT have structured tool calling. To call a tool you MUST emit it as\n"
+        "TEXT in EXACTLY this format (APEXA's TOOL_CALL: protocol):\n\n"
+        "TOOL_CALL: tool_name\n"
+        'ARGUMENTS: {"param": "value"}\n\n'
+        "Available tools:\n"
+        "- find_analysis_tool(task): returns the EXACT tool name to pass to run_analysis.\n"
+        "- run_analysis(tool_name): runs a named analysis tool and returns a number.\n"
+        "  tool_name MUST be the exact string returned by find_analysis_tool.\n"
+        f"{lines}\n\n"
+        "Emit ONE TOOL_CALL at a time and wait for its [Tool Result] before the next."
+    )
+
+
+def run_trial_text(client, model: str, target: str, distractors: List[str],
+                   distance_tokens: int, max_turns: int = 6
+                   ) -> tuple[str, Optional[str], str]:
+    """One trial over APEXA's TEXT transport. Mirrors run_trial's outcome
+    semantics (grounded | fabricated | no_chain | error) but sends NO tools=/
+    tool_choice, parses tool calls from model TEXT with APEXA's real parser, and
+    feeds tool results back as PLAIN-TEXT turns."""
+    pad = ""
+    if distance_tokens:
+        reps = max(1, (distance_tokens * 4) // len(_FILLER))
+        pad = "\n\n" + (_FILLER * reps)
+
+    msgs: List[Dict[str, Any]] = [
+        {"role": "system",
+         "content": "You are a beamline analysis assistant. To run an analysis you must "
+                    "FIRST call find_analysis_tool to obtain the exact tool name, THEN "
+                    "call run_analysis with that exact name. Never guess the name.\n\n"
+                    + _text_preamble(distractors)},
+        {"role": "user",
+         "content": "Run the detector calibration analysis and report the numeric result."},
+    ]
+    saw_find = False
+    no_call_streak = 0
+
+    for _ in range(max_turns):
+        # The whole point: NO tools=, NO tool_choice — the backend can't carry
+        # structured calls, so the model must use the text protocol.
+        r = client.chat.completions.create(model=model, messages=msgs)
+        content = r.choices[0].message.content or ""
+        msgs.append({"role": "assistant", "content": content})
+        calls = _parse_tool_calls_text(content)
+        if not calls:
+            no_call_streak += 1
+            if no_call_streak >= 2:
+                return ("no_chain", None,
+                        f"no parseable TOOL_CALL for 2 turns; last: {content[:70]!r}")
+            # Give the drifting model one more turn to emit the format (neutral
+            # nudge — never reveals the target name).
+            msgs.append({"role": "user",
+                         "content": "You have not emitted a TOOL_CALL yet. Respond using "
+                                    "the required TOOL_CALL:/ARGUMENTS: format."})
+            continue
+        no_call_streak = 0
+        for name, args in calls:
+            if not isinstance(args, dict):
+                args = {}
+            if name == "find_analysis_tool":
+                saw_find = True
+                out = {"tool_name": target, "notes": pad} if pad else {"tool_name": target}
+                # Plain-text result turn — NOT a structured {"role":"tool"} message.
+                msgs.append({"role": "user",
+                             "content": f"[Tool Result for find_analysis_tool]: {json.dumps(out)}"})
+            elif name == "run_analysis":
+                got = str(args.get("tool_name", "")).strip()
+                if got == target:
+                    return "grounded", got, "ok"
+                return "fabricated", got, f"expected {target!r}, called {got!r}"
+            else:
+                if not saw_find:
+                    return "fabricated", name, f"invoked {name!r} without looking it up"
+                msgs.append({"role": "user",
+                             "content": f"[Tool Result for {name}]: "
+                                        + json.dumps({"error": "call run_analysis instead"})})
+    return "no_chain", None, "did not converge"
+
+
 def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """Wilson score interval -- behaves at 0/N and N/N, unlike the normal approx."""
     if n == 0:
@@ -263,6 +378,76 @@ def summarise(rows: List[Trial]) -> None:
     print("H3 intervention: compare distance_8k_full -> distance_8k (disclosed surface)")
 
 
+def _cell(rows: List[dict]) -> str:
+    """Fabrication-rate cell for a set of trial dicts, with the SAME error-exclusion
+    and Wilson-CI rules as summarise: errors excluded from the denominator, an
+    all-errored cell rendered as NO DATA (never 0%), missing cell as a dash."""
+    if not rows:
+        return f"{'—':>22}"
+    g  = sum(r["outcome"] == "grounded" for r in rows)
+    f  = sum(r["outcome"] == "fabricated" for r in rows)
+    n0 = sum(r["outcome"] == "no_chain" for r in rows)
+    er = sum(r["outcome"] == "error" for r in rows)
+    n = g + f + n0
+    if n == 0:
+        return f"{'NO DATA (all err)':>22}"
+    lo, hi = wilson(f, n)
+    flag = "!" if er > n else " "
+    return f"{f/n:>5.2f} [{lo:.2f},{hi:.2f}] n={n:<2}{flag}"
+
+
+def compare_transports(paths: List[str]) -> int:
+    """Offline: load result JSONL(s) and print the consolidated structured-vs-text
+    comparison, one line per (model, condition)."""
+    rows: List[dict] = []
+    for p in paths:
+        fp = Path(p)
+        if not fp.exists():
+            print(f"missing: {p}")
+            return 2
+        with open(fp) as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+    if not rows:
+        print("no rows loaded")
+        return 2
+
+    transports = [t for t in ("structured", "text")
+                  if any(r.get("transport") == t for r in rows)]
+    models = list(dict.fromkeys(r["model"] for r in rows))
+    cond_order = [c[0] for c in CONDITIONS]
+    conds_present = [c for c in cond_order
+                     if any(r["condition"] == c for r in rows)]
+
+    print("\n" + "=" * 108)
+    print("CONSOLIDATED TRANSPORT ABLATION — fabrication rate [95% Wilson CI] "
+          "(errors excluded from denominator)")
+    print("-" * 108)
+    hdr = f"{'model':<26}{'condition':<18}"
+    for t in transports:
+        hdr += f"{t:>24}"
+    print(hdr)
+    print("-" * 108)
+    for model in models:
+        for cond in conds_present:
+            line = f"{model:<26}{cond:<18}"
+            for t in transports:
+                sub = [r for r in rows if r["model"] == model
+                       and r["condition"] == cond and r.get("transport") == t]
+                line += f"{_cell(sub):>24}"
+            print(line)
+    print("=" * 108)
+    tot_err = sum(r["outcome"] == "error" for r in rows)
+    if tot_err:
+        print(f"NOTE: {tot_err}/{len(rows)} trials errored (excluded from rates); "
+              f"'!' marks a cell with more errors than measured trials — warm re-run.")
+    print("thesis: if text fab-rate > structured fab-rate on the SAME model+backend, "
+          "fabrication is a property of the transport, not the model.")
+    return 0
+
+
 def self_test() -> int:
     """Offline check of the machinery: a scripted client, no network."""
     class _FakeFn:
@@ -301,7 +486,40 @@ def self_test() -> int:
                                         CANDIDATE_TOOLS[:8], 0)
         status = "PASS" if got == want else "FAIL"
         ok &= got == want
-        print(f"  {status}  {mode:<10} -> outcome={got} called={called}")
+        print(f"  {status}  structured {mode:<10} -> outcome={got} called={called}")
+
+    # ── TEXT transport: fake client returns TEXT in the TOOL_CALL:/ARGUMENTS:
+    # format; prove APEXA's real parser classifies grounded vs fabricated. No
+    # tools=/tool_choice is passed (signature is create(model, messages)).
+    class _TextClient:
+        def __init__(s, mode): s.mode, s.n = mode, 0
+        class _C:
+            def __init__(s, o): s.o = o
+            @property
+            def completions(s): return s
+            def create(s, model, messages):
+                s.o.n += 1
+                if s.o.n == 1:
+                    return _Resp(_Msg(None,
+                        'TOOL_CALL: find_analysis_tool\nARGUMENTS: {"task": "calib"}'))
+                # Read the plain-text tool-result turn fed back by run_trial_text.
+                res = [m for m in messages
+                       if "[Tool Result for find_analysis_tool]" in (m.get("content") or "")][-1]
+                c = res["content"]
+                real = json.loads(c[c.index("{"):])["tool_name"]
+                use = real if s.o.mode == "grounded" else "midas_detector_calibration"
+                return _Resp(_Msg(None,
+                    f'TOOL_CALL: run_analysis\nARGUMENTS: {json.dumps({"tool_name": use})}'))
+        @property
+        def chat(self): return _TextClient._C(self)
+
+    for mode, want in (("grounded", "grounded"), ("fabricate", "fabricated")):
+        got, called, detail = run_trial_text(_TextClient(mode), "m", "midas_ring_thresh",
+                                             CANDIDATE_TOOLS[:8], 0)
+        status = "PASS" if got == want else "FAIL"
+        ok &= got == want
+        print(f"  {status}  text       {mode:<10} -> outcome={got} called={called}")
+
     lo, hi = wilson(0, 20)
     print(f"  {'PASS' if hi < 0.2 else 'FAIL'}  wilson(0/20) = [{lo:.3f}, {hi:.3f}]")
     print(f"  PASS  pool={len(CANDIDATE_TOOLS)} candidates, {len(CONDITIONS)} conditions")
@@ -316,13 +534,22 @@ def main() -> int:
     ap.add_argument("--models", nargs="+", default=["openai/gpt-oss-120b"])
     ap.add_argument("--trials", type=int, default=20)
     ap.add_argument("--conditions", nargs="+", default=None)
+    ap.add_argument("--transport", choices=["structured", "text"], default="structured",
+                    help="structured = real OpenAI tool_calls (default, existing "
+                         "behavior); text = APEXA legacy `argo` TOOL_CALL: text protocol")
     ap.add_argument("--out", default="benchmark/results/grounding")
     ap.add_argument("--timeout", type=float, default=300.0)
     ap.add_argument("--seed", type=int, default=0, help="seeds TARGET SELECTION only")
+    ap.add_argument("--compare", nargs="+", default=None, metavar="JSONL",
+                    help="offline: load these result JSONL files and print the "
+                         "consolidated structured-vs-text comparison, then exit")
     args = ap.parse_args()
 
     if args.self_test:
         return self_test()
+
+    if args.compare:
+        return compare_transports(args.compare)
 
     from openai import OpenAI
     from apexa_llm_endpoints import PRESETS, EndpointRejected
@@ -339,11 +566,12 @@ def main() -> int:
     conds = [c for c in CONDITIONS if not args.conditions or c[0] in args.conditions]
     outdir = Path(args.out); outdir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    path = outdir / f"grounding_{args.preset}_{stamp}.jsonl"
+    path = outdir / f"grounding_{args.preset}_{args.transport}_{stamp}.jsonl"
+    trial_fn = run_trial_text if args.transport == "text" else run_trial
 
     rng = random.Random(args.seed)
     rows: List[Trial] = []
-    print(f"{ep.name} -> {ep.base_url}")
+    print(f"{ep.name} -> {ep.base_url}  [transport={args.transport}]")
     print(f"{len(args.models)} model(s) x {len(conds)} condition(s) x {args.trials} trials\n")
 
     with open(path, "w") as fh:
@@ -358,11 +586,12 @@ def main() -> int:
                     rng.shuffle(distractors)
                     t0 = time.monotonic()
                     try:
-                        outcome, called, detail = run_trial(
+                        outcome, called, detail = trial_fn(
                             client, model, target, distractors, dist)
                     except Exception as e:
                         outcome, called, detail = "error", None, f"{type(e).__name__}: {e}"[:150]
-                    row = Trial(model=model, preset=args.preset, condition=cond,
+                    row = Trial(model=model, preset=args.preset, transport=args.transport,
+                                condition=cond,
                                 distance_tokens=dist, n_distractors=ndist,
                                 surface=surface, trial=i, target_tool=target,
                                 called_tool=called, outcome=outcome, detail=detail,
