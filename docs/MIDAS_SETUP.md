@@ -149,6 +149,14 @@ independently and never tells a pip-only host to "rebuild MIDAS":
 
 ---
 
+## 4a. Windows note
+
+`midas-suite` has **no Windows wheels** (the stack is C/C++/CUDA), so it is
+`sys_platform`-excluded — `uv sync --extra midas` installs **0 packages** on Windows,
+by design. APEXA itself installs and runs fully on native Windows; the MIDAS compute
+runs via **WSL2** or by **SSH-routing to a Linux analysis host** (the normal beamline
+topology). Full guide: `docs/WINDOWS_SETUP.md`.
+
 ## 5. Offline note (air-gapped beamline hosts)
 
 The **base install stays offline-clean**: `uv sync` (no extras) pulls no

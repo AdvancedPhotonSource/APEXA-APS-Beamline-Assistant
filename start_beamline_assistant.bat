@@ -6,7 +6,11 @@ set NUMEXPR_MAX_THREADS=10
 REM Let older CMake-based native deps (e.g. midas-index) build under CMake 4.x
 set CMAKE_POLICY_VERSION_MINIMUM=3.5
 
-if not exist ".env" echo [!] .env not found - copy .env.template to .env and set ANL_USERNAME.
+if not exist ".env" (
+    echo [!] .env not found. Run the Windows setup to create it:
+    echo       powershell -ExecutionPolicy Bypass -File .\docs\setup_user.ps1
+    echo     or copy .env.template to .env and set ANL_USERNAME by hand.
+)
 
 where uv >nul 2>nul
 if errorlevel 1 (
