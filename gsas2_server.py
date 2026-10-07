@@ -136,21 +136,24 @@ def _trust(summary: Dict[str, Any]) -> Dict[str, Any]:
     reason, so the agent can act on the reason rather than on a score.
     """
     flags: List[str] = []
+    # Findings the framework itself recorded, each a symptom named in
+    # Toby's textbook with the cause it assigns. Carried through rather
+    # than re-derived here, so the MCP layer and the framework cannot
+    # drift into disagreeing about the same run.
+    diag = summary.get("diagnostics") or {}
+    for f in diag.get("findings", []):
+        if f.get("severity") in ("blocker", "warning"):
+            flags.append(f"{f.get('what')} -- {f.get('means')}")
     stop = summary.get("stop_reason")
     if stop == "wall_clock":
         flags.append("stopped on a time budget, not on convergence")
     if stop == "max_steps":
         flags.append("hit the step cap; the fit was still improving")
     rwp = summary.get("Rwp")
-    lebail = (summary.get("lebail") or {}).get("Rwp")
     if rwp is not None and rwp > 40:
         flags.append(f"Rwp {rwp:.1f}% is high in absolute terms")
-    if rwp is not None and lebail:
-        gap = rwp - lebail
-        if gap > 5:
-            flags.append(
-                f"Rietveld exceeds the Le Bail floor by {gap:.1f} points, "
-                f"so the structural model is the limiting factor")
+    # The Le Bail comparison is made by agentic_gsas2.diagnostics and
+    # arrives above; it is not repeated here.
     cr = summary.get("cell_route") or {}
     if cr.get("rolled_back"):
         flags.append("direct cell refinement was rolled back")
@@ -349,6 +352,81 @@ print(json.dumps({{"status": "success", "candidates": [
 """
     out = _run_python(code, timeout=600)
     return format_result({"tool": "propose_structures", **out})
+
+
+@mcp.tool()
+async def plan_refinement(
+    data_file: str,
+    instprm_file: Optional[str] = None,
+    fmthint: Optional[str] = None,
+    geometry: Optional[str] = None,
+    space_group: Optional[str] = None,
+    instrument_profile_calibrated: Optional[bool] = None,
+    n_phases: int = 1,
+) -> str:
+    """Say how this pattern should be refined, before refining it.
+
+    Reads the measurement, works out which parameters it physically
+    supports, and returns the staged plan with the reason and the
+    textbook citation for each stage. Call this first when the
+    instrument or geometry is unfamiliar, or whenever a user asks why
+    a parameter was or was not refined.
+
+    The plan can come back incomplete. Diffraction geometry is not
+    recoverable from an X-ray pattern, and it decides which
+    sample-displacement parameter exists at all -- Shift in
+    Bragg-Brentano, DisplaceX in Debye-Scherrer. Rather than guess,
+    the plan marks that category blocked and returns the question in
+    "blocking_questions". Put that question to the user, then call
+    again with "geometry" set. Everything not depending on the answer
+    stays available meanwhile, so an unanswered question costs the
+    displacement term and not the refinement.
+
+    Args:
+        data_file: powder pattern.
+        instprm_file: GSAS-II instrument parameter file.
+        fmthint: reader hint; pass "GSAS" for .XRA/.CWN/.fxye.
+        geometry: bragg_brentano | debye_scherrer | area_detector |
+            time_of_flight. Supply it when known; omit it to be asked.
+        space_group: main phase, Hermann-Mauguin. Fixes how many
+            independent anisotropic microstrain terms exist.
+        instrument_profile_calibrated: true if U, V, W come from a
+            standard on this instrument, in which case they are held
+            rather than refined against this sample.
+        n_phases: number of phases to be refined.
+
+    Returns JSON: strategy, ordered stages with parameters and
+    citations, blocking questions, parameters withheld and why, and
+    the experiment context the plan was built from.
+    """
+    code = f"""
+import json, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, {DEFAULT_AGENTIC_REPO!r})
+from dataclasses import replace
+from agentic_gsas2.experiment import (ExperimentContext, Geometry,
+                                      infer_from_project)
+from agentic_gsas2.recommend import recommend
+from agentic_gsas2.project import Project, HistogramSpec
+
+spec = HistogramSpec(data_path={data_file!r},
+                     instprm_path={instprm_file!r}, limits=None,
+                     fmthint=({fmthint!r} or "xye"))
+proj = Project.single_histogram(spec, [],
+                                Path(tempfile.mkdtemp()) / "plan.gpx")
+ctx = infer_from_project(proj, space_group={space_group!r})
+if {geometry!r}:
+    ctx = replace(ctx, geometry=Geometry({geometry!r}))
+plan = recommend(ctx, n_histograms=1, n_phases={n_phases!r},
+                 instrument_profile_calibrated=(
+                     {instrument_profile_calibrated!r}))
+print(json.dumps(plan.to_dict(), default=str))
+"""
+    out = _run_python(code, timeout=300)
+    if out.get("status") == "error":
+        return format_result({"tool": "plan_refinement", **out})
+    return format_result({"tool": "plan_refinement", "status": "success",
+                          **out})
 
 
 @mcp.tool()

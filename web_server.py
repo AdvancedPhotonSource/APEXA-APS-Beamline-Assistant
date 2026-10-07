@@ -890,6 +890,19 @@ async def websocket_endpoint(websocket: WebSocket):
 
                         print(f"Sending to AI with context: {user_message[:500]}...")  # Debug log
 
+                        async def _on_tool_start(tool_name: str, arguments: dict):
+                            # Push a "tool starting" event so the browser shows a live
+                            # "Running <tool>…" line during long tools instead of a
+                            # static "Thinking" (users thought the UI had died).
+                            try:
+                                await manager.send_personal_message({
+                                    "type": "tool_start",
+                                    "tool": tool_name,
+                                    "args": arguments,
+                                }, websocket)
+                            except Exception as e:
+                                print(f"Warning: tool_start WS send failed: {e}")
+
                         async def _on_tool_result(tool_name: str, arguments: dict, result: str):
                             try:
                                 clean = _ansi_re.sub('', result)
@@ -913,6 +926,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             response = await mcp_client.run_query(
                                 user_message, on_tool_result=_on_tool_result,
                                 permission_callback=_web_permission,
+                                on_tool_start=_on_tool_start,
                             )
                             mcp_client._save_web_thread()
                         clean_response = _ansi_re.sub('', response)

@@ -14,6 +14,10 @@ interface ChatState {
   // runs — isLoading stays true until the LAST queued turn is answered.
   pendingCount: number
   progress: { step: string; percent: number } | null
+  // Live "what is it doing right now" line (e.g. the tool currently running), so a
+  // long turn shows activity instead of a static "Thinking". Set on tool_start,
+  // cleared when that tool returns or the turn ends.
+  activity: string | null
   _pendingToolResults: ToolResult[]
 
   // Session history (ChatGPT/Claude-style), persisted to localStorage.
@@ -140,6 +144,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isLoading: false,
   pendingCount: 0,
   progress: null,
+  activity: null,
   _pendingToolResults: [],
   sessions: [],
   currentSessionId: null,
@@ -161,7 +166,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     wsManager.onMessage((data) => {
       switch (data.type) {
+        case 'tool_start': {
+          // A tool just began on the backend. Show it live so a long-running tool
+          // (e.g. calibration) doesn't look like the app froze.
+          const tool = data.tool ?? 'tool'
+          set({ activity: `Running ${tool}…` })
+          break
+        }
         case 'tool_result': {
+          // Tool finished — drop back to "Thinking" until the next tool starts or
+          // the final answer arrives.
+          set({ activity: null })
           const toolResult = parseDirectToolResult(
             data.tool ?? 'unknown',
             data.result ?? '{}'
@@ -234,6 +249,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isLoading: true,
       pendingCount: s.pendingCount + 1,
       progress: null,
+      activity: null,
       _pendingToolResults: [],
     }))
     get()._persist()
@@ -265,7 +281,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     set((s) => {
       const pendingCount = Math.max(0, s.pendingCount - 1)
-      return { messages: [...s.messages, msg], pendingCount, isLoading: pendingCount > 0, progress: null }
+      return { messages: [...s.messages, msg], pendingCount, isLoading: pendingCount > 0, progress: null, activity: null }
     })
     get()._persist()
   },

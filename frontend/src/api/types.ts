@@ -63,7 +63,7 @@ export interface WsOutgoing {
 }
 
 export interface WsIncoming {
-  type: 'chat_response' | 'error' | 'analysis_progress' | 'model_changed' | 'tool_result' | 'confirm_required'
+  type: 'chat_response' | 'error' | 'analysis_progress' | 'model_changed' | 'tool_start' | 'tool_result' | 'confirm_required'
   message?: string
   step?: string
   progress?: number

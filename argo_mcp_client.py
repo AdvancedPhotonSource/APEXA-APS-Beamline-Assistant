@@ -1892,6 +1892,21 @@ class APEXAClient:
 
     async def execute_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
 
+        # ===== LIVENESS SIGNAL =====
+        # Every tool path (native tool_calls, text mode, orchestrator fast-path,
+        # FF-HEDM graph) funnels through this single chokepoint, so one emit here
+        # lets a UI show "Running <tool>…" the instant a tool begins — a long tool
+        # (e.g. midas_auto_calibrate) no longer looks like the app died. Best-effort
+        # and fully guarded: a failing/absent callback never blocks the tool.
+        _start_cb = getattr(self, "tool_start_callback", None)
+        if _start_cb:
+            try:
+                _r = _start_cb(tool_name, arguments)
+                if asyncio.iscoroutine(_r):
+                    await _r
+            except Exception as _e:
+                print(f"Warning: tool_start callback failed: {_e}", file=sys.stderr)
+
         # ===== NETWORK TIER GATE =====
         # A tool that needs the public internet must be refused HERE, at the same
         # single chokepoint as the deletion gate, rather than dispatched to a host
@@ -2104,7 +2119,8 @@ class APEXAClient:
             self._active_web_thread = None
 
     async def run_query(self, query: str, use_history: bool = True,
-                        on_tool_result=None, permission_callback=None) -> str:
+                        on_tool_result=None, permission_callback=None,
+                        on_tool_start=None) -> str:
         """Route query through the multi-agent orchestrator (Phase 2 entry point).
 
         Wrapped in ``query_scope`` so Tier-2 instrumentation emits one summary
@@ -2123,6 +2139,11 @@ class APEXAClient:
         provider = select_provider(self.anl_username, self.selected_model)
         _prev_perm_cb = self.permission_callback
         self.permission_callback = permission_callback
+        # Liveness: an optional async (tool_name, arguments) hook fired at the
+        # execute_tool_call chokepoint so a UI can show "Running <tool>…" the moment
+        # a tool starts (not only when it finishes). Set/restored like the perm cb.
+        _prev_start_cb = getattr(self, "tool_start_callback", None)
+        self.tool_start_callback = on_tool_start
         try:
             with query_scope(query=query) as _qctx:
                 result = await self.orchestrator.process(
@@ -2140,6 +2161,7 @@ class APEXAClient:
                 return result
         finally:
             self.permission_callback = _prev_perm_cb
+            self.tool_start_callback = _prev_start_cb
 
     def _autosave_session(self):
         """Persist the live conversation to the _autosave slot.

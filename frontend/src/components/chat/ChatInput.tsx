@@ -104,6 +104,8 @@ export function ChatInput() {
 
   return (
     <div className="px-5 pb-4 pt-3" style={{ background: 'transparent' }}>
+      {/* Centered, max-width column so the input lines up with the messages */}
+      <div className="mx-auto w-full max-w-3xl">
       <input
         ref={fileInputRef}
         type="file"
@@ -210,6 +212,7 @@ export function ChatInput() {
         <div className="text-[10px]" style={{ color: 'var(--apexa-text-muted)' }}>
           Enter to send · Shift+Enter newline · 📎 / drag / paste to attach
         </div>
+      </div>
       </div>
     </div>
   )

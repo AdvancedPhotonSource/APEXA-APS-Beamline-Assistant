@@ -2,7 +2,7 @@ import { useChatStore } from '@/stores/chatStore'
 import { ApexaLogo } from '@/components/layout/IconRail'
 
 export function TypingIndicator() {
-  const { isLoading, progress } = useChatStore()
+  const { isLoading, progress, activity } = useChatStore()
 
   if (!isLoading) return null
 
@@ -30,7 +30,11 @@ export function TypingIndicator() {
           </div>
         ) : (
           <div className="flex items-center gap-3">
-            <span className="text-[13px] text-[var(--apexa-text-2)]">Thinking</span>
+            <span className="text-[13px] text-[var(--apexa-text-2)]">
+              {activity ? (
+                <span className="font-mono text-[12px] text-[var(--apexa-text)]">{activity}</span>
+              ) : 'Thinking'}
+            </span>
             <span className="flex gap-1">
               {[0, 1, 2].map((i) => (
                 <span key={i} className="w-1.5 h-1.5 rounded-full bg-blue-500" style={{

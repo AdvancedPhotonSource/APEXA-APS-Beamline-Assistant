@@ -18,11 +18,14 @@ export function MessageList() {
 
   return (
     <div style={{ flex: 1, overflowY: 'auto' }}>
-      {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
-      ))}
-      <TypingIndicator />
-      <div ref={bottomRef} />
+      {/* Centered, max-width conversation column (ChatGPT/Claude layout) */}
+      <div className="mx-auto w-full max-w-3xl">
+        {messages.map((msg) => (
+          <MessageBubble key={msg.id} message={msg} />
+        ))}
+        <TypingIndicator />
+        <div ref={bottomRef} />
+      </div>
     </div>
   )
 }

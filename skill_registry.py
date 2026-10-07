@@ -71,6 +71,7 @@ SKILL_FOR_TOOL = {
     "refine_series_submit": "gsas2-agentic",
     "refinement_status": "gsas2-agentic",
     "assess_refinement": "gsas2-agentic",
+    "plan_refinement": "gsas2-agentic",
     # inspect / validate
     "recommend_workflow": "midas-validate",
     "inspect_dataset_file": "midas-validate",
