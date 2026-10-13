@@ -33,7 +33,7 @@ import numpy as np
 import logging
 from mcp.server.mcpserver import MCPServer  # mcp>=2: FastMCP was renamed
 
-from apexa_remote_exec import remote_run, ssh_hint
+from apexa_remote_exec import remote_run, ssh_hint, is_local_host
 
 # Suppress verbose MCP server logging
 logging.getLogger("mcp").setLevel(logging.WARNING)
@@ -967,7 +967,7 @@ async def run_command(command: str, working_dir: str = None, timeout: int = 120)
 
 @mcp.tool()
 async def run_remote_command(command: str, host: str = "", remote_dir: str = None,
-                             timeout: int = 600) -> str:
+                             timeout: int = 600, force_ssh: bool = False) -> str:
     """Execute a shell command on a REMOTE analysis host over SSH.
 
     Like run_command, but the command runs on another machine — for running
@@ -996,6 +996,15 @@ async def run_remote_command(command: str, host: str = "", remote_dir: str = Non
               $APEXA_ANALYSIS_HOST, else "copland".
         remote_dir: Directory to `cd` into on the remote host before running.
         timeout: Max seconds (default 600; remote analysis can be long).
+        force_ssh: Take the SSH path even when the target is this machine.
+                 Only for verifying key-based login actually works
+                 (`ssh-copy-id`) -- a loopback login shell is a DIFFERENT
+                 environment and a working command may fail there.
+
+    SELF-TARGET: when the resolved host IS this machine, the command runs
+    locally instead of looping back through SSH, and the result says so
+    (`executed_locally: true`). Every other host still goes over SSH -- this
+    collapses one degenerate case, it does not disable remote execution.
 
     Returns:
         JSON with stdout, stderr, return_code, success, host, command.
@@ -1009,6 +1018,43 @@ async def run_remote_command(command: str, host: str = "", remote_dir: str = Non
                 "error": f"Command not allowed: {', '.join(blocked) if blocked else command.split()[0]}",
                 "detail": "Every executable in the remote command must be in the allowed list.",
                 "allowed_commands": "Use check_environment to see allowed commands"
+            })
+
+        # APEXA deployed ON the analysis host resolves $APEXA_ANALYSIS_HOST to the
+        # machine it is already running on and SSHes to itself. That is not merely
+        # a wasted hop: the loopback login shell is a DIFFERENT environment,
+        # typically without the conda/venv activation MIDAS needs, so the command
+        # fails with `command not found` for a binary plainly on PATH in the
+        # process doing the dispatch. Observed on copland 2026-08-26, and
+        # is_local_host() already collapses this case for the typed MIDAS tools
+        # (decide_exec_host) and the FF workflow -- this path was the one left.
+        #
+        # Narrow by construction: ONLY a target that is this machine runs locally.
+        # A real remote host, named explicitly or via $APEXA_ANALYSIS_HOST, still
+        # goes over SSH exactly as before.
+        if is_local_host(target) and not force_ssh:
+            cwd = remote_dir if remote_dir and Path(remote_dir).exists() else None
+            try:
+                r = subprocess.run(command, shell=True, capture_output=True,
+                                   text=True, timeout=timeout, cwd=cwd)
+            except subprocess.TimeoutExpired:
+                return format_result({
+                    "error": f"Command timed out after {timeout} seconds "
+                             f"(ran locally: '{target}' is this machine)"})
+            return format_result({
+                "tool": "run_remote_command",
+                "host": target,
+                "command": command,
+                "remote_dir": remote_dir,
+                "return_code": r.returncode,
+                "stdout": r.stdout,
+                "stderr": r.stderr,
+                "success": r.returncode == 0,
+                "executed_locally": True,
+                "note": (f"'{target}' is this machine, so the command ran here "
+                         f"directly rather than over SSH. The data is already "
+                         f"local -- prefer run_command. Pass force_ssh=True to "
+                         f"exercise the loopback SSH path deliberately."),
             })
 
         # Run over SSH via the shared transport (login shell `bash -lc`, BatchMode,

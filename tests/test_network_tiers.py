@@ -244,3 +244,64 @@ def test_hostname_aliases_are_honoured(monkeypatch):
     assert R.is_local_host("copland")
     assert R.is_local_host("COPLAND.aps.anl.gov")
     assert not R.is_local_host("chiltepin")
+
+
+# ── run_remote_command: the self-target collapse ─────────────────────────────
+# APEXA deployed ON the analysis host resolved $APEXA_ANALYSIS_HOST to itself and
+# SSHed loopback, into a login shell without the MIDAS activation -- so a binary
+# plainly on PATH came back `command not found`. is_local_host() already covered
+# the typed MIDAS tools; run_remote_command was the path left uncovered.
+
+def _rrc(monkeypatch, host_env, **kw):
+    """Call run_remote_command with SSH stubbed, and report which path ran."""
+    import asyncio, json, socket
+    import beamline_core_server as S
+
+    calls = {}
+    monkeypatch.setattr(S, "remote_run", lambda *a, **k: calls.setdefault(
+        "ssh", {"return_code": 0, "stdout": "via-ssh", "success": True}))
+    monkeypatch.setenv("APEXA_ANALYSIS_HOST", host_env)
+    fn = getattr(S.run_remote_command, "fn", S.run_remote_command)
+    out = json.loads(asyncio.run(fn(command="echo hi", **kw)))
+    return out, ("ssh" in calls)
+
+
+def test_self_target_runs_locally_instead_of_loopback_ssh(monkeypatch):
+    import socket
+    out, used_ssh = _rrc(monkeypatch, socket.gethostname())
+    assert used_ssh is False, "SSHed to the machine it is already running on"
+    assert out["executed_locally"] is True
+    assert out["stdout"].strip() == "hi"
+    assert "run_command" in out["note"]          # points at the right tool
+
+
+def test_a_real_remote_host_still_goes_over_ssh(monkeypatch):
+    """The collapse must be narrow -- remote execution is the tool's whole job."""
+    out, used_ssh = _rrc(monkeypatch, "some-other-host")
+    assert used_ssh is True
+    assert out.get("executed_locally") is None
+    assert out["stdout"] == "via-ssh"
+
+
+def test_explicit_remote_host_argument_still_goes_over_ssh(monkeypatch):
+    import socket
+    out, used_ssh = _rrc(monkeypatch, socket.gethostname(), host="chiltepin")
+    assert used_ssh is True, "an explicitly named remote host must not run locally"
+
+
+def test_force_ssh_takes_the_loopback_path_on_purpose(monkeypatch):
+    """Escape hatch: verifying ssh-copy-id actually worked needs the real path."""
+    import socket
+    out, used_ssh = _rrc(monkeypatch, socket.gethostname(), force_ssh=True)
+    assert used_ssh is True
+    assert out.get("executed_locally") is None
+
+
+def test_the_allowlist_is_still_applied_before_running_locally(monkeypatch):
+    """The guard sits after the allowlist -- a blocked command must not run."""
+    import asyncio, json, socket
+    import beamline_core_server as S
+    monkeypatch.setenv("APEXA_ANALYSIS_HOST", socket.gethostname())
+    fn = getattr(S.run_remote_command, "fn", S.run_remote_command)
+    out = json.loads(asyncio.run(fn(command="definitely_not_a_real_binary --x")))
+    assert "error" in out and "not allowed" in out["error"].lower()
