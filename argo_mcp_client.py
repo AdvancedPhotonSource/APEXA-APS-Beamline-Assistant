@@ -71,13 +71,58 @@ class C:
     BMAGENTA  = "\033[95m"
     BCYAN     = "\033[96m"
 
-    # 256-colour. The 16-colour blues are both unusable for the reply label:
-    # BLUE (34) vanishes on a dark terminal, BBLUE (94) sits next to the CYAN
-    # used by the `▸ tool` markers -- the exact adjacency this label exists to
-    # avoid. Index 69 is a true blue, legible on light and dark backgrounds,
-    # and unmistakable against cyan. A terminal without 256-colour support
-    # drops the hue and renders the label bold-default, which is still legible.
-    KRISHNA   = "\033[38;5;69m"
+    # The reply label's blue, and the only blue of this shade in the CLI.
+    # Resolved once at import by _reply_color() below -- see it for the tiers.
+    REPLY     = ""   # filled in after the class body
+
+
+def _reply_color() -> str:
+    """Pick the strongest blue this terminal can actually render.
+
+    Every OTHER colour in this CLI is a 16-colour SGR code (30-37/90-97), which
+    every terminal since the VT100 renders, so none of them need gating. The
+    reply label is the one place using 256-colour/truecolor, so it is the one
+    place that can emit an escape an old beamline console does not understand
+    and prints as literal junk. Hence this ladder, strongest first:
+
+        truecolor advertised   #3B82F6        the modern UI blue
+        256-colour             index 69       its nearest 256 neighbour, so the
+                                              two degrade into each other
+        anything else          BBLUE (94)     16-colour, safe since the VT100
+        dumb / not a terminal  no escape      a logfile gets no codes
+
+    COLORTERM is unset in plenty of real terminals (tmux, some ssh sessions), so
+    truecolor under-detects by design: a false negative costs a slightly duller
+    blue, a false positive prints garbage on the operator's screen.
+    """
+    if os.environ.get("NO_COLOR") is not None:
+        return ""
+    try:
+        if not sys.stdout.isatty():
+            return ""
+    except Exception:
+        return ""                       # a stdout without isatty: assume not one
+    term = os.environ.get("TERM", "").lower()
+    if term in ("", "dumb"):
+        return ""
+    if os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit"):
+        return "\033[38;2;59;130;246m"
+    if "256color" in term or "truecolor" in term:
+        return "\033[38;5;69m"
+    # TERM alone is often uninformative (plain "xterm" on a box whose terminfo
+    # does know 256). Ask terminfo before giving up -- but never let it raise:
+    # curses is absent on Windows and setupterm throws on an unknown TERM.
+    try:
+        import curses
+        curses.setupterm()
+        if (curses.tigetnum("colors") or 0) >= 256:
+            return "\033[38;5;69m"
+    except Exception:
+        pass
+    return C.BBLUE
+
+
+C.REPLY = _reply_color()
 
 
 def clean_markdown(text: str) -> str:
@@ -2211,7 +2256,7 @@ class APEXAClient:
         # ANSI inside the body (cyan bullets, italic spans) and each run ends with
         # a RESET -- wrapping the body would die at the first one, leaving the rest
         # of the answer uncoloured and looking like a rendering bug.
-        print(f"\n{C.BOLD}{C.KRISHNA}APEXA:{C.RESET} {clean_markdown(response)}\n")
+        print(f"\n{C.BOLD}{C.REPLY}APEXA:{C.RESET} {clean_markdown(response)}\n")
 
     def show_available_models(self):
         # The list is no longer Argo-only — ALCF's open models are here too, and
