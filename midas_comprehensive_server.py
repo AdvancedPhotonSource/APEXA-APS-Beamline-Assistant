@@ -2037,6 +2037,7 @@ async def run_nf_hedm_reconstruction(
     refine: str = "",
     skip_validation: bool = False,
     install_dir: str = "",
+    ignore_handbook_traps: bool = False,
 ) -> str:
     """Run NF-HEDM voxel-level microstructure reconstruction.
 
@@ -2086,6 +2087,10 @@ async def run_nf_hedm_reconstruction(
         skip_validation: Skip the midas-params preflight on the param file.
         install_dir: MIDAS install dir for the seedOrientations cache; defaults
                      to the detected MIDAS_PATH so cache-based seeding resolves.
+        ignore_handbook_traps: Override the pre-dispatch NF handbook lint. By
+                     default an `error`-severity trap (bad unit/convention that
+                     would corrupt the run) hard-blocks before any compute;
+                     set True to run anyway when the values are intentional.
 
     Returns:
         JSON with status, consolidated HDF5 path, voxel/grain counts (read from
@@ -2107,6 +2112,35 @@ async def run_nf_hedm_reconstruction(
                     "midas-nf-pipeline not found. "
                     "Install: pip install 'midas-suite' (includes midas-nf-pipeline)"
                 ),
+            })
+
+        # Pre-dispatch handbook lint (NF) — parity with run_ff_hedm_full_workflow.
+        # The NF parameter facts already exist (handbook_guardrails.load_param_facts
+        # ("nf")); wire them in here so unit/convention traps (Euler-in-radians,
+        # SkipFrame NF-vs-GE, SumFrames unit, dark group, degenerate bound pairs)
+        # are caught BEFORE spending hours of NF compute, not after. Hard-block on
+        # any `error`-severity trap unless the caller explicitly overrides.
+        try:
+            nf_traps = _lint_handbook_traps(param_path, "nf")
+        except Exception:
+            nf_traps = []
+        _blockers = [t for t in nf_traps if t.get("severity") == "error"]
+        if _blockers and not ignore_handbook_traps:
+            for _t in nf_traps:
+                _mark = {"error": "⛔", "warning": "⚠"}.get(_t["severity"], "ℹ")
+                _sec = f" [{_t['section']}]" if _t.get("section") else ""
+                print(f"  {_mark} {_t['key']}{_sec}: {_t['message']}", file=sys.stderr)
+            return format_result({
+                "tool": "run_nf_hedm_reconstruction",
+                "status": "error",
+                "error": (
+                    "Blocked by handbook lint before dispatch — the NF parameter "
+                    "file has an unambiguous unit/convention error that would "
+                    "corrupt the run (see handbook_traps). Fix the parameter file, "
+                    "or pass ignore_handbook_traps=True to override if the values "
+                    "are intentional. NOTHING was run."
+                ),
+                "handbook_traps": nf_traps,
             })
 
         # Sanitize inline "# ..." comments. The run-path param reader
@@ -2190,6 +2224,8 @@ async def run_nf_hedm_reconstruction(
         cmd_str = " ".join(cmd)
         print(f"[NF-HEDM] {cmd_str}", file=sys.stderr)
 
+        import time as _time
+        run_started = _time.time()
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=28800,
             env=get_midas_env(),
@@ -2233,10 +2269,40 @@ async def run_nf_hedm_reconstruction(
                 except Exception:
                     pass
 
-        ok = proc.returncode == 0
+        # Honest status (parity with run_ff_hedm_full_workflow): return_code 0
+        # alone is NOT success. midas-nf-pipeline exits 0 for a skip-all/no-op run,
+        # and a stale *.mic / *_consolidated.h5 from a prior run must never be
+        # reported as this run's result. A real reconstruction must have produced
+        # fresh output this run AND resolved >0 voxels.
+        def _is_fresh(p):
+            try:
+                return p.exists() and p.stat().st_mtime >= run_started - 1
+            except Exception:
+                return False
+        any_fresh = any(_is_fresh(p) for p in
+                        (list(h5_files) + list(mic_files) + list(grains_csvs)))
+
+        if proc.returncode != 0:
+            status, run_note = "error", ""
+        elif (voxel_count or 0) > 0 and any_fresh:
+            status, run_note = "success", ""
+        elif any_fresh:
+            status = "warning"
+            run_note = (
+                "midas-nf-pipeline wrote output this run but reconstructed 0 voxels "
+                "— check MinConfidence, the seed orientations, the geometry "
+                "(Lsd/BC/tilts) and image processing. Not a fabricated success.")
+        else:
+            status = "warning"
+            run_note = (
+                "midas-nf-pipeline exited 0 but produced NO new output this run — "
+                "every stage was skipped or the run was a no-op. Any .mic / "
+                "*_consolidated.h5 present is STALE (from a prior run) and is NOT "
+                "counted as this run's result.")
+
         payload = {
             "tool": "run_nf_hedm_reconstruction",
-            "status": "success" if ok else "error",
+            "status": status,
             "engine": "midas-nf-pipeline",
             "command": cmd_str,
             "return_code": proc.returncode,
@@ -2249,6 +2315,12 @@ async def run_nf_hedm_reconstruction(
             "total_voxels": voxel_count,
             "total_grains": grain_count,
         }
+        if run_note:
+            payload["run_note"] = run_note
+        # Surface non-blocking lint findings (warnings/info) so the operator sees
+        # them even when nothing hard-blocked.
+        if nf_traps:
+            payload["handbook_traps"] = nf_traps
         if _param_note:
             payload["param_sanitized"] = _param_note
         return format_result(payload)
