@@ -14,6 +14,96 @@ Harnesses under test: **APEXA, Claude Code, OpenCode, Pi** (`pi.dev`). EAA dropp
 
 ---
 
+## Two rigs in this directory, and which one to trust
+
+| | `run_comparison.py` | `rotation_benchmark.py` |
+|---|---|---|
+| ground truth | a file produced by running the analysis **in the same workspace** | the **rotation stage**, external to every run |
+| status | **results withdrawn** — see below | the rig to use |
+
+**`run_comparison.py`'s 31 records are withdrawn.** Four defects, all silent, all
+with one root cause — no external reference, so the rig graded transcripts:
+
+1. the workspace it handed each harness **contained the ground-truth file**;
+2. its tolerance was loose enough to admit the decoy distance in the filename;
+3. its evidence check assumed APEXA's own output filenames, so another harness that
+   computed the right answer and wrote it under its own name scored as fabricating;
+4. `executed` was an mtime test inside a directory the rig had itself just written.
+
+The script is kept because its harness adapters are hard-won (OpenCode and Pi take
+their endpoint differently; **Pi does not read `OPENAI_BASE_URL`**), and
+`rotation_benchmark.py` imports `HARNESSES` from it rather than re-deriving them.
+
+---
+
+## `rotation_benchmark.py` — graded against the goniometer
+
+The detector was swept in ~1° steps across 43 exposures. So the tilt of any one
+exposure is predicted by **the others**: the quantity under test never contributes
+to its own reference, and nothing in the workspace reveals it. That is the whole
+fix — the reference is a physical constraint, not an artifact of the run.
+
+```bash
+# 1. build the reference, where the calibrations live (the beamline host)
+python build_ground_truth.py --root /gdata/.../rotation --out gt.csv --report
+
+# 2. run the arms
+python rotation_benchmark.py --ground-truth gt.csv --data-root /gdata/.../raw \
+    --arms A1 A2 A3 A4 A5 A6 --trials 1
+```
+
+`--report` prints the residual scatter of the clean fits. The line is only a valid
+reference while that scatter stays far below the error being detected — ~0.03°
+against ~0.5° for a bound-railed fit. It is checked, not assumed; if commanded stage
+positions are recorded anywhere, prefer them.
+
+### The arms — three single-variable contrasts
+
+| arm | harness | manuals | enforcement | isolates |
+|---|---|---|---|---|
+| A1 | APEXA | ✅ | ✅ | — |
+| A2 | APEXA | ✅ | ❌ | **A1→A2: enforcement** |
+| A3 | Claude Code | ✅ | ❌ | **A2→A3: the harness** |
+| A4 | OpenCode | ✅ | ❌ | " |
+| A5 | Pi | ✅ | ❌ | " (no MCP) |
+| A6 | Claude Code | ❌ | ❌ | **A3→A6: the documentation** |
+
+Enforcement is ablated by environment (`APEXA_STAGE_GUARDRAILS=0`,
+`APEXA_ASSUME_SCAN_METADATA=1`), not by a second code path. Every arm runs as a
+fresh subprocess in a fresh workspace — APEXA included, through
+`_apexa_driver.py`, so it cannot carry warmed `lru_cache` state the others lack.
+
+### The outcome that matters is not accuracy
+
+Every harness finishes and returns a number, so completion measures nothing:
+
+| outcome | |
+|---|---|
+| `correct` | claimed success, within tolerance |
+| **`accepted_wrong`** | **claimed success, outside tolerance — the metric** |
+| `honest_failure` | claimed failure, and was indeed wrong |
+| `false_alarm` | claimed failure, but was right |
+
+A scientist is not harmed by an agent that fails loudly. They are harmed by one that
+returns a plausible geometry and reports it as fine — which is exactly what happened
+on the real series: **23 of 35 gate-passed calibrations had a parameter pinned to a
+search bound**, two of them at exactly ±3.000000°.
+
+Tolerance defaults to 0.10° — above the fit scatter, below a rail error.
+
+### Guards, each covering a withdrawn defect
+
+- `stage()` **refuses to run** if a ground-truth-shaped file reaches the workspace.
+- `extract_tz()` is format-agnostic: any file written after the run start carrying a
+  `tz` line counts, whoever wrote it.
+- `claimed_success()` records the rule it applied and a transcript tail, so every
+  classification is auditable rather than asserted.
+- Rates carry 95% Wilson intervals; n per arm is small.
+
+Tests: `tests/test_rotation_benchmark.py` (29) — one per withdrawn defect.
+
+---
+
 ## The measurement that matters
 
 Every agent benchmark asks *was the answer right?* On a strict execution environment
