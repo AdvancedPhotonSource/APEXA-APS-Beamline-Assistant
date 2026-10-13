@@ -2192,7 +2192,16 @@ class APEXAClient:
         where the *reply* begins so it's easy to find in a long scroll, and mirrors
         the prompt. Greppable: ``APEXA:``.
         """
-        print(f"\n{C.BOLD}{C.BCYAN}APEXA:{C.RESET} {clean_markdown(response)}\n")
+        # BGREEN, not BCYAN: the working stream above (narration in gray, `▸ tool`
+        # markers in cyan) was the same colour family as this label, so the answer
+        # did not separate from the steps that produced it. Green reads as the
+        # settled result and is the only green in a turn.
+        #
+        # Only the LABEL is coloured, deliberately. clean_markdown() emits its own
+        # ANSI inside the body (cyan bullets, italic spans) and each run ends with
+        # a RESET -- wrapping the body would die at the first one, leaving the rest
+        # of the answer uncoloured and looking like a rendering bug.
+        print(f"\n{C.BOLD}{C.BGREEN}APEXA:{C.RESET} {clean_markdown(response)}\n")
 
     def show_available_models(self):
         # The list is no longer Argo-only — ALCF's open models are here too, and

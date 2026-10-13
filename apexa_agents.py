@@ -72,6 +72,10 @@ _EXT_GROUPS = {
     "Docs":    {".md",".rst",".pdf",".log"},
 }
 
+_RESET, _BOLD, _DIM = "\033[0m", "\033[1m", "\033[2m"
+_CYAN, _GRAY = "\033[36m", "\033[90m"
+
+
 def _emit_narration(prose: str) -> None:
     """Surface the model's pre-action narration to the user (Claude-Code style:
     say what you're about to do, THEN do it). The ``▸ toolname`` markers alone
@@ -90,7 +94,23 @@ def _emit_narration(prose: str) -> None:
     s = re.sub(r'^#{1,6}\s*', '', s, flags=re.M)    # ### headers
     s = s.strip()
     if s:
-        print(f"\n{s}")
+        # Gray, because this is the WORKING stream, not the answer. Previously it
+        # printed in the default colour -- identical to the final reply's body --
+        # so the only thing separating "what I am about to do" from "here is the
+        # result" in a long scroll was the APEXA: label itself. On a 40-step
+        # calibration turn that is not findable.
+        print(f"\n{_GRAY}{s}{_RESET}")
+
+
+def _emit_tool_marker(name: str, suffix: str = "") -> None:
+    """The ``▸ toolname`` line. One definition, three call sites.
+
+    Kept visually in the same gray family as the narration it follows: together
+    they are the working stream, and the final reply is the one thing in another
+    colour. The tool name stays bold so a turn is still scannable at a glance.
+    """
+    print(f"  {_CYAN}▸{_RESET} {_BOLD}{name}{_RESET}"
+          f"{f' {_DIM}{suffix}{_RESET}' if suffix else ''}")
 
 
 def _compact_listing(parsed: dict, max_preview: int = 3) -> str:
@@ -2863,7 +2883,7 @@ class AgentRunner:
                 messages.append(self._assistant_message(response, provider.model, structured))
                 _emit_narration(response.content or "")   # narration before the ▸ markers
                 for tc in response.tool_calls:
-                    print(f"  \033[36m▸\033[0m \033[1m{tc.name}\033[0m")
+                    _emit_tool_marker(tc.name)
                     ledger.dispatch(tc.id, tc.name, tc.arguments)
                     t0 = time.monotonic()
                     # search_tools / load_tools are client-side: they reshape this
@@ -3275,7 +3295,7 @@ class AgentRunner:
                 #    couldn't see any of their results when it produced them), so
                 #    parallel dispatch is always safe here.
                 async def _run_one(tc: ToolCall):
-                    print(f"  \033[36m▸\033[0m \033[1m{tc.name}\033[0m")
+                    _emit_tool_marker(tc.name)
                     t0 = time.monotonic()
                     result = await self._execute(tc.name, tc.arguments)
                     return tc, result, int((time.monotonic() - t0) * 1000)
@@ -4048,7 +4068,7 @@ class OrchestratorAgent:
         log_entry = self.logger.start(query, model="fast_path")
         log_entry.set_agent("FastPath")
 
-        print(f"  \033[36m▸\033[0m \033[1m{tool_name}\033[0m \033[2m(fast-path)\033[0m")
+        _emit_tool_marker(tool_name, "(fast-path)")
         t0 = time.monotonic()
         result = await self._execute(tool_name, args)
         dur = int((time.monotonic() - t0) * 1000)
