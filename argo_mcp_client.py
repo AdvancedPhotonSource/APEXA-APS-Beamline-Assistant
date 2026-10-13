@@ -71,6 +71,14 @@ class C:
     BMAGENTA  = "\033[95m"
     BCYAN     = "\033[96m"
 
+    # 256-colour. The 16-colour blues are both unusable for the reply label:
+    # BLUE (34) vanishes on a dark terminal, BBLUE (94) sits next to the CYAN
+    # used by the `▸ tool` markers -- the exact adjacency this label exists to
+    # avoid. Index 69 is a true blue, legible on light and dark backgrounds,
+    # and unmistakable against cyan. A terminal without 256-colour support
+    # drops the hue and renders the label bold-default, which is still legible.
+    KRISHNA   = "\033[38;5;69m"
+
 
 def clean_markdown(text: str) -> str:
     """Render markdown as ANSI-colored terminal output."""
@@ -2192,16 +2200,18 @@ class APEXAClient:
         where the *reply* begins so it's easy to find in a long scroll, and mirrors
         the prompt. Greppable: ``APEXA:``.
         """
-        # BGREEN, not BCYAN: the working stream above (narration in gray, `▸ tool`
-        # markers in cyan) was the same colour family as this label, so the answer
-        # did not separate from the steps that produced it. Green reads as the
-        # settled result and is the only green in a turn.
+        # Blue, and the only blue of this shade in the CLI -- that is the point.
+        # The working stream above is gray narration and cyan `▸ tool` markers,
+        # so the original BCYAN label did not separate the answer from the steps
+        # that produced it. Green was tried and was wrong for the same reason:
+        # it already marks success/ok in 28 other places. This hue is unclaimed
+        # and carries no success/failure meaning.
         #
         # Only the LABEL is coloured, deliberately. clean_markdown() emits its own
         # ANSI inside the body (cyan bullets, italic spans) and each run ends with
         # a RESET -- wrapping the body would die at the first one, leaving the rest
         # of the answer uncoloured and looking like a rendering bug.
-        print(f"\n{C.BOLD}{C.BGREEN}APEXA:{C.RESET} {clean_markdown(response)}\n")
+        print(f"\n{C.BOLD}{C.KRISHNA}APEXA:{C.RESET} {clean_markdown(response)}\n")
 
     def show_available_models(self):
         # The list is no longer Argo-only — ALCF's open models are here too, and
