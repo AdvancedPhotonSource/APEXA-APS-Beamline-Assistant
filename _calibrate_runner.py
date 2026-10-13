@@ -191,8 +191,12 @@ def main(argv=None):
         from midas_calibrate_v2.forward.panels import PanelLayout
         from midas_calibrate_v2.pipelines.four_stage import autocalibrate_four_stage
     except Exception as e:
+        # `capabilities` is part of every payload, refusals included, so a caller
+        # can always tell WHAT was missing. Here nothing could be probed -- say so
+        # explicitly rather than omitting the key and changing the payload shape.
         _fail(f"midas_calibrate_v2 is not importable in {sys.executable}: {e}",
               interpreter=sys.executable,
+              capabilities={"importable": False},
               fix="Point APEXA_MIDAS_BIN at the MIDAS pip environment "
                   "(the one where `python -c 'import midas_calibrate_v2'` succeeds).")
 

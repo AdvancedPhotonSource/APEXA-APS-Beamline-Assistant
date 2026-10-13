@@ -126,3 +126,14 @@ extra = [
     "typer>=0.17.4",
     "orjson>=3.11.3",
 ]
+
+# Test runner. A dependency GROUP, not an extra: `uv run` picks it up automatically
+# on a dev machine and `uv sync` for a beamline host never installs it. It was
+# previously declared nowhere at all -- the 185-test suite ran off an ad-hoc
+# `uv pip install pytest` that the next `uv sync` silently removed, leaving a repo
+# whose tests could not be run reproducibly by anyone who cloned it.
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
