@@ -754,6 +754,57 @@ def _extract_rtf(path):
 
 
 @mcp.tool()
+async def read_logbook(path: str = "", host: str = "", n_entries: int = 12,
+                       tail_bytes: int = 262144) -> str:
+    """Read the experiment logbook — the running log the team keeps during beamtime.
+
+    Use this when the user asks what happened earlier, what was changed, why a
+    setting is the way it is, or anything about the history of the current
+    experiment that is not in the data itself.
+
+    The logbook usually lives on a DIFFERENT machine from the one APEXA runs on,
+    so this reads it over SSH when a host is given. It returns the most RECENT
+    entries (the file is tailed, not truncated from the top), because a logbook
+    grows all day and its first page is the stalest part of it.
+
+    Args:
+        path: Logbook path. Accepts "/data/logbook.md",
+              "copland:/data/logbook.md" (host inline), or an http(s) URL for a
+              shared document. Defaults to $APEXA_LOGBOOK.
+        host: Remote host, if not already inline in `path`. Defaults to
+              $APEXA_LOGBOOK_HOST. Empty means local.
+        n_entries: How many of the most recent entries to return (0 = all that
+              were read).
+        tail_bytes: How much of the end of the file to read.
+
+    Returns:
+        JSON with entries (text + timestamp, verbatim), source, host, truncated,
+        bytes_read. Entries are returned VERBATIM and are never summarized here —
+        quote them, do not paraphrase them as if they were your own observation.
+    """
+    try:
+        from apexa_logbook import resolve_logbook_source
+        src = resolve_logbook_source(path, host=host, tail_bytes=int(tail_bytes))
+        if src is None:
+            return format_result({
+                "error": "no logbook configured",
+                "detail": ("Pass path=, or set APEXA_LOGBOOK (e.g. "
+                           "'copland:/gdata/.../logbook.md'). Ask the user where "
+                           "the logbook is rather than guessing a path."),
+            })
+        read = src.read(n_entries=int(n_entries))
+        out = read.to_dict()
+        out["tool"] = "read_logbook"
+        out["backend"] = src.kind
+        if not read.ok:
+            out["detail"] = ("Could not read the logbook. Do NOT answer from memory "
+                             "or invent entries; tell the user it is unreachable.")
+        return format_result(out)
+    except Exception as e:
+        return format_result({"error": f"read_logbook failed: {type(e).__name__}: {e}"})
+
+
+@mcp.tool()
 async def read_document(file_path: str, max_chars: int = 100000,
                         max_size: int = 52428800) -> str:
     """Read text from documents of many formats — logbooks, slides, spreadsheets.

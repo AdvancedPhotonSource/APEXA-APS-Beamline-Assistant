@@ -8717,7 +8717,12 @@ async def plot_lineout_series_contour(
                         title=title or f"Operando contour — {len(rows)} patterns",
                         xaxis_title=x_label, yaxis_title="frame / scan number",
                         template="plotly_dark")
-                figp.write_html(str(html_path), include_plotlyjs="cdn")
+                # NOT "cdn": APEXA's default network tier is `internal` (the
+                # copland deployment has the ANL network and no public
+                # internet), so a CDN reference renders this as a blank page on
+                # the machine the report is for -- silently, with a valid file
+                # on disk. Inlining costs ~4.7 MB and always renders.
+                figp.write_html(str(html_path), include_plotlyjs=True)
                 outputs["html"] = str(html_path)
             except Exception as _e:
                 outputs["html_error"] = str(_e)
@@ -8931,6 +8936,133 @@ async def run_midas_viewer(
             "error": str(e),
             "traceback": traceback.format_exc(),
         })
+
+
+@mcp.tool()
+async def generate_run_report(run_dir: str, out: str = "", esaf_file: str = "",
+                              logbook: str = "", logbook_host: str = "",
+                              logbook_entries: int = 8, title: str = "",
+                              open_it: bool = False) -> str:
+    """Write ONE self-contained HTML report for a finished run, for a human to glance at.
+
+    Use this after a calibration, an integration series, or any run that left a
+    manifest, when the user wants to SEE how it went, share it, or decide what to
+    do next. The file embeds every figure, references nothing external, and opens
+    in any browser on an air-gapped machine.
+
+    It leads with a verdict, then shows what the verdict does NOT cover. That is
+    the point: a calibration that stopped on a search bound reports the same
+    residual as one that converged, so the acceptance number cannot separate them
+    — but the parameter-rail plate shows it at a glance. Each problem it finds
+    carries the specific lever to fix it.
+
+    Args:
+        run_dir: Directory holding the run's manifest (APEXA_calibration.json,
+                 APEXA_integration_series.json, ...). Also where the report is
+                 written unless `out` says otherwise.
+        out: Output .html path or directory. Default: inside run_dir, named
+             <esaf>_<sample>_<stage>_<scans>_<timestamp>.html.
+        esaf_file: Exported ESAF (.json/.csv/.txt/.pdf/.docx) for the report
+             header. Default: searched for at and above run_dir.
+        logbook: Logbook path, "host:/path", or URL. Default $APEXA_LOGBOOK.
+        logbook_host: Remote host for the logbook, if not inline.
+        logbook_entries: How many recent logbook entries to embed verbatim.
+        title: Override the report title (default: the ESAF title).
+        open_it: Also open it in the desktop browser.
+
+    Returns:
+        JSON with `report` (path), verdict, findings/action counts, and the
+        plates drawn. Cite the returned path; do not construct one.
+    """
+    try:
+        import apexa_report as R
+        from apexa_experiment import FileESAFSource, report_filename, unique_path, slug
+        from apexa_lib import read_manifest
+
+        rp = Path(run_dir).expanduser().resolve()
+        if not rp.exists():
+            return format_result({"error": f"run_dir does not exist: {rp}"})
+
+        manifest = None
+        try:
+            manifest = read_manifest(str(rp))
+        except Exception:
+            manifest = None
+        if not manifest:
+            # No manifest is not a failure: a directory listing still beats
+            # nothing, and refusing here would make the tool useless exactly
+            # when the user is trying to work out what went wrong.
+            files = sorted(x.name for x in rp.iterdir())[:40] if rp.is_dir() else []
+            manifest = {"tool": "", "status": "", "message":
+                        f"No APEXA manifest found in {rp}. "
+                        f"{len(files)} file(s) present.", "files": files}
+
+        esaf = FileESAFSource().get(rp, esaf_file or None)
+
+        lb = None
+        try:
+            from apexa_logbook import resolve_logbook_source
+            src = resolve_logbook_source(logbook, host=logbook_host)
+            if src is not None:
+                lb = src.read(n_entries=int(logbook_entries))
+        except Exception:
+            lb = None   # a missing logbook never blocks the report
+
+        ledger = []
+        spec = R.build_report(manifest, esaf=esaf, logbook=lb,
+                              ledger_entries=ledger,
+                              source_path=str(manifest.get("outcome_manifest") or rp))
+        if title:
+            spec.title = title
+
+        op = Path(out).expanduser() if out else None
+        if op and op.suffix.lower() in (".html", ".htm"):
+            op.parent.mkdir(parents=True, exist_ok=True)
+            out_path = op
+        else:
+            dest = op if op else rp
+            dest.mkdir(parents=True, exist_ok=True)
+            base = report_filename(
+                esaf,
+                sample=slug(Path(str(manifest.get("image_file", ""))).stem, 24) or None,
+                stage=R._STAGE_FOR_TOOL.get(str(manifest.get("tool", "")), "run"),
+            )
+            out_path = unique_path(dest, base)
+
+        _announce_output("generate_run_report", out_path, verdict=spec.verdict)
+        out_path.write_text(R.render_html(spec), encoding="utf-8")
+
+        opened = None
+        if open_it:
+            try:
+                import subprocess as _sp, sys as _sys
+                if _sys.platform == "darwin":
+                    _sp.Popen(["open", str(out_path)])
+                elif _sys.platform.startswith("win"):
+                    os.startfile(str(out_path))  # type: ignore[attr-defined]
+                else:
+                    _sp.Popen(["xdg-open", str(out_path)])
+                opened = str(out_path)
+            except Exception:
+                opened = None
+
+        return format_result({
+            "tool": "generate_run_report", "status": "success",
+            "report": str(out_path),
+            "size_bytes": out_path.stat().st_size,
+            "verdict": spec.verdict, "verdict_note": spec.verdict_note,
+            "plates": [p.key for p in spec.plates],
+            "n_findings": len(spec.findings),
+            "actions": [a.label for a in spec.actions],
+            "esaf": esaf.to_dict() if esaf else None,
+            "logbook_entries": len(spec.logbook.get("entries", [])) if spec.logbook else 0,
+            "opened": opened,
+            "note": ("Self-contained HTML — every figure is embedded, nothing is "
+                     "fetched. Cite this path; do not construct a different one."),
+        })
+    except Exception as e:
+        return format_result({"error": f"generate_run_report failed: "
+                                       f"{type(e).__name__}: {e}"})
 
 
 @mcp.tool()
