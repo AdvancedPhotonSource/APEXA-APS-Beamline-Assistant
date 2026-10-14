@@ -24,7 +24,7 @@ export interface ChatSession {
   updatedAt: number
 }
 
-export type ArtifactType = 'plotly' | 'image' | 'table' | 'text' | 'diffraction'
+export type ArtifactType = 'plotly' | 'image' | 'table' | 'text' | 'diffraction' | 'report'
 
 /**
  * Provenance travels with every scientific artifact so a result is never just

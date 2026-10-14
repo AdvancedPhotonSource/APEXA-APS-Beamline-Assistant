@@ -19,9 +19,17 @@ echo "✓ Using virtual environment: .venv"
 
 # Build React frontend if dist is missing or stale
 if [ -d "frontend" ]; then
-    if [ ! -f "frontend/dist/index.html" ] || \
-       [ "frontend/src/components/viz/VizLauncher.tsx" -nt "frontend/dist/index.html" ] || \
-       [ "frontend/src/components/viz/VizPanel.tsx" -nt "frontend/dist/index.html" ]; then
+    # Any source file newer than the bundle, not two hard-coded ones. The old
+    # check watched only VizLauncher.tsx and VizPanel.tsx, so editing or adding
+    # any other component silently launched the STALE bundle and the change
+    # appeared not to work. start_desktop_ui.sh already does it this way.
+    NEED_BUILD=0
+    if [ ! -f "frontend/dist/index.html" ]; then
+        NEED_BUILD=1
+    elif [ -n "$(find frontend/src -type f -newer frontend/dist/index.html 2>/dev/null | head -1)" ]; then
+        NEED_BUILD=1
+    fi
+    if [ "$NEED_BUILD" = "1" ]; then
         echo ""
         echo "🔨 Building React frontend..."
         (cd frontend && npm install --silent && npm run build) 2>&1 | tail -3

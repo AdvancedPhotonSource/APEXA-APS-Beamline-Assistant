@@ -32,6 +32,8 @@ SKILLS_DIR = Path(__file__).resolve().parent / ".agents" / "skills"
 # ``skill_for_tool`` so "read_grains_summary / compute_grain_stress" resolves on
 # the head.
 SKILL_FOR_TOOL = {
+    "generate_run_report": "apexa-report",
+    "read_logbook": "apexa-report",
     # calibration
     "midas_auto_calibrate": "midas-calibrate",
     "run_ff_calibration": "midas-calibrate",

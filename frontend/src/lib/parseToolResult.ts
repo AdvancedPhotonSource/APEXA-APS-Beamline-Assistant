@@ -143,6 +143,21 @@ export function extractArtifacts(results: ToolResult[], messageId: string): VizA
       })
     }
 
+    // A run report. The tool writes a self-contained .html AND returns the
+    // spec it rendered from, so the Canvas shows the same report live -- with
+    // the actions as buttons rather than copy-to-clipboard, since in here
+    // there is something to call back to.
+    if (result.data.report_spec && typeof result.data.report_spec === 'object') {
+      const spec = result.data.report_spec as Record<string, unknown>
+      artifacts.push({
+        id: `report-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        type: 'report',
+        title: (spec.title as string) ?? 'Run report',
+        data: spec,
+        sourceMessageId: messageId,
+      })
+    }
+
     // Viz API results (plotly data from /api/viz/* endpoints or run_midas_viewer)
     if (result.data.plotly && typeof result.data.plotly === 'object') {
       artifacts.push({

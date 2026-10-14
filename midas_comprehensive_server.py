@@ -9055,6 +9055,11 @@ async def generate_run_report(run_dir: str, out: str = "", esaf_file: str = "",
             "n_findings": len(spec.findings),
             "actions": [a.label for a in spec.actions],
             "esaf": esaf.to_dict() if esaf else None,
+            # The spec as well as the path: the written file is the deliverable,
+            # but a UI cannot open a path, and shipping the spec means the live
+            # view needs no file-serving endpoint (there is none today, and
+            # adding one would need the path sandboxing web_server lacks).
+            "report_spec": spec.to_dict(),
             "logbook_entries": len(spec.logbook.get("entries", [])) if spec.logbook else 0,
             "opened": opened,
             "note": ("Self-contained HTML — every figure is embedded, nothing is "

@@ -1,6 +1,7 @@
 import type { VizArtifact } from '@/api/types'
 import { PlotlyChart } from './PlotlyChart'
 import { ResponseView } from './ResponseView'
+import { ReportView, type ReportData } from './ReportView'
 import { DiffractionViewer } from '@/components/viewer/DiffractionViewer'
 import { FileListCard } from '@/components/cards/FileListCard'
 import { cardFor } from '@/components/cards/ToolResultCard'
@@ -19,6 +20,10 @@ export function ArtifactBody({ artifact }: { artifact: VizArtifact }) {
         <PlotlyChart data={a.data} />
       </div>
     )
+  }
+
+  if (a.type === 'report') {
+    return <ReportView data={a.data as ReportData} />
   }
 
   if (a.type === 'diffraction') {
