@@ -360,6 +360,9 @@ def cmd_pdf(args):
     import midas_pdf as mp
 
     x, intensity = _load_1d(args.pattern)
+    wavelength = float(args.wavelength or 0)
+    if not np.isfinite(wavelength) or wavelength <= 0:
+        _error("A measured positive wavelength in angstroms is required; no default wavelength is assumed.")
     # Convert 2θ (deg) to Q if requested; else assume column is already Q (Å⁻¹).
     if args.x_is_two_theta:
         if not args.wavelength:
@@ -381,7 +384,7 @@ def cmd_pdf(args):
     r_grid = np.linspace(float(args.r_min), float(args.r_max), int(args.n_r))
     # i_of_q_to_Gr returns (G, sigma_G, S) — G(r), its 1σ band, and S(Q).
     out = mp.i_of_q_to_Gr(
-        q, intensity, comp, r_grid, wavelength_A=float(args.wavelength or 0.1),
+        q, intensity, comp, r_grid, wavelength_A=wavelength,
         q_max=(float(args.q_max) if args.q_max else None),
         window=args.window, return_S=True)
     G_r = np.asarray(out[0])
@@ -397,16 +400,22 @@ def cmd_pdf(args):
         "G_r_stats": _array_stats(G_r),
         "sigma_G_stats": _array_stats(sigma_G) if sigma_G is not None else None,
         "S_q_stats": _array_stats(S_q) if S_q is not None else None,
+        "plotly": {"data": [{"type": "scatter", "mode": "lines", "name": "G(r)",
+                               "x": r_grid.tolist(), "y": G_r.tolist()}],
+                   "layout": {"title": "Pair distribution function", "xaxis": {"title": "r (Å)"},
+                              "yaxis": {"title": "G(r)"}}},
+        "title": "Pair distribution function G(r)",
     }
     if args.out:
         arr = np.column_stack([r_grid, G_r])
         np.savetxt(args.out, arr, header="r(A)  G(r)", fmt="%.6g")
         result["output_file"] = args.out
-    # first peak (nearest-neighbour distance): argmax of G(r) for r>0.5 Å
+    # The largest peak is not necessarily the first neighbour shell.
     mask = r_grid > 0.5
     if mask.any():
         idx = int(np.nanargmax(G_r[mask]))
-        result["first_peak_r_A"] = float(r_grid[mask][idx])
+        result["strongest_peak_r_A_above_0_5"] = float(r_grid[mask][idx])
+        result["peak_interpretation"] = "Largest G(r) above 0.5 Å; nearest-neighbour assignment requires structure and termination/background checks."
     _output(result)
 
 
@@ -593,7 +602,7 @@ def cmd_pf_odf(args):
     # (geometry from paramstest/zarr). A turnkey synthetic self-test is not
     # shipped upstream, so we confirm the capability + attempt a guarded build.
     result = {
-        "status": "success", "mode": "deferred", "real_data_supported": False,
+        "status": "warning", "mode": "deferred", "real_data_supported": False,
         "package": "midas_pf_odf", "version": getattr(mpf, "__version__", "?"),
         "capability": "joint per-grain peak-shape ODF inversion for pf-HEDM",
         "real_data_entry": "load_pf_grain(layer_dir, grain_id, ...) -> "
@@ -609,8 +618,8 @@ def cmd_pf_odf(args):
             ds = mpf.load_pf_grain(args.layer_dir, int(args.grain_id),
                                    n_pixels_y=int(args.n_pixels_y),
                                    n_pixels_z=int(args.n_pixels_z))
-            result["mode"] = "real"
-            result["real_data_supported"] = True
+            result["mode"] = "input-inspection"
+            result["inversion_performed"] = False
             result["loaded"] = {"layer_dir": args.layer_dir,
                                 "grain_id": int(args.grain_id),
                                 "dataset_type": type(ds).__name__}
@@ -634,7 +643,7 @@ def cmd_pink(args):
         spec_ok = False
         spec_err = f"{type(e).__name__}: {e}"
     result = {
-        "status": "success", "mode": "deferred", "real_data_supported": False,
+        "status": "warning", "mode": "deferred", "real_data_supported": False,
         "package": "midas_pink", "version": getattr(mpk, "__version__", "?"),
         "capability": "pink-beam spectrum-aware differentiable grain-state inversion",
         "spectrum_built": spec_ok,

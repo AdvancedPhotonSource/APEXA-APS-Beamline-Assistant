@@ -7,6 +7,8 @@ interface Status {
   mcp_client_connected: boolean
   connected_servers: string[]
   active_connections: number
+  network_tier?: string
+  science_location?: string
   available_models?: string[]
 }
 
@@ -24,11 +26,17 @@ export function FacilityStatus() {
 
   useEffect(() => {
     let alive = true
+    let inFlight: AbortController | null = null
     const poll = async () => {
       // Don't poll a backgrounded tab — avoids flooding /api/status in the logs.
       if (typeof document !== 'undefined' && document.hidden) return
+      if (inFlight) return
+      const controller = new AbortController()
+      inFlight = controller
+      const timeout = setTimeout(() => controller.abort(), 5000)
       try {
-        const r = await fetch('/api/status')
+        const r = await fetch('/api/status', { signal: controller.signal })
+        if (!r.ok) throw new Error(`Status unavailable: ${r.status}`)
         const j = (await r.json()) as Status
         if (alive) {
           setStatus(j)
@@ -36,6 +44,9 @@ export function FacilityStatus() {
         }
       } catch {
         if (alive) setReachable(false)
+      } finally {
+        clearTimeout(timeout)
+        inFlight = null
       }
     }
     poll()
@@ -43,6 +54,7 @@ export function FacilityStatus() {
     return () => {
       alive = false
       clearInterval(t)
+      inFlight?.abort()
     }
   }, [])
 
@@ -82,6 +94,7 @@ export function FacilityStatus() {
 
       <Sep />
       <span>job: {jobLabel}</span>
+      {status?.network_tier && <span>network: {status.network_tier} · data: {status.science_location}</span>}
 
       {status?.connected_servers && status.connected_servers.length > 0 && (
         <>

@@ -10,7 +10,7 @@ import { ToolCardChrome } from './ToolCardChrome'
 
 /** Bare card with no chrome — used inside the Canvas (already an artifact). */
 export function cardFor(result: ToolResult) {
-  switch (result.tool) {
+  switch (result.tool.split(':').pop()) {
     case 'midas_auto_calibrate':
     case 'run_ff_calibration':
       return <CalibrationCard result={result} />

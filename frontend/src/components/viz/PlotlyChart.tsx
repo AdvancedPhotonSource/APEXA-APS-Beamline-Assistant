@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import Plot from './LazyPlot'
 import { useThemeStore } from '@/stores/themeStore'
 
@@ -11,10 +12,10 @@ function normalizeLayout(layout: Record<string, unknown>): Partial<Plotly.Layout
     result.title = { text: result.title }
   }
   if (typeof (result.xaxis as Record<string, unknown>)?.title === 'string') {
-    (result.xaxis as Record<string, unknown>).title = { text: (result.xaxis as Record<string, unknown>).title }
+    result.xaxis = { ...(result.xaxis as object), title: { text: (result.xaxis as Record<string, unknown>).title } }
   }
   if (typeof (result.yaxis as Record<string, unknown>)?.title === 'string') {
-    (result.yaxis as Record<string, unknown>).title = { text: (result.yaxis as Record<string, unknown>).title }
+    result.yaxis = { ...(result.yaxis as object), title: { text: (result.yaxis as Record<string, unknown>).title } }
   }
   return result as Partial<Plotly.Layout>
 }
@@ -43,7 +44,7 @@ const THEME_LAYOUTS: Record<string, Partial<Plotly.Layout>> = {
   },
 }
 
-export function PlotlyChart({ data }: PlotlyChartProps) {
+export const PlotlyChart = memo(function PlotlyChart({ data }: PlotlyChartProps) {
   const mode = useThemeStore((s) => s.mode)
   const plotData = data as { data?: Plotly.Data[]; layout?: Record<string, unknown> }
 
@@ -60,7 +61,11 @@ export function PlotlyChart({ data }: PlotlyChartProps) {
     <div className="w-full h-full min-h-[300px]">
       <Plot
         data={plotData.data ?? []}
-        layout={{ ...defaultLayout, ...userLayout }}
+        layout={{ ...defaultLayout, ...userLayout,
+          xaxis: { ...themeLayout.xaxis, automargin: true, ...userLayout.xaxis },
+          yaxis: { ...themeLayout.yaxis, automargin: true, ...userLayout.yaxis },
+          uirevision: 'preserve-interaction',
+        }}
         config={{
           responsive: true,
           displayModeBar: true,
@@ -72,4 +77,4 @@ export function PlotlyChart({ data }: PlotlyChartProps) {
       />
     </div>
   )
-}
+})

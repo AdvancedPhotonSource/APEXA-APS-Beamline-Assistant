@@ -7,7 +7,7 @@ interface ConnectionState {
   selectedModel: string
   availableModels: Record<string, Record<string, string>>
 
-  init: () => void
+  init: () => () => void
   setModel: (model: string) => void
   setConnected: (connected: boolean) => void
 }
@@ -18,9 +18,9 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
   availableModels: {},
 
   init: () => {
-    wsManager.connect()
-
-    wsManager.onMessage((data) => {
+    let alive = true
+    const unsubscribe = wsManager.onMessage((data) => {
+      if (data.type === 'connection_status') set({ connected: !!data.connected })
       if (data.type === 'model_changed') {
         if (data.message === 'connected') {
           set({ connected: true })
@@ -32,12 +32,14 @@ export const useConnectionStore = create<ConnectionState>((set) => ({
         set({ connected: false })
       }
     })
+    wsManager.connect()
 
     fetchModels()
       .then(({ models, selected }) => {
-        set({ availableModels: models, selectedModel: selected })
+        if (alive) set({ availableModels: models, selectedModel: selected })
       })
       .catch(() => {})
+    return () => { alive = false; unsubscribe(); wsManager.disconnect() }
   },
 
   setModel: (model: string) => {

@@ -43,6 +43,8 @@ from typing import Any, Dict, List, Optional, Tuple
 _SSH_OPTS = [
     "-o", "BatchMode=yes",              # never prompt — fail fast instead of hanging
     "-o", "ConnectTimeout=10",
+    "-o", "ServerAliveInterval=30",
+    "-o", "ServerAliveCountMax=3",
     "-o", "StrictHostKeyChecking=accept-new",
 ]
 
@@ -142,6 +144,10 @@ def remote_run(host: str, command: str, *, remote_dir: Optional[str] = None,
             "ssh_failed": False, "host": target, "command": command,
             "stdout": "", "stderr": f"remote command timed out after {timeout}s on '{target}'",
         }
+    except OSError as exc:
+        return {"success": False, "return_code": None, "timed_out": False,
+                "ssh_failed": True, "host": target, "command": command,
+                "stdout": "", "stderr": f"Could not start SSH: {exc}"}
     return {
         "success": r.returncode == 0,
         "return_code": r.returncode,

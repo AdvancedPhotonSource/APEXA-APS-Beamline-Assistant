@@ -15,6 +15,10 @@ export function ViewerControls() {
     fetchColormaps().then((r) => setColormaps(r.colormaps)).catch(() => {})
   }, [])
 
+  useEffect(() => () => {
+    if (applyTimer.current) clearTimeout(applyTimer.current)
+  }, [activeImageId])
+
   // Live update: change a slider/colormap → push to the backend (debounced) so the
   // image updates immediately instead of needing an explicit Apply click.
   const live = (partial: Parameters<typeof updateSettings>[0]) => {

@@ -1,8 +1,9 @@
 import { useState, useCallback, useRef } from 'react'
 import { useVizStore } from '@/stores/vizStore'
-import { useImageStore } from '@/stores/imageStore'
 import { useChatStore } from '@/stores/chatStore'
-import { fetchCsvData } from '@/api/endpoints'
+import { fetchCsvData, uploadFile } from '@/api/endpoints'
+import { WORKFLOW_OPTIONS, workflowPrompt } from '@/lib/workflowCatalog'
+import { isHtmlReport, reportFileArtifact } from '@/lib/reportArtifacts'
 
 /**
  * Canvas empty state. States the panel's purpose plainly (no fake demo data),
@@ -13,7 +14,6 @@ import { fetchCsvData } from '@/api/endpoints'
  */
 export function Dashboard() {
   const addArtifact = useVizStore((s) => s.addArtifact)
-  const loadImage = useImageStore((s) => s.loadImage)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const [isDragOver, setIsDragOver] = useState(false)
   const [status, setStatus] = useState<{ msg: string; type: 'info' | 'error' } | null>(null)
@@ -22,31 +22,26 @@ export function Dashboard() {
   const processFiles = useCallback(async (files: File[]) => {
     for (const file of files) {
       const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
-      if (['tif','tiff','ge','ge2','ge3','ge4','ge5','h5','hdf5'].includes(ext)) {
+      if (isHtmlReport(file.name) || ['cif','tif','tiff','ge','ge1','ge2','ge3','ge4','ge5','h5','hdf5','hdf','nxs','cbf','edf'].includes(ext)) {
         setStatus({ msg: `Loading ${file.name}...`, type: 'info' })
-        const form = new FormData()
-        form.append('file', file)
         try {
-          const res = await fetch('/api/upload', { method: 'POST', body: form })
-          if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
-          const data = await res.json()
-          if (data.saved_path) { await loadImage(data.saved_path); setStatus(null) }
+          const data = await uploadFile(file)
+          addArtifact(isHtmlReport(file.name) ? reportFileArtifact(data.path, '', 'local', file.name)
+            : { id: `upload-${data.file_id}`, type: ext === 'cif' ? 'structure' : 'sequence',
+              title: file.name, data: { path: data.path, location: 'local', source: 'Uploaded file' }, sourceMessageId: '' })
+          setStatus(null)
         } catch (err) {
           setStatus({ msg: `Failed to load ${file.name}: ${err}`, type: 'error' })
         }
       } else if (['csv','dat','xy','txt'].includes(ext)) {
         setStatus({ msg: `Loading ${file.name}...`, type: 'info' })
-        const form = new FormData()
-        form.append('file', file)
         try {
-          const res = await fetch('/api/upload', { method: 'POST', body: form })
-          if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
-          const data = await res.json()
-          if (data.saved_path) {
-            const csv = await fetchCsvData(data.saved_path)
+          const data = await uploadFile(file)
+          if (data.path) {
+            const csv = await fetchCsvData(data.path)
             const cols = csv.columns
             addArtifact({
-              id: `upload-${Date.now()}`, type: 'plotly', title: file.name,
+              id: `upload-${data.file_id}`, type: 'plotly', title: file.name,
               data: {
                 data: [{ x: csv.data[cols[0]], y: csv.data[cols.length > 1 ? cols[1] : cols[0]], type: 'scatter', mode: 'lines', line: { color: '#3b82f6' } }],
                 layout: { title: file.name, xaxis: { title: cols[0] }, yaxis: { title: cols.length > 1 ? cols[1] : 'Value' } },
@@ -62,7 +57,7 @@ export function Dashboard() {
         setStatus({ msg: `Unsupported file type: .${ext}`, type: 'error' })
       }
     }
-  }, [addArtifact, loadImage])
+  }, [addArtifact])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setIsDragOver(false)
@@ -84,10 +79,10 @@ export function Dashboard() {
           Results appear here
         </h2>
         <p style={{ fontSize: 12.5, color: 'var(--apexa-text-muted)', lineHeight: 1.5, maxWidth: 560 }}>
-          Plots, detector images, and tables APEXA produces open here as tabs — each
+          Structures, detector sequences, plots and reports open here as tabs — each
           one you can pin, compare side-by-side, and trace back to the exact tool and
           inputs that made it (the provenance footer). Ask in <b>chat</b>, drop a file
-          below, or pick one in the <b>Files</b> panel and hit <b>Recommend</b>.
+          below, or pick one in the <b>Data</b> panel and hit <b>Recommend</b>.
         </p>
       </div>
 
@@ -102,14 +97,18 @@ export function Dashboard() {
 
       <input
         ref={fileRef} type="file" multiple
-        accept=".tif,.tiff,.ge,.ge2,.ge3,.ge4,.ge5,.h5,.hdf5,.csv,.dat,.xy,.txt"
-        onChange={(e) => e.target.files && processFiles(Array.from(e.target.files))}
+        accept=".html,.htm,.cif,.tif,.tiff,.ge,.ge1,.ge2,.ge3,.ge4,.ge5,.h5,.hdf5,.hdf,.nxs,.cbf,.edf,.csv,.dat,.xy,.txt"
+        onChange={(e) => { if (e.target.files) processFiles(Array.from(e.target.files)); e.target.value = '' }}
         style={{ display: 'none' }}
       />
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 12 }}>
         {/* Drop zone */}
         <div
+          role="button"
+          tabIndex={0}
+          aria-label="Upload a structure, detector file, diffraction pattern or HTML report"
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileRef.current?.click() } }}
           onDragOver={(e) => { e.preventDefault(); setIsDragOver(true) }}
           onDragLeave={() => setIsDragOver(false)}
           onDrop={handleDrop}
@@ -127,7 +126,8 @@ export function Dashboard() {
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
           </svg>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--apexa-text)', marginBottom: 4 }}>Drop a file or click to browse</div>
-          <div style={{ fontSize: 11, color: 'var(--apexa-text-muted)' }}>.tif .ge .h5 .csv .dat .xy</div>
+          <div style={{ fontSize: 11, color: 'var(--apexa-text-muted)' }}>.cif · TIFF / HDF5 / NeXus sequences · .ge .cbf .edf · .csv .dat .xy · HTML reports</div>
+          <div style={{ fontSize: 11, color: 'var(--apexa-text-muted)', marginTop: 6 }}>For large beamline datasets, open an existing server path in Data.</div>
         </div>
 
         {/* What renders here — a legend, not fake data */}
@@ -135,10 +135,12 @@ export function Dashboard() {
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--apexa-text)', marginBottom: 10 }}>What shows up here</div>
           {[
             ['1D diffraction patterns', '.xy .dat .csv'],
-            ['2D detector images', '.tif .ge .h5'],
+            ['Crystal structures', '.cif'],
+            ['Detector sequences', 'frames, darks, masks'],
             ['Caked heatmaps', '2θ × η'],
             ['Grain maps (FF-HEDM)', 'Grains.csv'],
             ['Calibration QC', 'residuals'],
+            ['Analysis reports', 'results and provenance'],
           ].map(([label, desc]) => (
             <div key={label} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
               <span style={{ color: 'var(--apexa-text)' }}>{label}</span>
@@ -154,10 +156,10 @@ export function Dashboard() {
             APEXA can inspect your data and recommend the next step.
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <StarterBtn primary onClick={() => sendMessage('What can you do? Summarize your capabilities and the tools available.')}>
-              What can you do?
+            <StarterBtn primary onClick={() => sendMessage(workflowPrompt(WORKFLOW_OPTIONS.find(o => o.id === 'readiness')!))}>
+              Check analysis readiness
             </StarterBtn>
-            <StarterBtn onClick={() => sendMessage('Look at my current working directory, tell me what data is there, and recommend a workflow with my options.')}>
+            <StarterBtn onClick={() => sendMessage(workflowPrompt(WORKFLOW_OPTIONS.find(o => o.id === 'inspect')!))}>
               Recommend a workflow for my data
             </StarterBtn>
           </div>
@@ -165,25 +167,19 @@ export function Dashboard() {
 
         {/* Common commands — send to chat, don't just decorate */}
         <div className="apexa-hoverable" style={{ ...card, gridColumn: '1 / -1', padding: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--apexa-text)', marginBottom: 8 }}>Common commands</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--apexa-text)', marginBottom: 8 }}>Prepare an analysis</div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {[
-              'Calibrate the CeO2 detector image',
-              'Integrate this series to 1D (xye + fxye)',
-              'Run the FF-HEDM workflow',
-              'List calibrants',
-              'Calculate d-spacing at 61.332 keV',
-            ].map((cmd) => (
+            {WORKFLOW_OPTIONS.filter(o => ['ff', 'nf', 'pf', 'refine', 'pdf'].includes(o.id)).map((option) => (
               <button
-                key={cmd}
-                onClick={() => sendMessage(cmd)}
+                key={option.id}
+                onClick={() => sendMessage(workflowPrompt(option))}
                 style={{
                   fontSize: 11, padding: '5px 11px', borderRadius: 16, cursor: 'pointer',
                   background: 'var(--apexa-surface-2)', border: '1px solid var(--apexa-border)', color: 'var(--apexa-text-2)',
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--apexa-accent, #3b82f6)')}
                 onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--apexa-border)')}
-              >{cmd}</button>
+              >{option.name}</button>
             ))}
           </div>
         </div>

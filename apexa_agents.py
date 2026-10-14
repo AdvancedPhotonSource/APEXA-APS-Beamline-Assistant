@@ -230,6 +230,28 @@ class AgentResponse:
 
 # ── Argo Provider ────────────────────────────────────────────────────────────
 
+def to_anthropic_tools(tools: List[Dict]) -> List[Dict]:
+    """APEXA's internal OpenAI-format tool defs → Anthropic's flat schema.
+
+    Module-level because two providers need it: ``ArgoProvider`` when the active
+    Argo model is a ``claude*`` one, and ``StreamingAnthropicProvider`` when
+    talking to api.anthropic.com. Keeping one implementation means a schema fix
+    lands in both places at once.
+
+    Input entries look like:
+        {"type":"function","function":{"name","description","parameters":<jsonschema>}}
+    """
+    out: List[Dict] = []
+    for t in tools:
+        fn = t.get("function", t)
+        out.append({
+            "name":         fn.get("name", ""),
+            "description":  fn.get("description", ""),
+            "input_schema": fn.get("parameters", {"type": "object"}),
+        })
+    return out
+
+
 class ArgoProvider:
     """
     Single class handling all Argo Gateway communication.
@@ -344,15 +366,8 @@ class ArgoProvider:
         model = self.model
         if model.startswith("claude"):
             # Anthropic tool schema: flat {name, description, input_schema}.
-            out: List[Dict] = []
-            for t in tools:
-                fn = t.get("function", t)
-                out.append({
-                    "name":        fn.get("name", ""),
-                    "description": fn.get("description", ""),
-                    "input_schema": fn.get("parameters", {"type": "object"}),
-                })
-            return out
+            return to_anthropic_tools(tools)
+        out: List[Dict]
         if model.startswith("gemini"):
             # Gemini function declarations; Argo wraps these into Google
             # Function/Tool objects. Default-on alongside claude/OpenAI; the
@@ -623,16 +638,42 @@ class StreamingAnthropicProvider:
     metrics NVIDIA reports in DGX Spark agentic benchmarks.
 
     Only valid for ``claude*`` models. Opt in via ``APEXA_PROVIDER=streaming``.
+
+    Also the provider for the **personal Anthropic API key** path
+    (``api.anthropic.com``), which speaks this same native wire — it is not
+    OpenAI-compatible and has no ``/v1/chat/completions``, so the OpenAI client
+    cannot reach it. Pass an ``endpoint`` (from ``apexa_llm_endpoints``) and this
+    class targets that host with that credential; both hosts authenticate with
+    ``x-api-key``, differing only in whether the value is an ANL username or a
+    real key, which ``resolve_key()`` already decides.
+
+    Tool calling is enabled **only** on the endpoint-driven path. Argo's own
+    Anthropic route does not do tool calling for Claude models (Aug-2026 docs),
+    so the legacy ``APEXA_PROVIDER=streaming`` behaviour — tools ignored,
+    unstructured — is preserved exactly as it was.
     """
 
     URL_PATH = "/v1/messages"
     _BASE    = "https://apps.inside.anl.gov/argoapi"
 
-    def __init__(self, username: str, model: str):
-        self.username = username
-        self.model    = model
-        self.url      = f"{self._BASE}{self.URL_PATH}"
-        self._client  = httpx.AsyncClient(timeout=180.0)
+    def __init__(self, username: str, model: str, endpoint=None):
+        self.username  = username
+        self.model     = model
+        self._endpoint = endpoint
+        base           = (endpoint.base_url if endpoint else self._BASE).rstrip("/")
+        self.url       = f"{base}{self.URL_PATH}"
+        self._api_key  = endpoint.resolve_key(username) if endpoint else username
+        self._client   = httpx.AsyncClient(timeout=180.0)
+
+    @property
+    def structured_tools(self) -> bool:
+        """True only when driven by an endpoint that really does tool calling.
+
+        ``provider_is_structured()`` duck-types on this, so the agent loop skips
+        the text ``TOOL_CALL:`` protocol exactly when native tool calls are
+        actually available — and not on the legacy Argo streaming path.
+        """
+        return self._endpoint is not None
 
     @staticmethod
     def _split_system(messages: List[Dict]) -> tuple:
@@ -657,7 +698,8 @@ class StreamingAnthropicProvider:
                 others.append({"role": role, "content": c})
         return "\n\n".join(sys_parts), others
 
-    def _build_payload(self, messages: List[Dict], temperature: float) -> Dict:
+    def _build_payload(self, messages: List[Dict], temperature: float,
+                       tools: Optional[List[Dict]] = None) -> Dict:
         system_str, msgs = self._split_system(messages)
         payload: Dict[str, Any] = {
             "model":      self.model,
@@ -670,22 +712,30 @@ class StreamingAnthropicProvider:
         # Opus 4.7/4.8 silently drop temperature; other Claude models accept it.
         if self.model not in ("claudeopus48", "claudeopus47"):
             payload["temperature"] = temperature
+        if tools and self.structured_tools:
+            payload["tools"] = to_anthropic_tools(tools)
         return payload
 
     async def chat(self, messages: List[Dict],
                    temperature: float = 0.7,
                    tools: Optional[List[Dict]] = None) -> AgentResponse:
-        # tools is accepted for interface parity with ArgoProvider but IGNORED:
-        # the /streaming endpoint's tool calling works only for OpenAI models,
-        # and this provider is Claude-only (Aug-2026 Argo docs).
-        payload    = self._build_payload(messages, temperature)
+        # On the legacy Argo path ``tools`` is still ignored — that endpoint does
+        # tool calling only for OpenAI models (Aug-2026 Argo docs). On the
+        # endpoint-driven path (api.anthropic.com) it IS sent; the gate lives in
+        # _build_payload via ``structured_tools``.
+        payload    = self._build_payload(messages, temperature, tools)
         prompt_est = count_message_tokens(payload.get("messages", []), self.model)
         n_messages = len(payload.get("messages", []))
         headers = {
-            "x-api-key":         self.username,
             "anthropic-version": "2023-06-01",
             "content-type":      "application/json",
         }
+        # api.anthropic.com and Argo both want x-api-key; gateways fronting the
+        # same wire (AmSC MAG) want a bearer token. The endpoint decides.
+        if getattr(self._endpoint, "auth_style", "x-api-key") == "bearer":
+            headers["authorization"] = f"Bearer {self._api_key}"
+        else:
+            headers["x-api-key"] = self._api_key
 
         t0            = time.monotonic()
         t_first_token: Optional[float] = None
@@ -850,12 +900,22 @@ class StreamingAnthropicProvider:
 
 
 def select_provider(username: str, model: str):
-    """Pick a provider based on ``APEXA_LLM_MODE`` / ``APEXA_PROVIDER``.
+    """Pick a provider based on the active endpoint's WIRE, then on
+    ``APEXA_LLM_MODE`` / ``APEXA_PROVIDER``.
 
+    - endpoint ``wire="anthropic"``                         → StreamingAnthropicProvider
+      (api.anthropic.com — native /v1/messages, NOT OpenAI-compatible, so the
+      OpenAI client physically cannot reach it; this must be decided before the
+      proxy branch below)
     - ``APEXA_LLM_MODE=proxy``                             → OpenAICompatProvider
       (argo-proxy, OpenAI-compatible; STRUCTURED tool results on every turn)
     - ``APEXA_PROVIDER=streaming`` + a ``claude*`` model    → StreamingAnthropicProvider
     - anything else                                         → ArgoProvider
+
+    Dispatching on the wire first is what lets a profile switch gateways without
+    the user also having to keep ``APEXA_LLM_MODE`` consistent with it. The
+    default preset (argo-proxy) is OpenAI-wired, so this branch never fires for
+    an existing install and today's behaviour is unchanged.
 
     The proxy path is preferred: Argo's ``/chat/`` sanitizer flattens messages to
     strings, so tool results can only be fed back as prose there, which is what
@@ -866,6 +926,16 @@ def select_provider(username: str, model: str):
 
     Non-Claude models under ``streaming`` fall back to Argo /chat/ with a
     one-line stderr note (Anthropic native only speaks Claude)."""
+    try:
+        from apexa_llm_endpoints import active_endpoint
+        _ep = active_endpoint()
+    except Exception:
+        # A misconfigured or rejected endpoint is reported by the paths below,
+        # which already have the right error messages; never fail selection here.
+        _ep = None
+    if _ep is not None and getattr(_ep, "wire", "openai") == "anthropic":
+        return StreamingAnthropicProvider(username, model, endpoint=_ep)
+
     if proxy_mode_enabled():
         try:
             return OpenAICompatProvider(username, model)
@@ -1222,6 +1292,7 @@ VISUALIZATION_AGENT = APEXAAgent(
     name        = "VisualizationAgent",
     temperature = 0.3,
     tool_names  = [
+        "open_science_view",
         "run_midas_viewer",
         "plot_lineout_series_contour",
         "list_directory",
@@ -1230,17 +1301,22 @@ VISUALIZATION_AGENT = APEXAAgent(
     instructions = """You are a visualization specialist for HEDM diffraction data at APS.
 
 Pick the RIGHT tool for the request — do NOT hand-roll plots with run_command:
+- A CIF crystal structure, raw detector image, or detector image sequence in
+  the Web UI right pane → open_science_view(path=..., kind="structure" or
+  "sequence"). This returns a native canvas artifact. Do not generate HTML,
+  run `open`, or copy files to the project directory to make them appear.
 - A SERIES of 1D patterns → one contour/waterfall/operando plot (a folder of
   *.xye/*.xy/*.dat, "contour", "waterfall", "operando", "stack", "time/frame vs
   2θ") → use plot_lineout_series_contour. MIDAS has NO series viewer and .xye is
   NOT a MIDAS-native lineout format — its Qt lineout viewers open BLANK on .xye —
   so do NOT route .xye or a series through run_midas_viewer.
-- A SINGLE MIDAS-native artifact (one *.zarr.zip, *_corr.csv, Grains.csv, .mic,
-  raw .tif/.ge/.h5, live .bin) → use run_midas_viewer (it handles MIDAS paths/Python).
+- A SINGLE MIDAS analysis artifact (one *.zarr.zip, *_corr.csv, Grains.csv,
+  .mic, live .bin) → use run_midas_viewer (it handles MIDAS paths/Python).
 Do NOT use run_command or check_environment for plotting — these tools do everything.
 Your job is to LAUNCH/produce the visualization, not analyze data.
 
-⚠️ CRITICAL: Call run_midas_viewer EXACTLY ONCE per request. Pick the single BEST viewer. NEVER launch multiple viewers.
+Pick the single best matching viewer tool. Call run_midas_viewer only for its
+supported analysis artifacts or an explicit request for a desktop MIDAS viewer.
 
 STEP 1: Find the data file. Call list_directory ONCE on the most specific path given.
   - If the user gives an integration/ path → list that directory directly. Do NOT also list the parent.
@@ -1310,6 +1386,18 @@ APEXA_AGENT = APEXAAgent(
 experiments at APS. You have ONE persistent conversation with the scientist:
 prior tool calls and their results are in the transcript above — that is your
 memory. Reason over it, then act.
+
+## Native scientific canvas
+- To show a local CIF, call open_science_view(path="/absolute/file.cif", kind="structure").
+  To show raw diffraction frames, use kind="sequence" with a file or sample
+  directory; select dataset/pattern when needed. These tools validate contents
+  and return artifacts for the Web UI right pane, including files outside the
+  project directory. Do not generate an HTML viewer, run a desktop `open`
+  command, or copy files into the project merely to display these data.
+- Discover the actual file path first if unknown. A successful shell command
+  creating HTML does not mean anything was displayed in the canvas.
+- MP/COD fetch results already open structure artifacts in the Web UI. Existing
+  local CIFs can be displayed offline using open_science_view.
 
 ## Operating style — work like a senior colleague, not a report generator
 - BE TERSE AND ACT. Reason in a few words, then DO the thing. Default to the shortest
@@ -1760,7 +1848,7 @@ RULES:
 7. For combined integration + refinement → TOOL_CALL: run_live_analysis
 8. For fetching CIF files → TOOL_CALL: fetch_cif_from_mp
 9. For HEDM workflows → TOOL_CALL: the appropriate workflow tool
-10. For visualization/plotting → TOOL_CALL: run_midas_viewer (pass viewer name + data file)
+10. For CIF/raw detector display → TOOL_CALL: open_science_view; for MIDAS analysis plots → TOOL_CALL: run_midas_viewer (pass viewer name + data file)
 11. For motor control → TOOL_CALL: the appropriate motor tool (move, get_position, stop, etc.)
 
 Only generate text WITHOUT a TOOL_CALL when:
@@ -3754,6 +3842,7 @@ class OrchestratorAgent:
     def clear_history(self):
         self.conversation_history = []
         self.running_summary = ""
+        self._active_dir = ""
         self._last_agent = None
         self._last_turn_had_tool_error = False
 
@@ -4504,7 +4593,25 @@ class OrchestratorAgent:
             if wf is not None:
                 session = getattr(self.context, "active_session", None) or "_ffhedm"
                 if wf.is_active(session) or self._is_ff_hedm_workflow(query):
-                    return await wf.astep(query, provider, session)
+                    execute = wf._execute
+                    recorded = []
+                    async def graph_tool(tool, args):
+                        result = await execute(tool, args)
+                        text = result if isinstance(result, str) else json.dumps(result, default=str)
+                        recorded.append({"role": "user", "content": f"[Tool Result for {tool}]\n{text}"})
+                        if on_tool_result:
+                            await on_tool_result(tool, args, text)
+                        return result
+                    wf._execute = graph_tool
+                    try:
+                        response = await wf.astep(query, provider, session)
+                        self.conversation_history.extend([
+                            {"role": "user", "content": query}, *recorded,
+                            {"role": "assistant", "content": response},
+                        ])
+                        return response
+                    finally:
+                        wf._execute = execute
 
         # Modern single-loop mode (flag) — persistent full-context reasoning.
         if self._mode == "single":

@@ -27,12 +27,14 @@ export function WorkflowCard({ result }: { result: ToolResult }) {
         </div>
         <span className={`text-[10px] font-medium ${sc.color}`}>{status}</span>
       </div>
-      {data.total_grains_found != null && (
+      {(data.total_grains_found ?? data.total_grains) != null && (
         <div className="px-3 py-2 flex items-baseline justify-between border-b border-zinc-800/50">
           <span className="text-xs text-zinc-400">Grains found</span>
-          <span className="text-sm font-bold text-purple-300 font-mono">{String(data.total_grains_found)}</span>
+          <span className="text-sm font-bold text-purple-300 font-mono">{String(data.total_grains_found ?? data.total_grains)}</span>
         </div>
       )}
+      {data.total_voxels != null && <div className="px-3 py-2 text-xs">Voxels: {String(data.total_voxels)}</div>}
+      {!!data.run_note && <p className="px-3 py-2 text-xs text-amber-300">{String(data.run_note)}</p>}
       {output && (
         <details>
           <summary className="px-3 py-1.5 text-[10px] text-zinc-500 cursor-pointer hover:text-zinc-300 transition-colors">

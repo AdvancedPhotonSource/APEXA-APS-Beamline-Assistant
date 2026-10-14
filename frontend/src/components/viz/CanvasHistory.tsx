@@ -23,7 +23,7 @@ export function CanvasHistory({ onOpen }: { onOpen: () => void }) {
   const rows = [...artifacts].reverse()   // newest first
 
   return (
-    <div style={{ height: '100%', overflow: 'auto', background: 'var(--apexa-panel-bg)' }}>
+    <div style={{ flex: 1, minHeight: 0, overflow: 'auto', background: 'var(--apexa-panel-bg)' }}>
       <div style={{ padding: '10px 14px', fontSize: 11, color: 'var(--apexa-text-muted)' }}>
         {artifacts.length} result{artifacts.length === 1 ? '' : 's'} this session · newest first
       </div>
@@ -107,7 +107,7 @@ function TypeGlyph({ type }: { type: VizArtifact['type'] }) {
   const common = { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke, strokeWidth: 2 } as const
   if (type === 'plotly') return <svg {...common}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
   if (type === 'diffraction') return <svg {...common}><circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" /></svg>
-  if (type === 'report') return <svg {...common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="8" y1="13" x2="16" y2="13" /></svg>
+  if (type === 'report' || type === 'html-report') return <svg {...common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="8" y1="13" x2="16" y2="13" /></svg>
   if (type === 'image') return <svg {...common}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>
   return <svg {...common}><rect x="3" y="3" width="18" height="18" rx="2" /></svg>
 }

@@ -1,0 +1,49 @@
+{
+  "scope": "In-process contract probes with stub executor/model; no real analysis or network calls.",
+  "status_with_zero_sessions": {
+    "status": "running",
+    "mcp_client_connected": true,
+    "connected_servers": [],
+    "active_connections": 0,
+    "network_tier": "internal",
+    "science_location": "local",
+    "upload_directory": "uploads",
+    "available_models": []
+  },
+  "phase_error_wrapped_as_success": {
+    "success": true,
+    "result": "{\"status\": \"error\", \"error\": \"tool unavailable: midas_identify_crystalline_phases\"}"
+  },
+  "peak_error_wrapped_as_success": {
+    "success": true,
+    "result": "{\"status\": \"error\", \"error\": \"tool unavailable: midas_analyze_diffraction_peaks\"}"
+  },
+  "calibration_refusal_wrapped_as_completed": {
+    "success": true,
+    "calibration": "Cannot calibrate: required metadata and executor are unavailable.",
+    "message": "Calibration completed"
+  },
+  "legacy_route_tools_registered": {
+    "midas_identify_crystalline_phases": false,
+    "midas_analyze_diffraction_peaks": false
+  },
+  "large_directory": {
+    "actual_files": 501,
+    "returned_files": 500,
+    "response_fields": [
+      "path",
+      "parent",
+      "entries"
+    ]
+  },
+  "apexa_default_python_module_resolution": {
+    "midas_pdf": false,
+    "midas_defect": false,
+    "midas_grain_odf": false,
+    "midas_2d": false,
+    "midas_dfxm": false,
+    "midas_xaf": false,
+    "midas_pf_odf": false,
+    "midas_pink": false
+  }
+}

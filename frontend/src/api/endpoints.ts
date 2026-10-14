@@ -24,11 +24,13 @@ export async function uploadFile(file: File): Promise<{ file_id: string; filenam
   return { file_id: j.file_id, filename: j.filename, path: j.saved_path ?? j.path }
 }
 
-export async function sendChatHttp(message: string, threadId?: string): Promise<{ response: string }> {
+export async function sendChatHttp(message: string, threadId?: string, viewerContext?: Record<string, unknown>, model?: string): Promise<{ response: string; tool_results?: { tool: string; args?: Record<string, unknown>; result: string }[] }> {
   const form = new FormData()
   form.append('message', message)
   // Thread id → backend keeps per-thread conversation memory (HTTP fallback).
   if (threadId) form.append('thread_id', threadId)
+  if (model) form.append('model', model)
+  if (viewerContext) form.append('viewer_context', JSON.stringify(viewerContext))
   const res = await fetch(`${BASE}/api/chat`, { method: 'POST', body: form })
   if (!res.ok) throw new Error(`Chat failed: ${res.status}`)
   return res.json()
@@ -36,8 +38,8 @@ export async function sendChatHttp(message: string, threadId?: string): Promise<
 
 // Phase 2 endpoints
 
-export async function browseDirectory(path: string = '.'): Promise<BrowseResult> {
-  const res = await fetch(`${BASE}/api/browse?path=${encodeURIComponent(path)}`)
+export async function browseDirectory(path: string = '.', signal?: AbortSignal): Promise<BrowseResult> {
+  const res = await fetch(`${BASE}/api/browse?path=${encodeURIComponent(path)}`, { signal })
   if (!res.ok) throw new Error(`Browse failed: ${res.status}`)
   return res.json()
 }
@@ -52,7 +54,8 @@ export async function loadImageByPath(path: string): Promise<ImageLoadResult> {
 
 export async function adjustImage(
   fileId: string,
-  opts: { vmin?: number; vmax?: number; gamma?: number; colormap?: string }
+  opts: { vmin?: number; vmax?: number; gamma?: number; colormap?: string },
+  signal?: AbortSignal,
 ): Promise<ViewerAdjustResult> {
   const form = new FormData()
   form.append('file_id', fileId)
@@ -60,7 +63,7 @@ export async function adjustImage(
   if (opts.vmax != null) form.append('vmax', String(opts.vmax))
   if (opts.gamma != null) form.append('gamma', String(opts.gamma))
   if (opts.colormap != null) form.append('colormap', opts.colormap)
-  const res = await fetch(`${BASE}/api/viewer/adjust`, { method: 'POST', body: form })
+  const res = await fetch(`${BASE}/api/viewer/adjust`, { method: 'POST', body: form, signal })
   if (!res.ok) throw new Error(`Adjust failed: ${res.status}`)
   return res.json()
 }

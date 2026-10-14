@@ -6,11 +6,82 @@ replacing, `_infer_hedm_modality`), and that the shared calibrate/integrate
 phase never steals an FF dataset.
 """
 import importlib
+import asyncio
+import inspect
+import json
 
 import pytest
 
 mcs = importlib.import_module("midas_comprehensive_server")
 cr = importlib.import_module("capsule_registry")
+
+
+@pytest.mark.parametrize("contents,expected", [
+    ("RingThresh 1 100\nMinNrSpots 10\n", "run_ff_hedm_full_workflow"),
+    ("nScans 4\nRingThresh 1 100\n", "run_pf_hedm_workflow"),
+    ("nDistances 3\nGridSize 5\n", "run_nf_hedm_reconstruction"),
+])
+def test_recommendations_match_real_tool_signatures(tmp_path, contents, expected):
+    # Deliberately neutral names: modality must come from parameter CONTENTS.
+    (tmp_path / "Parameters.txt").write_text(contents)
+    (tmp_path / "sample.h5").write_bytes(b"placeholder")
+    report = json.loads(asyncio.run(mcs.recommend_workflow(str(tmp_path))))
+    assert report["status"] == "success"
+    rec = next(r for r in report["recommendations"] if r["tool"] == expected)
+    # bind catches unknown keys AND missing required tool arguments without
+    # executing a reconstruction or depending on installed MIDAS binaries.
+    inspect.signature(getattr(mcs, expected)).bind(**rec["params"])
+    if "refine_backend" in rec["params"]:
+        assert rec["params"]["refine_backend"] in ("python", "c-omp")
+
+
+def test_unknown_modality_does_not_default_to_ff(tmp_path):
+    (tmp_path / "Parameters.txt").write_text("Wavelength 0.2\nSpaceGroup 225\n")
+    (tmp_path / "sample.h5").write_bytes(b"placeholder")
+    report = json.loads(asyncio.run(mcs.recommend_workflow(str(tmp_path))))
+    recs = report["recommendations"]
+    assert not any(r["tool"] == "run_ff_hedm_full_workflow" for r in recs)
+    assert any(r["tool"] == "inspect_dataset_file" for r in recs)
+
+
+def test_hdf5_content_recognized_with_misleading_extension(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    path = tmp_path / "unlabelled.bin"
+    with h5py.File(path, "w") as h:
+        h.create_dataset("exchange/data", shape=(3, 8, 8), dtype="uint16")
+    info = mcs._classify_input(path)
+    assert info["kind"] == "hdf5_image"
+    assert info["format_evidence"] == "HDF5 signature"
+    assert info["data_location_guess"] == "exchange/data"
+
+
+def test_ambiguous_detectors_require_selection(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    path = tmp_path / "neutral.nxs"
+    with h5py.File(path, "w") as h:
+        for name in ("detector_a", "detector_b"):
+            h.create_dataset(f"entry/{name}/data", shape=(3, 8, 8), dtype="uint16")
+    report = json.loads(asyncio.run(mcs.recommend_workflow(str(path))))
+    assert report["input"]["dataset_ambiguous"]
+    assert report["input"]["data_location_guess"] is None
+    assert all("integrate" not in r["tool"] for r in report["recommendations"])
+
+
+@pytest.mark.parametrize("contents", ["metadata", "empty", "corrupt"])
+def test_hdf5_suffix_does_not_imply_detector_data(tmp_path, contents):
+    h5py = pytest.importorskip("h5py")
+    path = tmp_path / "neutral.h5"
+    if contents == "corrupt":
+        path.write_bytes(b"this is not HDF5")
+    else:
+        with h5py.File(path, "w") as h:
+            if contents == "metadata":
+                h.create_dataset("energy", data=65.0)
+            else:
+                h.create_dataset("exchange/data", shape=(0, 8, 8), dtype="uint16")
+    report = json.loads(asyncio.run(mcs.recommend_workflow(str(path))))
+    assert report["input"]["kind"] != "hdf5_image"
+    assert all("integrate" not in r["tool"] for r in report["recommendations"])
 
 
 def _touch(d, name, text=""):

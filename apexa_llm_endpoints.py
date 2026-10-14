@@ -27,9 +27,21 @@ Selected with ``APEXA_LLM_PRESET``:
     argo-proxy    local argo-proxy sidecar (default)      ANL username as key
     alcf-sophia   ALCF Inference Service, Sophia cluster  Globus token, per-user
     alcf-metis    ALCF Metis cluster                      REJECTED: no tool calling
-    openai        api.openai.com                          personal API key
-    anthropic     api.anthropic.com                       personal API key
-    custom        anything OpenAI-compatible (vLLM, …)    APEXA_LLM_API_KEY
+    openai        api.openai.com                          personal key (keyring)
+    openai-responses  api.openai.com /v1/responses        REJECTED: no provider yet
+    anthropic     api.anthropic.com (NATIVE wire)         personal key (keyring)
+    gemini        Google OpenAI-compatibility layer       personal key (keyring)
+    custom        anything OpenAI-compatible (vLLM, …)    personal key (keyring)
+    ollama        a model on the user's own machine       none needed
+
+Each preset also declares the ``wire`` it speaks, so ``select_provider()`` can
+follow the endpoint rather than a separate env var that can disagree with it.
+Only ``anthropic`` is not OpenAI-shaped; Gemini rides Google's compatibility
+layer and so needs no provider of its own.
+
+``apexa_profiles`` sits above this module and bundles a preset with a model, a
+network tier, and a credential, so a user switches ONE name rather than three
+environment variables that must agree.
 """
 from __future__ import annotations
 
@@ -62,6 +74,67 @@ def _default_token_cmd() -> str:
     return f"{shlex.quote(sys.executable)} {shlex.quote(script)} get_access_token"
 
 
+# ── OS keyring (optional dependency) ─────────────────────────────────────────
+# A personal API key must not go in ``.env``: on a beamline host that file lives
+# on shared storage and lands in backups, and the same file is copied between
+# users during setup. ``keyring`` routes to the macOS Keychain, Windows
+# Credential Manager, or Secret Service instead.
+#
+# It is an OPTIONAL dependency and every call degrades to "no stored key", so an
+# existing beamline install that never installed it keeps working unchanged on
+# the ``APEXA_LLM_API_KEY`` path.
+KEYRING_SERVICE = "apexa"
+
+
+def keyring_available() -> bool:
+    try:
+        import keyring  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def keyring_get(account: str) -> str:
+    """Stored secret for ``account``, or "" when absent/unavailable.
+
+    Never raises: a locked, misconfigured, or missing backend must not take
+    APEXA down mid-experiment — the caller falls through to the env var.
+    """
+    try:
+        import keyring
+    except Exception:
+        return ""
+    try:
+        return (keyring.get_password(KEYRING_SERVICE, account) or "").strip()
+    except Exception:
+        return ""
+
+
+def keyring_set(account: str, secret: str) -> bool:
+    """Store a secret. Returns False when no backend is usable."""
+    try:
+        import keyring
+    except Exception:
+        return False
+    try:
+        keyring.set_password(KEYRING_SERVICE, account, secret)
+        return True
+    except Exception:
+        return False
+
+
+def keyring_delete(account: str) -> bool:
+    try:
+        import keyring
+    except Exception:
+        return False
+    try:
+        keyring.delete_password(KEYRING_SERVICE, account)
+        return True
+    except Exception:
+        return False
+
+
 class EndpointRejected(RuntimeError):
     """The endpoint cannot support APEXA (e.g. no tool calling)."""
 
@@ -82,6 +155,34 @@ class OpenAIEndpoint:
     #: route, so probing one just wastes a round trip and emits a scary warning
     #: for an entirely expected condition. Validate against ALCF_CANDIDATES instead.
     lists_models: bool = True
+    #: Which HTTP protocol the endpoint speaks. ``openai`` is the OpenAI
+    #: ``/v1/chat/completions`` shape (also what Google's compatibility layer and
+    #: every self-hosted vLLM/Ollama serve); ``anthropic`` is the native
+    #: ``/v1/messages`` shape, which is NOT OpenAI-compatible and needs its own
+    #: provider. ``select_provider()`` dispatches on this, so the wire travels
+    #: with the endpoint instead of living in a separate env var that can disagree.
+    wire: str = "openai"
+    #: True ⇒ the credential is a personal secret looked up in the OS keyring.
+    #: Left False for facility endpoints so a stray stored key can never shadow
+    #: the ANL-username or Globus-token conventions they rely on.
+    uses_keyring: bool = False
+    #: Endpoint-specific env var holding the credential (e.g. ``AMSC_TOKEN``).
+    #: Checked before the keyring, so a gateway that already documents its own
+    #: variable keeps working without the user re-entering the secret anywhere.
+    env_key: str = ""
+    #: How the ANTHROPIC wire presents the credential. ``x-api-key`` is what
+    #: api.anthropic.com wants; gateways fronting the same wire generally want
+    #: ``bearer``. Irrelevant on the openai wire, where the OpenAI client builds
+    #: the Authorization header itself.
+    auth_style: str = "x-api-key"
+    #: Default model when the profile does not name one. Model ids are
+    #: vendor-specific — an Argo id like ``claudeopus5`` means nothing to
+    #: api.anthropic.com — so each preset carries its own.
+    default_model: str = ""
+    #: Glob proving a ``token_cmd`` credential has been obtained at least once.
+    #: Lets ``has_credential()`` answer truthfully for expiring credentials
+    #: without paying for the Globus round trip that ``token_cmd`` itself costs.
+    token_file_glob: str = ""
     #: Operator-facing note surfaced at startup.
     notes: str = "Commercial OpenAI API — needs a personal API key and outbound egress."
 
@@ -90,18 +191,57 @@ class OpenAIEndpoint:
     def resolve_key(self, username: str = "") -> str:
         """Credential for this request.
 
-        Precedence: ``APEXA_LLM_API_KEY`` → preset ``api_key`` → ``token_cmd``
-        output (cached) → ANL username (the argo-proxy convention).
+        Precedence: ``APEXA_LLM_API_KEY`` → OS keyring (personal endpoints only)
+        → preset ``api_key`` → ``token_cmd`` output (cached) → ANL username (the
+        argo-proxy convention).
+
+        The env var stays first so an operator can always override without
+        touching the keyring — the same "never boxed in" rule the presets follow.
         """
         explicit = (os.environ.get("APEXA_LLM_API_KEY") or "").strip()
         if explicit:
             return explicit
+        if self.env_key:
+            from_env = (os.environ.get(self.env_key) or "").strip()
+            if from_env:
+                return from_env
+        if self.uses_keyring:
+            stored = keyring_get(self.name)
+            if stored:
+                return stored
         if self.api_key:
             return self.api_key
         cmd = (os.environ.get("APEXA_LLM_TOKEN_CMD") or self.token_cmd or "").strip()
         if cmd:
             return self._token_from_cmd(cmd)
         return (username or "apexa").strip()
+
+    def has_credential(self, username: str = "") -> bool:
+        """Whether this endpoint can produce a credential without prompting.
+
+        Used by profile auto-selection to skip an endpoint the user has not set
+        up yet, rather than selecting it and failing at the first query. Never
+        raises and never shells out — running ``token_cmd`` here would put a
+        Globus round trip in the selection path. Instead, an endpoint that
+        authenticates by token command is credentialled only if its token file
+        already exists, which is a cheap stat and is the truthful answer: a user
+        who has never run ``inference_auth_token.py authenticate`` has no ALCF
+        credential, and auto-selection must not pick ALCF for them.
+        """
+        if (os.environ.get("APEXA_LLM_API_KEY") or "").strip():
+            return True
+        if self.env_key and (os.environ.get(self.env_key) or "").strip():
+            return True
+        if self.uses_keyring:
+            return bool(keyring_get(self.name))
+        if self.api_key:
+            return True
+        if (os.environ.get("APEXA_LLM_TOKEN_CMD") or self.token_cmd or "").strip():
+            if self.token_file_glob:
+                from glob import glob
+                return bool(glob(os.path.expanduser(self.token_file_glob)))
+            return True
+        return bool((username or "").strip())
 
     @staticmethod
     def _token_from_cmd(cmd: str) -> str:
@@ -165,6 +305,9 @@ class ALCFSophiaEndpoint(OpenAIEndpoint):
     name: str = "alcf-sophia"
     base_url: str = "https://inference-api.alcf.anl.gov/resource_server/sophia/vllm/v1"
     token_cmd: str = field(default_factory=_default_token_cmd)
+    # Mirrors inference_auth_token.TOKENS_PATH (~/.globus/app/<client>/<app>/tokens.json).
+    # Globbed rather than imported so this stays free of the optional globus-sdk.
+    token_file_glob: str = "~/.globus/app/*/*/tokens.json"
     lists_models: bool = False
     tool_calling: bool = True
     notes: str = ("ALCF Inference Service (Sophia). Per-user Globus identity; tokens "
@@ -185,6 +328,9 @@ class ALCFMetisEndpoint(OpenAIEndpoint):
     name: str = "alcf-metis"
     base_url: str = "https://inference-api.alcf.anl.gov/resource_server/metis/api/v1"
     token_cmd: str = field(default_factory=_default_token_cmd)
+    # Mirrors inference_auth_token.TOKENS_PATH (~/.globus/app/<client>/<app>/tokens.json).
+    # Globbed rather than imported so this stays free of the optional globus-sdk.
+    token_file_glob: str = "~/.globus/app/*/*/tokens.json"
     lists_models: bool = False
     tool_calling: bool = False
     notes: str = "Metis does not support tool calling — use alcf-sophia instead."
@@ -207,6 +353,9 @@ class ALCFMinervaEndpoint(OpenAIEndpoint):
     name: str = "alcf-minerva"
     base_url: str = "https://inference-api.alcf.anl.gov/resource_server/minerva/api/v1"
     token_cmd: str = field(default_factory=_default_token_cmd)
+    # Mirrors inference_auth_token.TOKENS_PATH (~/.globus/app/<client>/<app>/tokens.json).
+    # Globbed rather than imported so this stays free of the optional globus-sdk.
+    token_file_glob: str = "~/.globus/app/*/*/tokens.json"
     lists_models: bool = False
     tool_calling: bool = True   # CONFIRMED by measurement (see notes)
     notes: str = ("ALCF Minerva (B200). Always-hot. ALCF publishes no T flag for "
@@ -217,32 +366,169 @@ class ALCFMinervaEndpoint(OpenAIEndpoint):
 
 
 @dataclass
+class OpenAIAPIEndpoint(OpenAIEndpoint):
+    """Commercial OpenAI API with a personal key.
+
+    Split from the ``OpenAIEndpoint`` base so that "the shape every
+    OpenAI-compatible server speaks" and "the specific commercial endpoint at
+    api.openai.com" are different things. Only the latter should reach for a
+    personal key in the keyring; a facility preset that inherited that would let
+    a stray stored secret shadow the ANL-username convention it depends on.
+    """
+
+    name: str = "openai"
+    base_url: str = "https://api.openai.com/v1"
+    uses_keyring: bool = True
+    default_model: str = "gpt-5.1"
+    notes: str = ("Commercial OpenAI API — personal pay-per-token key (a ChatGPT "
+                  "subscription is NOT API access) and outbound egress. Review data "
+                  "governance before sending beamline paths to a third party.")
+
+
+@dataclass
+class OpenAIResponsesEndpoint(OpenAIAPIEndpoint):
+    """OpenAI's ``/v1/responses`` wire — the one Codex speaks.
+
+    Opt-in, not the default: chat-completions serves the same models, so this
+    exists for parity with Codex-style clients and for gateways that expose only
+    the Responses surface. Needs a provider that speaks it; until then
+    ``active_endpoint()`` rejects it rather than letting the OpenAI
+    chat-completions client POST to the wrong route and fail obscurely.
+    """
+
+    name: str = "openai-responses"
+    wire: str = "responses"
+    notes: str = ("OpenAI /v1/responses (Codex wire). Verified live; requires a "
+                  "Responses-aware provider, which APEXA does not ship yet.")
+
+
+@dataclass
 class AnthropicEndpoint(OpenAIEndpoint):
+    """Commercial Anthropic API — **native wire, not OpenAI-compatible**.
+
+    ``api.anthropic.com`` serves ``/v1/messages`` with ``x-api-key`` and an
+    ``anthropic-version`` header; it has no ``/v1/chat/completions``. Before this
+    preset carried ``wire="anthropic"`` it was consumed by the OpenAI client and
+    could not have worked. ``base_url`` is therefore the host ROOT — the native
+    provider appends the path itself.
+    """
+
     name: str = "anthropic"
-    base_url: str = "https://api.anthropic.com/v1"
+    base_url: str = "https://api.anthropic.com"
+    wire: str = "anthropic"
+    uses_keyring: bool = True
+    lists_models: bool = False
+    default_model: str = "claude-sonnet-5"
     notes: str = ("Commercial Anthropic API — needs a personal API key (a Claude Pro "
                   "subscription is NOT API access) and outbound egress. Review data "
                   "governance before sending beamline paths to a third party.")
 
 
 @dataclass
+class GeminiEndpoint(OpenAIEndpoint):
+    """Google Gemini through its OpenAI-**compatibility** layer.
+
+    Google publishes an OpenAI-shaped surface at ``/v1beta/openai``, so Gemini
+    needs no new provider — only a base URL and key through the existing client.
+    Confirmed live (the route answers 400 on a malformed body rather than 404).
+
+    Tool calling crosses a translation shim here, which is exactly the kind of
+    claim this file insists on measuring rather than trusting — see the Minerva
+    note above. Qualify with ``scripts/profile_smoke.py`` before beamline use.
+    """
+
+    name: str = "gemini"
+    base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    uses_keyring: bool = True
+    default_model: str = "gemini-2.5-flash"
+    notes: str = ("Google Gemini via its OpenAI-compatibility layer. Personal API "
+                  "key (aistudio.google.com) and outbound egress. Tool calling goes "
+                  "through a translation shim — qualify it before relying on it.")
+
+
+@dataclass
+class MAGEndpoint(OpenAIEndpoint):
+    """DOE American Science Cloud — Model Access Gateway.
+
+    An institutional gateway that fronts the **Anthropic wire** (as well as an
+    OpenAI one), so it reuses the native provider rather than needing its own.
+    It differs from api.anthropic.com in exactly one respect that matters here:
+    the credential is presented as a bearer token, not ``x-api-key`` — which is
+    why ``auth_style`` exists.
+
+    Credential is the AmSC Personal Access Token, read from ``AMSC_TOKEN`` (the
+    variable AmSC's own documentation tells users to set), falling back to the
+    keyring. PATs are short-lived; an expired one returns 401.
+
+    Model names are MAG's own aliases (``claude-opus``, ``claude-sonnet``,
+    ``claude-haiku``), NOT vendor version strings — a pinned version that MAG
+    does not serve comes back as "model not found".
+    """
+
+    name: str = "mag"
+    base_url: str = "https://mag.genesis.americansciencecloud.org"
+    wire: str = "anthropic"
+    auth_style: str = "bearer"
+    env_key: str = "AMSC_TOKEN"
+    uses_keyring: bool = True
+    lists_models: bool = True
+    default_model: str = "claude-opus"
+    notes: str = ("AmSC Model Access Gateway. Billed to your AmSC project "
+                  "allocation. Inference leaves ANL — review data governance.")
+
+
+@dataclass
 class CustomEndpoint(OpenAIEndpoint):
-    """Any other OpenAI-compatible server (self-hosted vLLM, Ollama, …)."""
+    """Any other OpenAI-compatible server (institutional gateway, vLLM, …).
+
+    This is the institutional path: another lab's or university's gateway, Azure
+    OpenAI, LBNL CBorg. Point ``APEXA_LLM_BASE_URL`` at it and store the key in
+    the keyring.
+    """
 
     name: str = "custom"
     base_url: str = "http://127.0.0.1:8000/v1"
+    uses_keyring: bool = True
     notes: str = "Custom OpenAI-compatible endpoint from APEXA_LLM_BASE_URL."
 
 
+@dataclass
+class OllamaEndpoint(OpenAIEndpoint):
+    """A model running on the user's own machine, via Ollama's OpenAI surface.
+
+    The only profile that works at the ``data`` tier, and the only one that sends
+    nothing off the host — which makes it the right answer when beamline data
+    governance forbids a third party, regardless of what the network allows.
+    Ollama ignores the key, so no credential is needed.
+    """
+
+    name: str = "ollama"
+    base_url: str = "http://127.0.0.1:11434/v1"
+    api_key: Optional[str] = "ollama"   # ignored by the server; satisfies clients
+    default_model: str = "llama3.1"
+    notes: str = ("Local Ollama. No data leaves the machine and no credential is "
+                  "needed. Small local models often tool-call poorly — qualify first.")
+
+
 PRESETS: dict[str, type[OpenAIEndpoint]] = {
-    "argo-proxy":   ArgoProxyEndpoint,
-    "alcf-sophia":  ALCFSophiaEndpoint,
-    "alcf-minerva": ALCFMinervaEndpoint,
-    "alcf-metis":   ALCFMetisEndpoint,
-    "openai":       OpenAIEndpoint,
-    "anthropic":    AnthropicEndpoint,
-    "custom":       CustomEndpoint,
+    "argo-proxy":       ArgoProxyEndpoint,
+    "alcf-sophia":      ALCFSophiaEndpoint,
+    "alcf-minerva":     ALCFMinervaEndpoint,
+    "alcf-metis":       ALCFMetisEndpoint,
+    "openai":           OpenAIAPIEndpoint,
+    "openai-responses": OpenAIResponsesEndpoint,
+    "anthropic":        AnthropicEndpoint,
+    "gemini":           GeminiEndpoint,
+    "mag":              MAGEndpoint,
+    "custom":           CustomEndpoint,
+    "ollama":           OllamaEndpoint,
 }
+
+#: Wires APEXA can actually drive today. ``responses`` is declared (so the
+#: preset can exist and be named) but has no provider, so it is refused at
+#: configuration time rather than at the first query — the same bargain
+#: ``tool_calling`` strikes for alcf-metis.
+SUPPORTED_WIRES = ("openai", "anthropic")
 
 DEFAULT_PRESET = "argo-proxy"
 
@@ -348,6 +634,11 @@ def active_endpoint() -> OpenAIEndpoint:
         raise EndpointRejected(
             f"{ep.name} cannot be used by APEXA: {ep.notes} "
             f"Every APEXA capability is a tool call."
+        )
+    if ep.wire not in SUPPORTED_WIRES:
+        raise EndpointRejected(
+            f"{ep.name} speaks the {ep.wire!r} wire, which APEXA has no provider "
+            f"for (supported: {', '.join(SUPPORTED_WIRES)}). {ep.notes}"
         )
     return ep
 

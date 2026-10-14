@@ -107,6 +107,40 @@ EOF
 
 chmod 600 .env
 
+# ── Off-site access (optional) ───────────────────────────────────────────────
+# Beamline users increasingly need APEXA away from the facility, where the
+# shared ANL service identity is unreachable. A personal key is stored in the OS
+# KEYRING, never in .env: this file lives on shared storage, is world-readable
+# until the chmod above, and gets copied between users during setup.
+echo ""
+echo "  Off-site access (optional)"
+echo "     Away from ANL, APEXA can use an institutional gateway, your own API"
+echo "     key, or a local model. It auto-detects which is reachable."
+echo "     Note: a Claude Pro / ChatGPT Plus subscription is NOT API access —"
+echo "     personal profiles need a pay-per-token key."
+read -p "     Store a personal API key now? (y/N): " -r SETUP_KEY
+if [[ "$SETUP_KEY" =~ ^[Yy] ]]; then
+    echo "     Presets: anthropic  openai  gemini  custom (institutional)  mag"
+    read -p "     Preset: " -r KEY_PRESET
+    read -rsp "     API key (hidden): " KEY_VALUE
+    echo ""
+    if [ -n "$KEY_PRESET" ] && [ -n "$KEY_VALUE" ]; then
+        APEXA_SETUP_KEY="$KEY_VALUE" APEXA_SETUP_PRESET="$KEY_PRESET" uv run python -c "
+import os, sys
+sys.path.insert(0, '.')
+from apexa_llm_endpoints import PRESETS, keyring_set
+p = os.environ['APEXA_SETUP_PRESET'].strip()
+if p not in PRESETS:
+    sys.exit(f'     Unknown preset {p!r} — nothing stored.')
+print('     Stored in the OS keyring.' if keyring_set(p, os.environ['APEXA_SETUP_KEY'])
+      else '     No keyring backend — export APEXA_LLM_API_KEY instead.')
+" || echo "     Could not store the key; export APEXA_LLM_API_KEY instead."
+    else
+        echo "     Skipped (preset or key empty)."
+    fi
+    unset KEY_VALUE
+fi
+
 echo ""
 echo "  Setup complete!"
 echo "    Username: $ANL_USERNAME"

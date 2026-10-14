@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { sendFeedback } from '../../api/endpoints'
 import { FeedbackDialog } from '../feedback/FeedbackDialog'
 import type { ChatMessage } from '@/api/types'
@@ -65,7 +65,7 @@ const mdComponents: Components = {
   hr: () => <hr className="my-3 border-[var(--apexa-border)]" />,
 }
 
-export function MessageBubble({ message }: { message: ChatMessage }) {
+export const MessageBubble = memo(function MessageBubble({ message }: { message: ChatMessage }) {
   // One click is the whole interaction for a rating: anything more and people
   // stop rating. The dialog is reserved for a report, where prose earns its cost.
   const [rated, setRated] = useState<'up' | 'down' | null>(null)
@@ -96,7 +96,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
         </div>
       )}
 
-      <div className={`rounded-2xl transition-all ${
+      <div className={`min-w-0 rounded-2xl transition-all ${
         isUser
           ? 'max-w-[80%] bg-[var(--apexa-chat-user)]'
           : 'flex-1 min-w-0 bg-[var(--apexa-chat-assistant)]'
@@ -110,7 +110,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
         color: 'var(--apexa-text)',
       }}>
         {message.content && (
-          <div className="px-4 py-3 text-[13px] leading-relaxed">
+          <div className="px-4 py-3 text-sm leading-relaxed [overflow-wrap:anywhere]">
             {isUser ? (
               <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                 {message.content}
@@ -132,7 +132,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
         )}
 
         {(message.artifacts?.length || !isUser) && (
-          <div className="flex gap-1 px-4 pb-2.5 pt-1 border-t border-[var(--apexa-border)]/50">
+          <div className="flex flex-wrap gap-1 px-4 pb-2.5 pt-1 border-t border-[var(--apexa-border)]/50">
             {message.artifacts && message.artifacts.length > 0 && (
               <ActionButton onClick={() => setActive(message.artifacts![0].id)} label="View in panel">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -196,7 +196,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
       )}
     </div>
   )
-}
+})
 
 function ActionButton({ onClick, label, children, title }: { onClick: () => void; label: string; children: React.ReactNode; title?: string }) {
   return (

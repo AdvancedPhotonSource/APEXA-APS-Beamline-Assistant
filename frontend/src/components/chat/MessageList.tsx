@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import { useChatStore } from '@/stores/chatStore'
 import { MessageBubble } from './MessageBubble'
 import { TypingIndicator } from './TypingIndicator'
+import { useVizStore } from '@/stores/vizStore'
+import { suggestedWorkflows, workflowPrompt } from '@/lib/workflowCatalog'
 
 export function MessageList() {
   const messages = useChatStore((s) => s.messages)
@@ -17,9 +19,8 @@ export function MessageList() {
   }
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto' }}>
-      {/* Centered, max-width conversation column (ChatGPT/Claude layout) */}
-      <div className="mx-auto w-full max-w-3xl">
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+      <div className="w-full min-w-0">
         {messages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
         ))}
@@ -32,18 +33,12 @@ export function MessageList() {
 
 function WelcomeScreen() {
   const sendMessage = useChatStore((s) => s.sendMessage)
-
-  const examples = [
-    { icon: '\uD83D\uDD2C', text: 'List files in the current directory', cat: 'Files' },
-    { icon: '\uD83D\uDCD0', text: 'Calculate d-spacing for CeO2 at 61.332 keV', cat: 'Calculate' },
-    { icon: '\uD83C\uDFAF', text: 'Calibrate detector using CeO2 standard', cat: 'Calibrate' },
-    { icon: '\uD83D\uDCCA', text: 'Integrate the diffraction image to 1D', cat: 'Integrate' },
-    { icon: '\uD83E\uDDE0', text: 'What is HEDM and how does it work?', cat: 'Learn' },
-    { icon: '\u2699\uFE0F', text: 'Show motor positions', cat: 'Motors' },
-  ]
+  const selectedType = useVizStore(s => s.artifacts.find(a => a.id === s.activeId)?.type)
+  const examples = suggestedWorkflows(selectedType)
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center px-8 py-12 animate-fade-in">
+    <div className="apexa-chat-welcome flex-1 min-h-0 overflow-y-auto px-5 py-6 animate-fade-in">
+      <div className="flex min-h-full flex-col items-center justify-center">
       <div className="relative mb-6">
         <div className="text-[56px] font-extrabold tracking-tight"
           style={{
@@ -58,15 +53,15 @@ function WelcomeScreen() {
       </div>
 
       <p className="text-sm text-center max-w-md mb-8 leading-relaxed" style={{ color: 'var(--apexa-text-muted)' }}>
-        Your AI assistant for synchrotron beamline experiments.
-        Analyze diffraction data, calibrate detectors, run HEDM workflows, and control motors.
+        Open your data, inspect its metadata, then choose an analysis.
+        Images, structures and results appear in the Canvas beside this conversation.
       </p>
 
-      <div className="grid grid-cols-2 gap-2.5 max-w-lg w-full">
+      <div className="apexa-chat-examples grid gap-2.5 max-w-4xl w-full">
         {examples.map((ex, i) => (
           <button
-            key={ex.text}
-            onClick={() => sendMessage(ex.text)}
+            key={ex.id}
+            onClick={() => sendMessage(workflowPrompt(ex))}
             className="group text-left p-3.5 rounded-xl border transition-all duration-200 animate-fade-in"
             style={{
               animationDelay: `${i * 60}ms`,
@@ -87,23 +82,19 @@ function WelcomeScreen() {
             }}
           >
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-base">{ex.icon}</span>
-              <span className="text-[9px] font-semibold uppercase tracking-wider opacity-40">{ex.cat}</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider opacity-70">{ex.inspectOnly ? 'Inspect / review' : 'Prepare a plan'}</span>
             </div>
             <div className="text-[12px] leading-snug opacity-80 group-hover:opacity-100 transition-opacity">
-              {ex.text}
+              <span className="block font-semibold mb-1">{ex.name}</span>
+              {ex.description}
             </div>
           </button>
         ))}
       </div>
 
-      <div className="mt-8 flex items-center gap-4 text-[10px]" style={{ color: 'var(--apexa-text-muted)' }}>
-        <span className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/60" />
-          Powered by Argo AI Gateway
-        </span>
-        <span className="opacity-30">|</span>
-        <span>Enter to send, Shift+Enter for new line</span>
+      <div className="mt-6 text-center text-[11px]" style={{ color: 'var(--apexa-text-muted)' }}>
+        Open Data to browse files, Analyze for more techniques, or attach a file below.
+      </div>
       </div>
     </div>
   )

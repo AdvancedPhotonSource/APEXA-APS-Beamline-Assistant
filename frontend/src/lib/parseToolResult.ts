@@ -1,4 +1,5 @@
 import type { ToolResult, VizArtifact } from '@/api/types'
+import { reportFileArtifact } from './reportArtifacts.ts'
 
 export function parseToolResults(text: string): ToolResult[] {
   const results: ToolResult[] = []
@@ -62,8 +63,9 @@ function inferTool(data: Record<string, unknown>): string {
 }
 
 function inferStatus(data: Record<string, unknown>): ToolResult['status'] {
-  if (data.status === 'error' || data.success === false || data.error) return 'error'
-  if (data.status === 'completed' || data.success === true) return 'completed'
+  if (data.status === 'error' || data.status === 'failed' || data.success === false || data.error) return 'error'
+  if (data.status === 'running' || data.status === 'submitted' || data.status === 'partial' || data.status === 'unknown') return data.status
+  if (data.status === 'completed' || data.status === 'complete' || data.success === true) return 'completed'
   if (data.status === 'warning') return 'warning'
   return 'success'
 }
@@ -106,15 +108,62 @@ export function parseDirectToolResult(tool: string, resultJson: string): ToolRes
   return null
 }
 
+// Content identity is stable across live events, CLI import and page reload.
+// Identical tool output reuses a view; a changed result creates a new one.
+function resultIdentity(result: ToolResult): string {
+  const text = JSON.stringify([result.tool, result.data])
+  let a = 2166136261, b = 5381
+  for (let i = 0; i < text.length; i++) {
+    a = Math.imul(a ^ text.charCodeAt(i), 16777619)
+    b = Math.imul(b, 33) ^ text.charCodeAt(i)
+  }
+  return `${(a >>> 0).toString(36)}-${(b >>> 0).toString(36)}`
+}
+
 export function extractArtifacts(results: ToolResult[], messageId: string): VizArtifact[] {
   const artifacts: VizArtifact[] = []
 
   for (const result of results) {
+    const key = resultIdentity(result)
+    const toolName = result.tool.split(':').pop()
+    if (toolName === 'generate_ff_reconstruction_report' && typeof result.data.report_html === 'string'
+        && (result.status === 'success' || result.status === 'completed')) {
+      artifacts.push({ ...reportFileArtifact(result.data.report_html, messageId,
+          result.data.location === 'remote' ? 'remote' : 'local', 'FF reconstruction report'),
+        provenance: { inputs: [String(result.data.run_dir ?? result.data.report_html)], tool: result.tool, timestamp: Date.now() } })
+    }
+    // Native canvas requests come from a tool that validated the input contents.
+    const canvas = result.data.canvas as { schema_version?: number; type?: string; title?: string; data?: { path?: string; [key: string]: unknown } } | undefined
+    if (toolName === 'open_science_view' && (result.status === 'success' || result.status === 'completed')
+        && canvas?.schema_version === 1 && (canvas.type === 'structure' || canvas.type === 'sequence' || canvas.type === 'html-report')
+        && typeof canvas.data?.path === 'string') {
+      artifacts.push({ id: canvas.type === 'html-report'
+          ? reportFileArtifact(canvas.data.path, messageId, canvas.data.location === 'remote' ? 'remote' : 'local').id
+          : `canvas-${canvas.type}-${canvas.data.path}`, type: canvas.type,
+        title: canvas.title ?? canvas.data.path, data: canvas.data, sourceMessageId: messageId,
+        provenance: { inputs: [canvas.data.path], tool: result.tool, timestamp: Date.now() } })
+    }
+    // MP and COD have different response schemas; both supply a saved CIF.
+    // The viewer parses that file, including symmetry, before displaying sites.
+    if (result.status !== 'error' && result.status !== 'failed') {
+      const entries = toolName === 'fetch_cif_from_mp' ? (result.data.files ?? result.data.results)
+        : toolName === 'propose_structures' ? result.data.candidates : undefined
+      if (Array.isArray(entries)) {
+        for (const entry of entries) {
+          const path = entry.cif_file ?? entry.cif
+          if (typeof path !== 'string' || !path) continue
+          const source = toolName === 'fetch_cif_from_mp' ? `Materials Project ${entry.material_id ?? ''}` : `COD ${entry.cod_id ?? ''}`
+          artifacts.push({ id: `structure-${source}-${path}`, type: 'structure', title: source.trim(),
+            data: { path, source }, sourceMessageId: messageId,
+            provenance: { inputs: [path], tool: result.tool, timestamp: Date.now() } })
+        }
+      }
+    }
     if (result.tool === 'midas_auto_calibrate' && result.status !== 'error') {
       const calParams = (result.data.calibrated_parameters ?? result.data) as Record<string, unknown>
       if (calParams && Object.keys(calParams).length > 0) {
         artifacts.push({
-          id: `cal-${Date.now()}`,
+          id: `cal-${key}`,
           type: 'table',
           title: 'Calibration Parameters',
           data: calParams,
@@ -125,7 +174,7 @@ export function extractArtifacts(results: ToolResult[], messageId: string): VizA
 
     if (result.tool === 'xray_calculate') {
       artifacts.push({
-        id: `xray-${Date.now()}`,
+        id: `xray-${key}`,
         type: 'table',
         title: 'X-ray Calculation',
         data: result.data,
@@ -135,7 +184,7 @@ export function extractArtifacts(results: ToolResult[], messageId: string): VizA
 
     if (result.tool === 'list_directory') {
       artifacts.push({
-        id: `files-${Date.now()}`,
+        id: `files-${key}`,
         type: 'table',
         title: 'Directory Listing',
         data: result.data,
@@ -147,21 +196,28 @@ export function extractArtifacts(results: ToolResult[], messageId: string): VizA
     // spec it rendered from, so the Canvas shows the same report live -- with
     // the actions as buttons rather than copy-to-clipboard, since in here
     // there is something to call back to.
-    if (result.data.report_spec && typeof result.data.report_spec === 'object') {
+    if ((result.status === 'success' || result.status === 'completed')
+        && result.data.report_spec && typeof result.data.report_spec === 'object' && !Array.isArray(result.data.report_spec)) {
       const spec = result.data.report_spec as Record<string, unknown>
       artifacts.push({
-        id: `report-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: typeof result.data.report === 'string'
+          ? `report-spec-${result.data.location === 'remote' ? 'remote' : 'local'}-${result.data.report}`
+          : `report-${key}`,
         type: 'report',
         title: (spec.title as string) ?? 'Run report',
         data: spec,
         sourceMessageId: messageId,
+        provenance: { inputs: [String(result.data.report ?? spec.source_path ?? '')].filter(Boolean), tool: result.tool },
       })
+    } else if (toolName === 'generate_run_report' && (result.status === 'success' || result.status === 'completed')
+        && typeof result.data.report === 'string') {
+      artifacts.push(reportFileArtifact(result.data.report, messageId, result.data.location === 'remote' ? 'remote' : 'local'))
     }
 
     // Viz API results (plotly data from /api/viz/* endpoints or run_midas_viewer)
     if (result.data.plotly && typeof result.data.plotly === 'object') {
       artifacts.push({
-        id: `viz-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: `viz-${key}`,
         type: 'plotly',
         title: (result.data.title as string) ?? 'MIDAS Visualization',
         data: result.data.plotly,
@@ -170,9 +226,9 @@ export function extractArtifacts(results: ToolResult[], messageId: string): VizA
       // Also add any tables from the viz result
       const tables = result.data.tables as Array<{ title: string; data: unknown }> | undefined
       if (tables) {
-        for (const tbl of tables) {
+        for (const [index, tbl] of tables.entries()) {
           artifacts.push({
-            id: `viztbl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            id: `viztbl-${key}-${index}`,
             type: 'table',
             title: tbl.title,
             data: tbl.data,

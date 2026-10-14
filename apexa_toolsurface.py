@@ -58,6 +58,7 @@ CORE_TOOLS: tuple[str, ...] = (
     "get_file_info",
     "run_command",
     "run_remote_command",
+    "open_science_view",
     # midas server — discovery / orientation
     "recommend_workflow",
     "query_hedm_knowledge",

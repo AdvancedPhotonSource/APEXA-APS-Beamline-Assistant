@@ -422,6 +422,26 @@ def _get_blocked_commands(command: str) -> list:
 # =============================================================================
 
 @mcp.tool()
+def open_science_view(path: str, kind: str = "auto", dataset: str = "", pattern: str = "*") -> str:
+    """Open a local CIF, diffraction sequence, or HTML report in the Web UI canvas.
+
+    Use this when asked to show, visualize, or display a CIF, detector image,
+    image sequence, or existing report. Returns a native canvas artifact after validating the
+    file contents; no HTML generation or desktop/browser launch is needed.
+    path: absolute path on the APEXA host (or ~); a file or detector directory.
+    kind: auto, structure (CIF), sequence (detector data), or report (HTML).
+    dataset: explicit HDF5 dataset path if the detector selection is ambiguous.
+    pattern: sample-only glob for a detector directory (default *).
+    Local data only; remote detector paths must use the configured SSH viewer.
+    CLI callers receive the artifact description without launching a window.
+    """
+    try:
+        from apexa_canvas import science_view
+        return json.dumps(science_view(path, kind, dataset, pattern))
+    except Exception as exc:
+        return json.dumps({"tool": "open_science_view", "status": "error", "error": str(exc)})
+
+@mcp.tool()
 async def list_directory(path: str = ".", show_hidden: bool = False, details: bool = False) -> str:
     """List contents of a directory.
 

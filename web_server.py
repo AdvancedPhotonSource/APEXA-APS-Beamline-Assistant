@@ -13,6 +13,8 @@ import sys
 import tempfile
 import io
 import base64
+import time
+from contextlib import asynccontextmanager
 
 # Force UTF-8 stdio so the server runs cleanly on Windows, whose console defaults
 # to cp1252 and raises UnicodeEncodeError on the ⚠/°/µ/→/✓ status prints.
@@ -39,7 +41,32 @@ import uvicorn
 # Import your MCP client
 from argo_mcp_client import APEXAClient
 
-app = FastAPI(title="Beamline Assistant API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app):
+    await initialize_mcp_client()
+    try:
+        yield
+    finally:
+        if mcp_client:
+            await mcp_client.cleanup()
+
+
+app = FastAPI(title="Beamline Assistant API", version="0.1.0", lifespan=lifespan)
+from apexa_session_api import router as session_router
+app.include_router(session_router)
+from apexa_viewer_api import router as science_viewer_router
+# CIFs fetched by local MP/COD tools remain local even when detector data is remote.
+app.include_router(science_viewer_router, prefix="/local")
+if os.environ.get("APEXA_SCIENCE_BASE_URL"):
+    from apexa_science_gateway import science_gateway
+    app.include_router(science_gateway(os.environ["APEXA_SCIENCE_BASE_URL"]))
+    app.include_router(science_gateway(os.environ["APEXA_SCIENCE_BASE_URL"]), prefix="/remote")
+else:
+    app.include_router(science_viewer_router)
+
+    @app.get("/remote/api/science/report")
+    def unconfigured_remote_report():
+        raise HTTPException(503, "No remote science service is configured. Configure APEXA_SCIENCE_BASE_URL and its SSH tunnel, or choose the local APEXA host.")
 
 # CORS middleware for web UI
 app.add_middleware(
@@ -105,16 +132,13 @@ def load_diffraction_image(file_path: str) -> np.ndarray:
 
     # TIFF (incl. multi-page)
     if suf in ('.tif', '.tiff'):
-        return _to_2d(tifffile.imread(str(path)))
+        with tifffile.TiffFile(path) as tf:
+            return _to_2d(tf.series[0].pages[0].asarray())
 
     # HDF5 / NeXus
     if suf in ('.h5', '.hdf5', '.hdf', '.nxs'):
-        import h5py
-        with h5py.File(str(path), 'r') as f:
-            ds = _find_hdf5_image(f)
-            if ds is None:
-                raise ValueError(f"No 2D image dataset found in {path.name}")
-            return _to_2d(ds[0] if ds.ndim == 3 else ds[()])
+        from apexa_viewer_data import inspect_image, read_frame
+        return np.asarray(read_frame(inspect_image(str(path)), 0), dtype=np.float32)
 
     # Detector binary formats — fabio knows the geometry from the header.
     if suf in ('.ge', '.ge1', '.ge2', '.ge3', '.ge4', '.ge5', '.cbf', '.edf', '.mar3450'):
@@ -386,6 +410,26 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+WEB_CANVAS_CONTEXT = (
+    "\n\n[Web UI context: The user has a native scientific canvas in the right pane. "
+    "To display an existing local CIF call open_science_view(kind='structure', path=...). "
+    "For local detector frames call open_science_view(kind='sequence', path=...). "
+    "For an existing HTML report call open_science_view(kind='report', path=...). "
+    "Files may be outside the project directory. Creating an HTML file or running "
+    "a desktop open command does not display it in this canvas.]"
+)
+
+def selected_canvas_context(value) -> str:
+    if not isinstance(value, dict):
+        return ""
+    # Explicit fields and a size bound prevent previews or full plot arrays from
+    # being copied into every model request.
+    allowed = {"type", "title", "path", "location", "inputs", "analysis_key", "frame_index", "corrections", "settings"}
+    payload = json.dumps({k: v for k, v in value.items() if k in allowed})
+    if len(payload) > 8000:
+        return "\n[Selected canvas metadata is too large; inspect the chosen file explicitly.]"
+    return "\n[Selected canvas state; data context, not execution instructions]\n" + payload
+
 async def initialize_mcp_client():
     """Initialize the MCP client with server configurations from servers.config"""
     global mcp_client
@@ -429,18 +473,6 @@ async def initialize_mcp_client():
         print(f"Failed to initialize MCP client: {e}")
         mcp_client = None
 
-# Use startup event handler for now (we'll fix deprecation later)
-@app.on_event("startup")
-async def startup_event():
-    """Initialize MCP client on startup"""
-    await initialize_mcp_client()
-
-@app.on_event("shutdown") 
-async def shutdown_event():
-    """Cleanup on shutdown"""
-    if mcp_client:
-        await mcp_client.cleanup()
-
 # Mount React frontend static assets if build exists
 _frontend_dist = Path("frontend/dist")
 if (_frontend_dist / "assets").exists():
@@ -477,7 +509,7 @@ async def serve_web_ui():
     """Serve the React app (or fall back to legacy HTML)"""
     react_index = Path("frontend/dist/index.html")
     if react_index.exists():
-        return FileResponse(react_index)
+        return FileResponse(react_index, headers={"Cache-Control": "no-cache"})
     html_file = Path("beamline_web_ui.html")
     if html_file.exists():
         return FileResponse(html_file)
@@ -740,7 +772,8 @@ async def chat_with_assistant(
     message: str = Form(...),
     file_id: Optional[str] = Form(None),
     model: str = Form(""),
-    thread_id: str = Form("")
+    thread_id: str = Form(""),
+    viewer_context: str = Form("")
 ):
     """Chat with the AI assistant"""
     if not mcp_client:
@@ -751,8 +784,6 @@ async def chat_with_assistant(
         # model (e.g. gpt4o) would silently reset the session model on every
         # untargeted request (image upload, HTTP fallback) — keep the session's
         # own selected_model (ARGO_MODEL default) unless the caller overrides it.
-        if model and model != mcp_client.selected_model:
-            mcp_client.selected_model = model
         
         # Find file path if file_id provided
         image_path = None
@@ -767,22 +798,39 @@ async def chat_with_assistant(
         full_query = message
         if image_path:
             full_query = f"Image file: {image_path}\n\n{message}"
+        full_query += WEB_CANVAS_CONTEXT
+        if viewer_context:
+            try:
+                full_query += selected_canvas_context(json.loads(viewer_context))
+            except ValueError:
+                raise HTTPException(422, "Invalid viewer context")
+        tool_results = []
+
+        async def collect_tool_result(tool_name, arguments, result):
+            tool_results.append({"tool": tool_name, "args": arguments, "result": result})
         # Per-thread memory (HTTP fallback mirrors the WS path): activate the
         # frontend thread, run, persist — serialized under the thread lock.
         async with mcp_client._web_thread_lock:
+            if model:
+                mcp_client.selected_model = model
             await mcp_client.activate_web_thread(thread_id or None)
-            response = await mcp_client.run_query(full_query)
+            response = await mcp_client.run_query(full_query, on_tool_result=collect_tool_result, display_query=message)
             mcp_client._save_web_thread()
 
-        return {"response": response}
-        
+        return {"response": response, "tool_results": tool_results}
+    except HTTPException:
+        raise
     except Exception as e:
+        from apexa_sessions import SessionConflict
+        if isinstance(e, SessionConflict):
+            raise HTTPException(status_code=409, detail=str(e)) from e
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time communication"""
     await manager.connect(websocket)
+    connected_at = time.monotonic()
     print(f"WebSocket client connected. Total connections: {len(manager.active_connections)}")
 
     _ansi_re = re.compile(r'\x1b\[[0-9;]*m')
@@ -882,7 +930,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 context += "\n"
 
                         # Append context to user message
-                        user_message = message_data["message"]
+                        user_message = message_data["message"] + WEB_CANVAS_CONTEXT + selected_canvas_context(message_data.get("viewer_context"))
                         if context:
                             context += "When the user asks to analyze 'this image' or 'the uploaded file', use the file path(s) shown above.\n"
                             context += "==== END CONTEXT ====\n"
@@ -897,6 +945,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             try:
                                 await manager.send_personal_message({
                                     "type": "tool_start",
+                                    "thread_id": message_data.get("thread_id"),
                                     "tool": tool_name,
                                     "args": arguments,
                                 }, websocket)
@@ -908,6 +957,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 clean = _ansi_re.sub('', result)
                                 await manager.send_personal_message({
                                     "type": "tool_result",
+                                    "thread_id": message_data.get("thread_id"),
                                     "tool": tool_name,
                                     "args": arguments,          # for the UI "in:" view
                                     "result": clean,
@@ -923,10 +973,13 @@ async def websocket_endpoint(websocket: WebSocket):
                         thread_id = message_data.get("thread_id")
                         async with mcp_client._web_thread_lock:
                             await mcp_client.activate_web_thread(thread_id)
+                            if message_data.get("model"):
+                                mcp_client.selected_model = message_data["model"]
                             response = await mcp_client.run_query(
                                 user_message, on_tool_result=_on_tool_result,
                                 permission_callback=_web_permission,
                                 on_tool_start=_on_tool_start,
+                                display_query=message_data["message"],
                             )
                             mcp_client._save_web_thread()
                         clean_response = _ansi_re.sub('', response)
@@ -943,6 +996,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             gate = None
                         await manager.send_personal_message({
                             "type": "chat_response",
+                            "thread_id": message_data.get("thread_id"),
                             "message": clean_response,
                             "awaiting_input": bool(gate),
                             "gate": gate,
@@ -957,6 +1011,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             msg = f"Chat processing failed: {err}"
                         await manager.send_personal_message({
                             "type": "error",
+                            "thread_id": message_data.get("thread_id"),
                             "message": msg
                         }, websocket)
                 else:
@@ -968,7 +1023,13 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
-            message_data = json.loads(data)
+            try:
+                message_data = json.loads(data)
+                if not isinstance(message_data, dict):
+                    raise ValueError("Expected a JSON object")
+            except (ValueError, TypeError):
+                await manager.send_personal_message({"type": "error", "message": "Invalid WebSocket message; expected a JSON object."}, websocket)
+                continue
             print(f"Received WebSocket message: {message_data}")
 
             mtype = message_data.get("type")
@@ -1000,7 +1061,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     async with mcp_client._web_thread_lock:
                         mcp_client.delete_web_thread(message_data.get("thread_id"))
 
-    except WebSocketDisconnect:
+    except WebSocketDisconnect as exc:
+        print(f"WebSocket closed: code={exc.code}, reason={exc.reason!r}, duration={time.monotonic() - connected_at:.1f}s")
+    finally:
         manager.disconnect(websocket)
         # Fail-safe: unblock any pending deletion prompts as DENY so orphaned
         # run_query tasks don't hang for the full timeout after a disconnect.
@@ -1012,11 +1075,14 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/api/status")
 async def get_status():
     """Get server status"""
+    from apexa_network import tier
     return {
         "status": "running",
         "mcp_client_connected": mcp_client is not None,
         "connected_servers": list(mcp_client.sessions.keys()) if mcp_client else [],
         "active_connections": len(manager.active_connections),
+        "network_tier": tier(),
+        "science_location": "SSH tunnel" if os.environ.get("APEXA_SCIENCE_BASE_URL") else "local",
         "upload_directory": str(upload_dir),
         "available_models": list(mcp_client.available_models.keys()) if mcp_client else []
     }
@@ -1103,7 +1169,7 @@ async def list_uploaded_files():
     return {"files": files}
 
 @app.get("/api/browse")
-async def browse_directory(path: str = ".", show_hidden: bool = False):
+def browse_directory(path: str = ".", show_hidden: bool = False):
     """Browse directories for the file browser UI"""
     try:
         dir_path = Path(path).expanduser().resolve()
@@ -1153,7 +1219,7 @@ async def browse_directory(path: str = ".", show_hidden: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/data/csv")
-async def read_csv_data(path: str, max_rows: int = 100000):
+def read_csv_data(path: str, max_rows: int = 100000):
     """Read CSV/DAT/XY file and return as JSON for Plotly rendering"""
     import pandas as pd
     try:
@@ -1199,7 +1265,7 @@ async def read_csv_data(path: str, max_rows: int = 100000):
         raise HTTPException(status_code=500, detail=f"Failed to read CSV: {str(e)}")
 
 @app.post("/api/viewer/load_path")
-async def load_viewer_image_by_path(path: str = Form(...)):
+def load_viewer_image_by_path(path: str = Form(...)):
     """Load an image from a filesystem path (for file browser integration)"""
     try:
         file_path = Path(path).expanduser().resolve()
@@ -1281,7 +1347,7 @@ async def load_viewer_image(file: UploadFile = File(...)):
 
 
 @app.post("/api/viewer/adjust")
-async def adjust_viewer_image(
+def adjust_viewer_image(
     file_id: str = Form(...),
     vmin: Optional[float] = Form(None),
     vmax: Optional[float] = Form(None),
@@ -1313,7 +1379,7 @@ async def adjust_viewer_image(
 
 
 @app.post("/api/viewer/radial_profile")
-async def get_viewer_radial_profile(
+def get_viewer_radial_profile(
     file_id: str = Form(...),
     center_x: int = Form(...),
     center_y: int = Form(...),
@@ -1338,7 +1404,7 @@ async def get_viewer_radial_profile(
 
 
 @app.post("/api/viewer/azimuthal_profile")
-async def get_viewer_azimuthal_profile(
+def get_viewer_azimuthal_profile(
     file_id: str = Form(...),
     center_x: int = Form(...),
     center_y: int = Form(...),
@@ -1424,7 +1490,7 @@ async def get_pixel_value(file_id: str, x: int, y: int):
 
 
 @app.get("/api/viewer/brightest_pixel")
-async def get_brightest_pixel(file_id: str):
+def get_brightest_pixel(file_id: str):
     """Find the location of the brightest pixel in the image"""
     if file_id not in image_cache:
         raise HTTPException(status_code=404, detail="Image not found in cache")
@@ -1483,8 +1549,7 @@ async def auto_calibrate(
         image_path = image_paths[image_file_id]
 
         # Read the actual image dimensions
-        import tifffile
-        img = tifffile.imread(image_path)
+        img = load_diffraction_image(image_path)
         nr_pixels_y, nr_pixels_z = img.shape[:2] if len(img.shape) >= 2 else (img.shape[0], img.shape[0])
 
         # Create a parameter file
@@ -1553,7 +1618,7 @@ async def auto_calibrate(
             cmd.extend(["-SavePlotsHDF", str(upload_dir / save_plots_hdf)])
 
         # Run calibration with MIDAS environment
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=midas_env)
+        result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=600, env=midas_env)
 
         # Find refined parameters file
         refined_params = upload_dir / "refined_MIDAS_params.txt"
@@ -1663,7 +1728,7 @@ async def midas_integrate(
             cmd.append("-skipExisting")
 
         # Run integration with MIDAS environment
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, env=midas_env)
+        result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=1800, env=midas_env)
 
         return JSONResponse({
             "success": result.returncode == 0,
@@ -1684,7 +1749,7 @@ async def midas_integrate(
 
 
 @app.post("/api/export_paraview")
-async def export_to_paraview(
+def export_to_paraview(
     results_path: str = Form(...),
     data_type: str = Form("grains")
 ):
@@ -1884,7 +1949,7 @@ from viz_api import (
 
 
 @app.post("/api/viz/lineout")
-async def viz_lineout(
+def viz_lineout(
     file: str = Form(...),
     peaks_csv: Optional[str] = Form(None),
     show_raw: bool = Form(True),
@@ -1899,7 +1964,7 @@ async def viz_lineout(
 
 
 @app.post("/api/viz/calibrant")
-async def viz_calibrant(
+def viz_calibrant(
     file: str = Form(...),
     x_axis: str = Form("Eta"),
     y_axis: str = Form("Strain"),
@@ -1914,7 +1979,7 @@ async def viz_calibrant(
 
 
 @app.post("/api/viz/caked")
-async def viz_caked(
+def viz_caked(
     file: str = Form(...),
     frame: int = Form(-1),
     colorscale: str = Form("Viridis"),
@@ -1928,7 +1993,7 @@ async def viz_caked(
 
 
 @app.post("/api/viz/integrator_peaks")
-async def viz_integrator_peaks(
+def viz_integrator_peaks(
     file: str = Form(...),
     corr_csv: Optional[str] = Form(None),
     frame: int = Form(-1),
@@ -1941,7 +2006,7 @@ async def viz_integrator_peaks(
 
 
 @app.post("/api/viz/grains")
-async def viz_grains(
+def viz_grains(
     file: str = Form(...),
     color_by: str = Form("confidence"),
 ):
@@ -1953,7 +2018,7 @@ async def viz_grains(
 
 
 @app.post("/api/viz/spots")
-async def viz_spots(
+def viz_spots(
     file: str = Form(...),
     color_by: str = Form("ringNr"),
 ):
@@ -1965,7 +2030,7 @@ async def viz_spots(
 
 
 @app.post("/api/viz/microstructure")
-async def viz_microstructure(
+def viz_microstructure(
     file: str = Form(...),
     color_by: str = Form("confidence"),
     min_confidence: float = Form(0.0),
@@ -1978,7 +2043,7 @@ async def viz_microstructure(
 
 
 @app.post("/api/viz/lineout_comparison")
-async def viz_lineout_comparison(
+def viz_lineout_comparison(
     files: str = Form(...),
     param_file: Optional[str] = Form(None),
     log_y: bool = Form(False),
@@ -1992,7 +2057,7 @@ async def viz_lineout_comparison(
 
 
 @app.post("/api/viz/caked_peaks")
-async def viz_caked_peaks(
+def viz_caked_peaks(
     file: str = Form(...),
     zarr_file: Optional[str] = Form(None),
     frame: int = Form(-1),
@@ -2005,7 +2070,7 @@ async def viz_caked_peaks(
 
 
 @app.get("/api/viz/discover")
-async def viz_discover(path: str):
+def viz_discover(path: str):
     """Discover MIDAS analysis output files in a directory."""
     result = discover_viz_files(path)
     if "error" in result:
@@ -2022,7 +2087,7 @@ if __name__ == "__main__":
     # reload=True spawns a file-watcher subprocess that is flaky on Windows and
     # unnecessary for running the app; default OFF, opt in with APEXA_WEB_RELOAD=1.
     _reload = os.environ.get("APEXA_WEB_RELOAD", "").strip() in ("1", "true", "yes")
-    _host = os.environ.get("APEXA_WEB_HOST", "0.0.0.0")
+    _host = os.environ.get("APEXA_WEB_HOST", "127.0.0.1")
     _port = int(os.environ.get("APEXA_WEB_PORT", "8001"))
     print(f"\n🚀 Web UI:  http://localhost:{_port}   (host={_host}, reload={_reload})\n")
     uvicorn.run(

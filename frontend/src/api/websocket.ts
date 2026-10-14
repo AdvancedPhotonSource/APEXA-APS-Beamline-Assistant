@@ -7,25 +7,39 @@ class WebSocketManager {
   private reconnectAttempts = 0
   private maxReconnectAttempts = 10
   private reconnectDelay = 2000
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private stableTimer: ReturnType<typeof setTimeout> | null = null
+  private stopped = true
   private handlers: Set<MessageHandler> = new Set()
   private url = ''
 
   connect(url?: string) {
-    this.url = url ?? `ws://${window.location.host}/ws`
+    const nextUrl = url ?? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+    if (this.url && nextUrl !== this.url) this.disconnect()
+    this.url = nextUrl
+    this.stopped = false
+    if (this.reconnectTimer !== null) return
     this.doConnect()
   }
 
   private doConnect() {
-    if (this.ws?.readyState === WebSocket.OPEN) return
+    if (this.stopped || this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) return
 
-    this.ws = new WebSocket(this.url)
+    const socket = new WebSocket(this.url)
+    this.ws = socket
 
-    this.ws.onopen = () => {
-      this.reconnectAttempts = 0
-      this.notify({ type: 'model_changed', message: 'connected' })
+    socket.onopen = () => {
+      if (this.ws !== socket || this.stopped) return
+      // An accepted socket that immediately closes is still a failed attempt.
+      this.stableTimer = setTimeout(() => {
+        this.stableTimer = null
+        if (this.ws === socket && !this.stopped) this.reconnectAttempts = 0
+      }, 10000)
+      this.notify({ type: 'connection_status', connected: true })
     }
 
-    this.ws.onmessage = (event: MessageEvent) => {
+    socket.onmessage = (event: MessageEvent) => {
+      if (this.ws !== socket || this.stopped) return
       try {
         const data: WsIncoming = JSON.parse(event.data)
         this.notify(data)
@@ -34,27 +48,37 @@ class WebSocketManager {
       }
     }
 
-    this.ws.onclose = () => {
-      this.notify({ type: 'error', message: 'disconnected' })
+    socket.onclose = (event: CloseEvent) => {
+      if (this.ws !== socket || this.stopped) return
+      if (this.stableTimer !== null) clearTimeout(this.stableTimer)
+      this.stableTimer = null
+      this.ws = null
+      console.warn('APEXA WebSocket closed', { code: event.code, reason: event.reason, clean: event.wasClean })
+      this.notify({ type: 'connection_status', connected: false, close_code: event.code, close_reason: event.reason })
       this.tryReconnect()
     }
 
-    this.ws.onerror = () => {
-      this.ws?.close()
+    socket.onerror = () => {
+      if (this.ws === socket && !this.stopped) socket.close()
     }
   }
 
   private tryReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) return
+    if (this.stopped || this.reconnectTimer !== null || this.reconnectAttempts >= this.maxReconnectAttempts) return
     this.reconnectAttempts++
-    setTimeout(() => this.doConnect(), this.reconnectDelay * this.reconnectAttempts)
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      this.doConnect()
+    }, this.reconnectDelay * this.reconnectAttempts)
   }
 
   send(message: WsOutgoing) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message))
+      return true
     } else {
-      console.warn('WebSocket not connected, falling back to HTTP')
+      console.warn('WebSocket not connected; message was not sent')
+      return false
     }
   }
 
@@ -72,8 +96,15 @@ class WebSocketManager {
   }
 
   disconnect() {
-    this.ws?.close()
+    this.stopped = true
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer)
+    if (this.stableTimer !== null) clearTimeout(this.stableTimer)
+    this.reconnectTimer = null
+    this.stableTimer = null
+    this.reconnectAttempts = 0
+    const socket = this.ws
     this.ws = null
+    socket?.close(1000, 'Client disposed')
   }
 }
 

@@ -4,6 +4,7 @@ import { useImageStore } from '@/stores/imageStore'
 import { useVizStore } from '@/stores/vizStore'
 import { useChatStore } from '@/stores/chatStore'
 import { fetchCsvData } from '@/api/endpoints'
+import { isHtmlReport, reportFileArtifact } from '@/lib/reportArtifacts'
 
 const IMAGE_EXTS = new Set(['.tif', '.tiff', '.ge', '.ge2', '.ge3', '.ge4', '.ge5', '.h5', '.hdf5', '.nxs', '.png'])
 const DATA_EXTS = new Set(['.csv', '.dat', '.xy', '.txt'])
@@ -28,11 +29,26 @@ export function FileBrowser() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFileClick = async (path: string, ext?: string) => {
+    if (isHtmlReport(path)) {
+      useVizStore.getState().addArtifact(reportFileArtifact(path))
+      useVizStore.getState().showCanvas()
+      return
+    }
     if (!ext) return
+
+    if (ext === '.cif') {
+      useVizStore.getState().addArtifact({ id: `structure-${path}`, type: 'structure', title: path.split('/').pop() ?? 'Crystal structure', data: { path, source: 'Local CIF' }, sourceMessageId: '' })
+      useVizStore.getState().showCanvas()
+      return
+    }
 
     if (IMAGE_EXTS.has(ext)) {
       try {
         await loadImage(path)
+        const images = useImageStore.getState()
+        if (images.activeImageId && images.loadedImages.get(images.activeImageId)?.path === path) {
+          useVizStore.getState().showCanvas()
+        }
       } catch (e) {
         console.error('Failed to load image:', e)
         alert('Failed to load image: ' + String(e))
@@ -46,7 +62,7 @@ export function FileBrowser() {
         const name = path.split('/').pop() ?? 'data'
 
         useVizStore.getState().addArtifact({
-          id: `csv-${Date.now()}`,
+          id: `csv-${path}`,
           type: 'plotly',
           title: name,
           data: {
@@ -66,6 +82,7 @@ export function FileBrowser() {
           },
           sourceMessageId: '',
         })
+        useVizStore.getState().showCanvas()
       } catch (e) {
         console.error('Failed to load CSV:', e)
         alert('Failed to load data file: ' + String(e))
@@ -111,6 +128,13 @@ export function FileBrowser() {
           }}
         >💡 Recommend</button>
       </div>
+
+      <button className="apexa-gallery-button" style={{ margin: '6px 10px' }} onClick={() => {
+        useVizStore.getState().addArtifact({
+        id: `sequence-${currentPath}`, type: 'sequence', title: currentPath.split('/').pop() ?? 'Detector sequence', data: { path: currentPath }, sourceMessageId: '',
+        })
+        useVizStore.getState().showCanvas()
+      }}>Open folder as detector sequence</button>
 
       {error && (
         <div style={{ padding: '6px 10px', color: '#ef4444', background: 'rgba(239,68,68,0.1)', fontSize: 11 }}>{error}</div>

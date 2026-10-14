@@ -338,6 +338,10 @@ def _print_help():
     _sec("Configuration")
     _cmd("models", "Show available AI models")
     _cmd("model <name>", "Switch AI model")
+    _cmd("profile", "Show/list LLM connection profiles")
+    _cmd("profile <name>", "Switch gateway + model + credential at once")
+    _cmd("profile refresh", "Re-probe the network and re-select")
+    _cmd("profile key <preset>", "Store a personal API key in the OS keyring")
     _cmd("tools", "List all analysis tools")
     _cmd("servers", "Show connected servers")
     _cmd("stats", "Interaction log stats")
@@ -423,304 +427,163 @@ def _is_shell_command(user_input: str) -> bool:
 
 
 class ExperimentContext:
-    """Smart context manager for APEXA sessions"""
+    """Experiment metadata and shared, resumable CLI/WebUI sessions."""
     def __init__(self, session_dir: Path = None):
-        self.session_dir = session_dir or Path.home() / ".apexa" / "sessions"
-        self.session_dir.mkdir(parents=True, exist_ok=True)
-
-        self.metadata = {
-            "experiment_id": None,
-            "sample_name": None,
-            "beamline": None,
-            "start_time": datetime.now().isoformat(),
-            "user": os.getenv("ANL_USERNAME", "unknown"),
-            "current_directory": str(Path.cwd()),
-            "analysis_history": [],
-            "key_findings": [],
-            "active_files": []
-        }
-        # Conversation transcript stashed by load_session() for the caller to
-        # replay into the orchestrator. Empty until a session is loaded.
-        self.loaded_conversation: List[Dict] = []
-        # Compacted running summary stashed by load_session() (the digest of
-        # turns older than the recent window). Empty until a session is loaded.
-        self.loaded_summary: str = ""
-
-        # Append-only transcript model: exactly one "active" session is being
-        # written at a time. Starts as the rolling autosave slot; a named
-        # `session save` switches the active session to that name.
-        self.active_session: str = "_autosave"
-        # Pointer to the most-recently-active session so `session resume`
-        # (no name) can find it across restarts.
-        self._last_pointer = self.session_dir / ".last_session"
-
-    def _transcript_file(self, name: str) -> Path:
-        """Path to a session's append-only JSONL transcript."""
-        return self.session_dir / f"{name}.jsonl"
-
-    def _remember_active(self):
-        """Record the active session name so `session resume` can find it."""
-        try:
-            self._last_pointer.write_text(self.active_session)
-        except Exception:
-            pass  # pointer is a convenience, never fatal
-
-    def last_active(self) -> str:
-        """Most-recently-active session name (for `session resume`)."""
-        try:
-            name = self._last_pointer.read_text().strip()
-            return name or "_autosave"
-        except Exception:
-            return "_autosave"
-
-    def start_new(self, name: str = None) -> str:
-        """Wind up the current session and begin a fresh, empty one.
-
-        Only resets the *active* slot so subsequent turns start from a clean
-        transcript — archive the previous conversation first (``save_session``)
-        if it is worth keeping. A named new session must not clobber an existing
-        one; the unnamed case reuses the rolling ``_autosave`` slot (wiped clean).
-        """
+        from apexa_sessions import SessionStore
+        self.store = SessionStore(session_dir)
+        self.session_dir = self.store.root
+        self.metadata = self._defaults()
         self.loaded_conversation = []
         self.loaded_summary = ""
-        if name:
-            if (self._transcript_file(name).exists()
-                    or (self.session_dir / f"{name}.json").exists()):
-                raise FileExistsError(name)
-            self.active_session = name
-        else:
-            self.active_session = "_autosave"
-            tf = self._transcript_file("_autosave")
+        self.loaded_revision = None
+        self.loaded_model = ""
+        self.loaded_directory = ""
+        self.active_session = "_autosave"
+        self._last_pointer = self.session_dir / ".last_session"
+
+    @staticmethod
+    def _defaults():
+        return {"experiment_id": None, "sample_name": None, "beamline": None,
+                "start_time": datetime.now().isoformat(), "user": os.getenv("ANL_USERNAME", "unknown"),
+                "current_directory": str(Path.cwd()), "analysis_history": [], "key_findings": [], "active_files": []}
+
+    def _remember_active(self):
+        # This small hint never contains scientific state. The session record is
+        # saved independently and atomically before the pointer is changed.
+        self._last_pointer.write_text(self.active_session)
+
+    def last_active(self):
+        from apexa_sessions import valid_name
+        try:
+            return valid_name(self._last_pointer.read_text().strip())
+        except (OSError, ValueError):
+            return "_autosave"
+
+    def _apply(self, record):
+        self.active_session = record["id"]
+        self.metadata = {**self._defaults(), **record.get("metadata", {})}
+        self.loaded_conversation = record["conversation_history"]
+        self.loaded_summary = record["running_summary"]
+        self.loaded_revision = record["memoryRevision"]
+        self.loaded_model = record.get("model", "")
+        self.loaded_directory = record.get("active_directory", "")
+
+    def start_new(self, name=None):
+        import uuid
+        name = name or f"session-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        with self.store.turn(name):
             try:
-                if tf.exists():
-                    tf.unlink()
-            except Exception:
+                self.store.get(name)
+            except FileNotFoundError:
                 pass
+            else:
+                raise FileExistsError(name)
+            self._apply(self.store.ensure(name, origin="cli"))
         self._remember_active()
-        return self.active_session
+        return name
 
-    def append_to(self, target_name: str, conversation: List[Dict],
-                  summary: str = None) -> int:
-        """Non-destructively merge the current conversation into an existing
-        session, then continue in it.
+    def append_message(self, role, content):
+        import uuid
+        with self.store.turn(self.active_session):
+            def update(record):
+                record["messages"].append({"id": uuid.uuid4().hex, "role": role, "content": content,
+                                           "timestamp": int(_time.time() * 1000)})
+                record["conversation_history"].append({"role": role, "content": content})
+                record["memoryRevision"] += 1
+            self._apply(self.store.change(self.active_session, update, create=True, origin="cli"))
+        self._remember_active()
 
-        Unlike ``save_session`` (which copies/overwrites the target transcript),
-        this *appends* the given turns after the target's existing transcript —
-        so carrying scratch work into a named session never clobbers what is
-        already there. The target becomes the active session; subsequent turns
-        keep appending to it.
+    def read_transcript(self, name):
+        try:
+            return self.store.get(name)["conversation_history"]
+        except FileNotFoundError:
+            return []
 
-        Returns the target transcript's total message count after the merge.
-        """
-        # Already writing into the target — nothing to carry over.
+    def append_to(self, target_name, conversation, summary=None):
+        from apexa_sessions import _messages
         if target_name == self.active_session:
             return len(self.read_transcript(target_name))
-
-        source_was_scratch = (self.active_session == "_autosave")
-
-        # Switch active to the target FIRST so append_message() (which writes to
-        # the active slot) lands after the target's existing turns.
-        self.active_session = target_name
-        for msg in conversation:
-            role = msg.get("role")
-            content = msg.get("content")
-            if role is not None and content is not None:
-                self.append_message(role, content)
-
-        # Drain the scratch slot so its turns can't be double-merged later.
-        if source_was_scratch:
-            self.discard_scratch()
-
-        # Restore state mirrors load_session(): the full merged transcript is the
-        # canonical conversation, and the summary comes from the caller or the
-        # target's sidecar.
-        self.loaded_conversation = self.read_transcript(target_name)
-        if summary is not None:
-            self.loaded_summary = summary
-        else:
-            self.loaded_summary = ""
-            sidecar = self.session_dir / f"{target_name}.json"
-            if sidecar.exists():
-                try:
-                    with open(sidecar) as f:
-                        self.loaded_summary = json.load(f).get("running_summary", "")
-                except Exception:
-                    pass
+        with self.store.turn(target_name):
+            def update(record):
+                record["conversation_history"].extend(conversation)
+                messages = _messages(conversation, int(_time.time() * 1000))
+                import uuid
+                for message in messages:
+                    message["id"] = uuid.uuid4().hex
+                record["messages"].extend(messages)
+                if summary is not None:
+                    record["running_summary"] = summary
+                record["memoryRevision"] += 1
+            self._apply(self.store.change(target_name, update, create=True, origin="cli"))
         self._remember_active()
-        # loaded_conversation is now the full merged transcript (existing + new).
         return len(self.loaded_conversation)
 
     def discard_scratch(self):
-        """Wipe the rolling autosave scratch transcript."""
-        tf = self._transcript_file("_autosave")
         try:
-            if tf.exists():
-                tf.unlink()
-        except Exception:
+            self.store.archive("_autosave")
+        except FileNotFoundError:
             pass
 
-    def append_message(self, role: str, content: str):
-        """Append one message to the active session's append-only transcript.
-
-        This is the source of truth for the conversation. Each line is a
-        self-contained JSON record, flushed and fsync'd immediately, so a
-        crash (even kill -9) loses at most the single in-flight message and
-        never corrupts earlier turns — the modern JSONL transcript pattern.
-        """
-        try:
-            rec = {
-                "ts": datetime.now().isoformat(),
-                "role": role,
-                "content": content,
-            }
-            target = self._transcript_file(self.active_session)
-            with open(target, "a") as f:
-                f.write(json.dumps(rec) + "\n")
-                f.flush()
-                os.fsync(f.fileno())
-            self._remember_active()
-        except Exception as e:
-            print(f"  {C.DIM}(transcript append skipped: {e}){C.RESET}",
-                  file=sys.stderr)
-
-    def read_transcript(self, name: str) -> List[Dict]:
-        """Read a full append-only transcript back as [{role, content}, ...].
-
-        Tolerates a torn final line (from a crash mid-write) by skipping
-        any line that does not parse — earlier lines are always intact.
-        """
-        target = self._transcript_file(name)
-        if not target.exists():
-            return []
-        msgs: List[Dict] = []
-        with open(target) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue  # torn final line — ignore, keep the rest
-                if isinstance(rec, dict) and "role" in rec and "content" in rec:
-                    msgs.append({"role": rec["role"], "content": rec["content"]})
-        return msgs
-
-    def update(self, key: str, value: Any):
-        """Update experiment metadata"""
+    def update(self, key, value):
         self.metadata[key] = value
 
-    def add_analysis(self, analysis_type: str, result: str):
-        """Record analysis performed"""
-        self.metadata["analysis_history"].append({
-            "timestamp": datetime.now().isoformat(),
-            "type": analysis_type,
-            "result": result[:500]  # Truncate long results
-        })
+    def add_analysis(self, analysis_type, result):
+        self.metadata["analysis_history"].append({"timestamp": datetime.now().isoformat(), "type": analysis_type, "result": result[:500]})
 
-    def add_finding(self, finding: str):
-        """Record key scientific finding"""
-        self.metadata["key_findings"].append({
-            "timestamp": datetime.now().isoformat(),
-            "finding": finding
-        })
+    def add_finding(self, finding):
+        self.metadata["key_findings"].append({"timestamp": datetime.now().isoformat(), "finding": finding})
 
-    def save_session(self, session_name: str = None,
-                     conversation: List[Dict] = None,
-                     summary: str = None):
-        """Save current session to disk.
-
-        Writes the experiment metadata AND, when provided, the full
-        conversation transcript so the session can be genuinely resumed
-        (the model sees its prior turns), not just summarised.
-        """
-        if not session_name:
-            session_name = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-        # Build the metadata sidecar without mutating live metadata. The JSONL
-        # transcript (written per-message) is the source of truth for the
-        # conversation; conversation_history here is a convenience snapshot.
-        record = dict(self.metadata)
-        record["saved_at"] = datetime.now().isoformat()
-        if conversation is not None:
-            record["conversation_history"] = conversation
-        if summary is not None:
-            record["running_summary"] = summary
-
-        session_file = self.session_dir / f"{session_name}.json"
-        # Atomic write: tmp then replace, so an interrupted save never leaves a
-        # half-written (unparseable) sidecar.
-        tmp_file = session_file.with_suffix(".json.tmp")
-        with open(tmp_file, 'w') as f:
-            json.dump(record, f, indent=2)
-        os.replace(tmp_file, session_file)
-
-        # Named checkpoint: copy the active append-only transcript under the new
-        # name and switch the active session to it, so subsequent turns continue
-        # appending to <name>.jsonl. (No-op when saving the already-active slot,
-        # e.g. autosave.)
-        if session_name != self.active_session:
-            src = self._transcript_file(self.active_session)
-            dst = self._transcript_file(session_name)
-            try:
-                if src.exists() and src.resolve() != dst.resolve():
-                    shutil.copyfile(src, dst)
-            except Exception as e:
-                print(f"  {C.DIM}(transcript checkpoint skipped: {e}){C.RESET}",
-                      file=sys.stderr)
-            self.active_session = session_name
+    def save_session(self, session_name=None, conversation=None, summary=None):
+        import copy
+        import uuid
+        from apexa_sessions import SessionConflict, _messages
+        name = session_name or f"session-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+        source = self.store.ensure(self.active_session, origin="cli")
+        with self.store.turn(name):
+            if name != self.active_session:
+                try:
+                    self.store.get(name)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise FileExistsError(f"Session {name} already exists; load it or choose another name")
+            def update(record):
+                if name == self.active_session and conversation is not None:
+                    if self.loaded_revision is not None and self.loaded_revision != record["memoryRevision"]:
+                        raise SessionConflict("The session changed in another interface; reload it before saving")
+                    if self.loaded_revision is None and record["conversation_history"]:
+                        raise SessionConflict("Load this existing session before replacing its model context")
+                if name != self.active_session:
+                    record.update(copy.deepcopy(source), id=name, title=name, revision=0, status="idle", turn=None)
+                record["metadata"] = self.metadata
+                if conversation is not None:
+                    record["conversation_history"] = conversation
+                    if not record["messages"]:
+                        record["messages"] = _messages(conversation, record["createdAt"])
+                if summary is not None:
+                    record["running_summary"] = summary
+                record["memoryRevision"] += 1
+            self._apply(self.store.change(name, update, create=True, origin="cli"))
         self._remember_active()
+        return self.store.path(name)
 
-        # Full transcript becomes the canonical restored conversation.
-        self.loaded_conversation = self.read_transcript(session_name) or \
-            (list(conversation) if conversation else [])
-        return session_file
-
-    def load_session(self, session_name: str):
-        """Load a previous session and make it the active one.
-
-        Prefers the full append-only JSONL transcript; falls back to the
-        conversation snapshot embedded in the .json sidecar (older sessions
-        saved before JSONL existed). Stashes the restored conversation on
-        self.loaded_conversation for the caller to hand to the orchestrator.
-        Returns True if either artifact exists.
-        """
-        json_file = self.session_dir / f"{session_name}.json"
-        jsonl_file = self._transcript_file(session_name)
-        if not json_file.exists() and not jsonl_file.exists():
+    def load_session(self, name):
+        try:
+            record = self.store.get(name)
+        except FileNotFoundError:
             return False
-
-        snapshot_fallback: List[Dict] = []
-        self.loaded_summary = ""
-        if json_file.exists():
-            with open(json_file, 'r') as f:
-                data = json.load(f)
-            snapshot_fallback = data.pop("conversation_history", [])
-            self.loaded_summary = data.pop("running_summary", "")
-            self.metadata = data
-
-        # Prefer the complete transcript; fall back to the sidecar snapshot.
-        transcript = self.read_transcript(session_name)
-        self.loaded_conversation = transcript if transcript else snapshot_fallback
-
-        # Continue this session: subsequent turns append to its transcript.
-        self.active_session = session_name
+        self._apply(record)
         self._remember_active()
         return True
 
-    def list_sessions(self) -> List[str]:
-        """List all saved sessions (the _autosave slot is hidden)."""
-        names = {f.stem for f in self.session_dir.glob("*.json")}
-        names |= {f.stem for f in self.session_dir.glob("*.jsonl")}
-        return sorted(n for n in names if n != "_autosave")
+    def list_sessions(self):
+        return sorted(row["id"] for row in self.store.list())
 
-    def get_summary(self) -> str:
-        """Get a summary of current experiment"""
-        summary = f"Experiment: {self.metadata.get('experiment_id', 'Unnamed')}\n"
-        summary += f"Sample: {self.metadata.get('sample_name', 'N/A')}\n"
-        summary += f"Analyses performed: {len(self.metadata['analysis_history'])}\n"
-        summary += f"Key findings: {len(self.metadata['key_findings'])}\n"
-        return summary
+    def get_summary(self):
+        return (f"Experiment: {self.metadata.get('experiment_id', 'Unnamed')}\n"
+                f"Sample: {self.metadata.get('sample_name', 'N/A')}\n"
+                f"Analyses performed: {len(self.metadata['analysis_history'])}\n"
+                f"Key findings: {len(self.metadata['key_findings'])}\n")
 
 class ProactiveSuggestions:
     """Generate smart next-step suggestions based on analysis results"""
@@ -1656,18 +1519,8 @@ class APEXAClient:
         # fail-safe DENY (no interface can confirm → deletion is blocked).
         self.permission_callback = None
 
-        # ── Web-UI per-thread conversation memory ────────────────────────────
-        # The web/desktop frontend keeps ChatGPT-style threads in localStorage
-        # but the orchestrator has ONE global conversation_history. Without a
-        # thread→memory mapping the web UI "starts fresh every time" (the
-        # in-memory global is lost on restart) and bleeds context across threads.
-        # We bucket the orchestrator's history+summary per frontend thread_id and
-        # persist each bucket to disk so a thread survives a restart — mirroring
-        # the frontend's own localStorage durability. Kept in a dedicated dir,
-        # separate from the CLI ExperimentContext session store (no pollution).
-        # activate_web_thread()/_save_web_thread() are serialized by this lock
-        # because there is a single shared orchestrator.
-        self._web_threads_dir = Path.home() / ".apexa" / "web_threads"
+        # CLI and WebUI use the same SessionStore. The lock also serializes
+        # access to this process's single orchestrator across web sessions.
         self._active_web_thread: Optional[str] = None
         self._web_thread_lock = asyncio.Lock()
 
@@ -2089,89 +1942,74 @@ class APEXAClient:
         finally:
             self._busy_server = None
 
-    # ── Web-UI per-thread memory helpers ─────────────────────────────────────
-    def _web_thread_file(self, thread_id: str) -> Path:
-        """Path of the on-disk bucket for a frontend thread_id.
-
-        The id comes from the browser (localStorage `sess-…`); sanitize it to a
-        safe filename so a crafted id can never escape the buckets dir.
-        """
-        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", thread_id or "")[:128] or "_default"
-        return self._web_threads_dir / f"{safe}.json"
-
+    # Shared session identity; the model is reloaded under a turn lease below.
     async def activate_web_thread(self, thread_id: Optional[str]) -> None:
-        """Make ``thread_id``'s conversation the orchestrator's active memory.
-
-        Saves the currently-active thread's history to disk, then loads the
-        requested thread's bucket (full-fidelity in single mode). A thread the
-        backend has never seen (new chat, or first message after a restart with
-        no saved bucket) starts empty. No-op when the thread is already active or
-        when there is no orchestrator. Caller MUST hold ``_web_thread_lock`` so
-        the swap is atomic against the single shared orchestrator.
-        """
-        if not self.orchestrator or not thread_id:
-            return
-        if thread_id == self._active_web_thread:
-            return
-        # Flush the outgoing thread so its latest turns aren't lost on the swap.
-        if self._active_web_thread is not None:
-            self._save_web_thread()
-        # Load the incoming thread (or start clean if it has no bucket yet).
-        loaded = False
-        try:
-            f = self._web_thread_file(thread_id)
-            if f.exists():
-                data = json.loads(f.read_text())
-                self.orchestrator.clear_history()
-                self.orchestrator.import_history(data.get("conversation_history", []))
-                self.orchestrator.import_summary(data.get("running_summary", ""))
-                loaded = True
-        except Exception as e:
-            print(f"  (web thread load skipped for {thread_id}: {e})",
-                  file=sys.stderr)
-        if not loaded:
-            self.orchestrator.clear_history()
-        self._active_web_thread = thread_id
+        from apexa_sessions import valid_name
+        name = valid_name(thread_id or "web-default")
+        self.context.store.ensure(name, origin="web")
+        self._active_web_thread = name
 
     def _save_web_thread(self) -> None:
-        """Persist the active thread's history+summary to its on-disk bucket.
-
-        Best-effort and atomic (tmp then replace): a failed save must never crash
-        a chat turn. Called after every web turn so the bucket survives a restart.
-        """
-        if not self.orchestrator or self._active_web_thread is None:
-            return
-        try:
-            self._web_threads_dir.mkdir(parents=True, exist_ok=True)
-            record = {
-                "conversation_history": self.orchestrator.export_history(),
-                "running_summary": self.orchestrator.export_summary(),
-                "saved_at": datetime.now().isoformat(),
-            }
-            f = self._web_thread_file(self._active_web_thread)
-            tmp = f.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(record, indent=2))
-            os.replace(tmp, f)
-        except Exception as e:
-            print(f"  (web thread save skipped: {e})", file=sys.stderr)
+        # run_query commits the shared record before returning a response.
+        pass
 
     def delete_web_thread(self, thread_id: str) -> None:
-        """Drop a thread's on-disk bucket (frontend deleted the conversation).
-
-        If it was the active thread, also clear the live orchestrator memory so
-        the next turn genuinely starts fresh. Best-effort."""
-        if not thread_id:
-            return
-        try:
-            self._web_thread_file(thread_id).unlink(missing_ok=True)
-        except Exception as e:
-            print(f"  (web thread delete skipped: {e})", file=sys.stderr)
+        if thread_id:
+            self.context.store.archive(thread_id)
         if thread_id == self._active_web_thread:
-            if self.orchestrator:
-                self.orchestrator.clear_history()
             self._active_web_thread = None
 
     async def run_query(self, query: str, use_history: bool = True,
+                        on_tool_result=None, permission_callback=None,
+                        on_tool_start=None, display_query=None) -> str:
+        if not self.orchestrator:
+            return "Error: Not connected to any MCP servers."
+        if not self._active_web_thread and self.context.loaded_revision is None:
+            self.context.start_new()
+        name = self._active_web_thread or self.context.active_session
+        origin = "web" if self._active_web_thread else "cli"
+        store = self.context.store
+        with store.turn(name):
+            record = store.begin(name, query, display_query if display_query is not None else query, origin)
+            turn_id = record["turn"]["id"]
+            self.context._apply(record)
+            self.orchestrator.clear_history()
+            self.orchestrator.import_history(record["conversation_history"])
+            self.orchestrator.import_summary(record["running_summary"])
+            self.orchestrator._active_dir = record.get("active_directory", "")
+            # Persisted model is an interface default, not an override of an
+            # explicit model choice in the current client.
+            async def recorded_tool(tool, arguments, result):
+                store.tool(name, turn_id, tool, arguments, result)
+                if on_tool_result:
+                    await on_tool_result(tool, arguments, result)
+            try:
+                result = await self._execute_query(query, use_history,
+                    on_tool_result=recorded_tool, permission_callback=permission_callback,
+                    on_tool_start=on_tool_start)
+            except BaseException as exc:
+                reason = ("Request interrupted; recorded tool results were saved. Check external jobs before retrying."
+                          if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt))
+                          else f"Request failed: {type(exc).__name__}: {exc}")
+                saved = store.finish(name, turn_id, reason, history=[], summary=record["running_summary"],
+                    metadata=self.context.metadata, model=self.selected_model,
+                    active_directory=getattr(self.orchestrator, "_active_dir", ""), error=True)
+                self.context._apply(saved)
+                self.orchestrator.clear_history()
+                self.orchestrator.import_history(saved["conversation_history"])
+                self.orchestrator.import_summary(saved["running_summary"])
+                self.orchestrator._active_dir = saved.get("active_directory", "")
+                self.context._remember_active()
+                raise
+            saved = store.finish(name, turn_id, result,
+                history=self.orchestrator.export_history(), summary=self.orchestrator.export_summary(),
+                metadata=self.context.metadata, model=self.selected_model,
+                active_directory=getattr(self.orchestrator, "_active_dir", ""))
+            self.context._apply(saved)
+            self.context._remember_active()
+            return result
+
+    async def _execute_query(self, query: str, use_history: bool = True,
                         on_tool_result=None, permission_callback=None,
                         on_tool_start=None) -> str:
         """Route query through the multi-agent orchestrator (Phase 2 entry point).
@@ -2217,14 +2055,10 @@ class APEXAClient:
             self.tool_start_callback = _prev_start_cb
 
     def _autosave_session(self):
-        """Persist the live conversation to the _autosave slot.
+        """Save the active shared session without overwriting a newer revision.
 
-        Refreshes the metadata sidecar for the *active* session (the full
-        conversation is already on disk via the per-message JSONL transcript).
-        Called after every turn and on every exit path so a session is never
-        silently lost — even if the user never runs 'session save'. Recover
-        with 'session resume'. Best-effort: a failed autosave must never crash
-        the CLI or mask the user's actual exit.
+        Turns and tool outputs are already durable in run_query. This also
+        captures explicit CLI context edits. Resume with 'session resume'.
         """
         try:
             if not self.orchestrator:
@@ -2295,12 +2129,128 @@ class APEXAClient:
                 return True
         return False
 
+    async def _handle_profile_cmd(self, arg: str, pt_session=None) -> None:
+        """``profile`` — switch the whole LLM configuration by name.
+
+        One command instead of three env vars that must agree. Delegates every
+        decision to ``apexa_profiles`` rather than reimplementing selection, so
+        the CLI and the startup path can never disagree about what is active.
+        """
+        try:
+            import apexa_profiles as PR
+            from apexa_llm_endpoints import PRESETS, keyring_available, keyring_set
+        except Exception as e:                       # noqa: BLE001
+            print(f"  {C.RED}✗{C.RESET} profiles unavailable: {e}")
+            return
+
+        arg = (arg or "").strip()
+        profiles = PR.load_profiles()
+
+        # `profile key <preset>` — store a personal secret in the OS keyring.
+        if arg.startswith("key"):
+            target = arg[3:].strip()
+            if target not in PRESETS:
+                print(f"  {C.RED}✗{C.RESET} Unknown preset: {target or '(none given)'}")
+                print(f"  {C.DIM}Presets:{C.RESET} {', '.join(sorted(PRESETS))}")
+                return
+            if not keyring_available():
+                print(f"  {C.YELLOW}⚠{C.RESET} No keyring backend. Export "
+                      f"{C.CYAN}APEXA_LLM_API_KEY{C.RESET} instead.")
+                return
+            if pt_session is None:
+                print(f"  {C.RED}✗{C.RESET} No interactive prompt available.")
+                return
+            secret = (await pt_session.prompt_async(
+                f"  Paste the API key for {target} (hidden): ", is_password=True)).strip()
+            if not secret:
+                print(f"  {C.DIM}Cancelled — nothing stored.{C.RESET}")
+                return
+            ok = keyring_set(target, secret)
+            print(f"  {C.GREEN}✓{C.RESET} Stored in the OS keyring for {C.CYAN}{target}{C.RESET}"
+                  if ok else f"  {C.RED}✗{C.RESET} Keyring refused the write.")
+            return
+
+        force = arg in ("refresh", "")
+        if arg == "refresh":
+            PR.clear_choice()
+
+        # `profile` / `profile list` — show what is active and what is possible.
+        if arg in ("", "list", "refresh"):
+            checks = PR.probe_cached(force=(arg == "refresh"))
+            active, how = PR.resolve_active()
+            print(f"\n  {C.BOLD}{PR.describe(active, how)}{C.RESET}")
+            print(f"  {C.DIM}{'─' * 60}{C.RESET}")
+            for name, p in profiles.items():
+                reach = PR.is_reachable(p, checks)
+                cred  = PR.has_credential(p)
+                mark  = (f"{C.GREEN}●{C.RESET}" if reach and cred else f"{C.DIM}○{C.RESET}")
+                why   = ("" if reach and cred else
+                         f"  {C.DIM}({'unreachable' if not reach else 'no credential'}){C.RESET}")
+                tag   = f" {C.YELLOW}external{C.RESET}" if p.external else ""
+                here  = f" {C.BCYAN}← active{C.RESET}" if active and name == active.name else ""
+                print(f"  {mark} {C.CYAN}{name:<20}{C.RESET}{C.DIM}{p.preset:<14}{C.RESET}{tag}{why}{here}")
+            print(f"\n  {C.DIM}profile <name> · profile refresh · profile key <preset>{C.RESET}\n")
+            return
+
+        # `profile <name>` — switch.
+        if arg not in profiles:
+            print(f"  {C.RED}✗{C.RESET} Unknown profile: {arg}")
+            print(f"  {C.DIM}Known:{C.RESET} {', '.join(sorted(profiles))}")
+            return
+        prof = profiles[arg]
+        if not PR.has_credential(prof):
+            print(f"  {C.YELLOW}⚠{C.RESET} {arg} has no credential yet — "
+                  f"run {C.CYAN}profile key {prof.preset}{C.RESET} first.")
+            return
+        PR.apply(prof)
+        PR.set_choice(arg)
+        self.selected_model = os.environ.get("ARGO_MODEL", self.selected_model)
+        self.environment    = prof.preset
+        print(f"  {C.GREEN}✓{C.RESET} {PR.describe(prof, 'chosen')}")
+        if prof.external:
+            # The whole risk of seamless switching: not noticing you left.
+            print(f"  {C.YELLOW}⚠{C.RESET} Inference now leaves ANL. Review data "
+                  f"governance before sending beamline paths or data.")
+
+    def _init_profile(self) -> str:
+        """Resolve and apply the connection profile at startup.
+
+        Returns a one-line banner, or "" when profiles stayed out of the way.
+
+        **An operator who set ``APEXA_LLM_PRESET`` by hand always wins** — the
+        same "never boxed in" rule the presets themselves follow. Profiles are a
+        convenience layer over the existing env vars, not a new authority, so a
+        site with a pinned preset behaves exactly as it did before this existed.
+
+        Fail-open: any error here leaves the environment untouched rather than
+        blocking startup over a configuration nicety.
+        """
+        if (os.environ.get("APEXA_LLM_PRESET") or "").strip():
+            return ""
+        try:
+            import apexa_profiles as PR
+            prof, how = PR.resolve_active()
+            if prof is None:
+                return ""
+            PR.apply(prof)
+            if os.environ.get("ARGO_MODEL"):
+                self.selected_model = os.environ["ARGO_MODEL"]
+            return PR.describe(prof, how)
+        except Exception:
+            return ""
+
     async def interactive_analysis_session(self):
         n_tools = len(self._available_tools)
         servers = ', '.join(self.sessions.keys())
+        _profile_line = self._init_profile()
         print(f"\n  {C.BOLD}{C.BCYAN}APEXA{C.RESET} {C.DIM}— Advanced Photon EXperiment Assistant{C.RESET}")
         print(f"  {C.DIM}{'─' * 48}{C.RESET}")
         print(f"  {C.GRAY}Model:{C.RESET} {C.BOLD}{self.selected_model}{C.RESET} {C.DIM}({self.environment}){C.RESET}  {C.GRAY}│{C.RESET}  {C.BGREEN}{n_tools}{C.RESET} {C.GRAY}tools{C.RESET}  {C.GRAY}│{C.RESET}  {C.GRAY}Servers:{C.RESET} {C.CYAN}{servers}{C.RESET}")
+        if _profile_line:
+            # External inference is the one thing an operator must not miss:
+            # seamless switching is only safe if "you have left ANL" is loud.
+            _ext = "EXTERNAL" in _profile_line
+            print(f"  {C.YELLOW if _ext else C.GRAY}{_profile_line}{C.RESET}")
         print(f"  {C.DIM}Type {C.RESET}{C.CYAN}help{C.RESET}{C.DIM} for commands, {C.RESET}{C.CYAN}quit{C.RESET}{C.DIM} to exit{C.RESET}\n")
         
         # prompt_toolkit: tab completion, history, bracketed paste
@@ -2476,9 +2426,11 @@ class APEXAClient:
                 elif user_input.lower() == 'clear':
                     if self.orchestrator:
                         self.orchestrator.clear_history()
+                    self.context.save_session(self.context.active_session, conversation=[], summary="")
                     print(f"  {C.GREEN}✓{C.RESET} Conversation history cleared")
                 elif user_input.lower() in ('clear tools', 'forget tools'):
                     n = self.orchestrator.clear_tool_history() if self.orchestrator else 0
+                    self._autosave_session()
                     print(f"  {C.GREEN}✓{C.RESET} Cleared {n} tool-call turn(s); "
                           f"conversation prose kept")
                 elif user_input.lower() == 'models':
@@ -2625,7 +2577,7 @@ class APEXAClient:
                         # Guard against orphaning unsaved scratch work: if we are
                         # in the rolling _autosave slot with real turns and are
                         # about to switch AWAY to a different named session, those
-                        # turns would be stranded in _autosave.jsonl. Named
+                        # turns are retained in the shared scratch record. Named
                         # sessions are always safe on disk, so this only fires from
                         # scratch.
                         convo = self.orchestrator.export_history() if self.orchestrator else []
@@ -2674,13 +2626,17 @@ class APEXAClient:
                                 continue
 
                         # winding up the current session is automatic: its turns
-                        # are already on disk in its append-only transcript.
+                        # and executed tool outputs are already saved on disk.
                         if self.context.load_session(session_name):
                             restored = self.context.loaded_conversation
                             restored_summary = self.context.loaded_summary
+                            if self.context.loaded_model:
+                                self.selected_model = self.context.loaded_model
                             if self.orchestrator:
+                                self.orchestrator.clear_history()
                                 self.orchestrator.import_history(restored)
                                 self.orchestrator.import_summary(restored_summary)
+                                self.orchestrator._active_dir = self.context.loaded_directory
                             extra = ", +summary" if restored_summary else ""
                             print(f"  {C.GREEN}✓{C.RESET} Session loaded: {C.CYAN}{session_name}{C.RESET} "
                                   f"{C.DIM}({len(restored)} messages restored{extra}){C.RESET}")
@@ -3075,6 +3031,8 @@ class APEXAClient:
                             print(f"  {C.DIM}Did you mean:{C.RESET} "
                                   + f"{C.DIM},{C.RESET} ".join(f"{C.CYAN}{m}{C.RESET}" for m in _sugg))
                         print(f"  {C.DIM}Type {C.RESET}{C.CYAN}models{C.RESET}{C.DIM} to see available{C.RESET}")
+                elif user_input.lower() == 'profile' or user_input.lower().startswith('profile '):
+                    await self._handle_profile_cmd(user_input[7:], pt_session)
                 elif user_input == 'ls' or (user_input.startswith('ls ') and not user_input[3:].lstrip().startswith('-')):
                     path = user_input[2:].strip() or "."
                     if "core" in self.sessions:
@@ -3119,9 +3077,7 @@ class APEXAClient:
                         print(f"  {C.RED}✗{C.RESET} Core server not connected")
 
                 elif user_input:
-                    # Append-only transcript: record the prompt before running
-                    # so a crash mid-turn still leaves the question on disk.
-                    self.context.append_message("user", user_input)
+                    # run_query persists the prompt and every tool result before replying.
                     # Run the query as a cancellable task. Ctrl-C during it fires
                     # _on_sigint (POSIX) → task.cancel() → CancelledError here; on
                     # Windows (no signal handler) Ctrl-C raises KeyboardInterrupt at
@@ -3137,7 +3093,6 @@ class APEXAClient:
                     finally:
                         self._active_task = None
                     self._print_response(response)
-                    self.context.append_message("assistant", response)
                     self._autosave_session()
 
             except KeyboardInterrupt:

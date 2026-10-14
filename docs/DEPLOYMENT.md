@@ -2,9 +2,17 @@
 
 Goal: one persistent APEXA **web service** on a beamline machine (e.g. chiltepin /
 chutoro), reachable in a browser on the APS network — so users don't launch it
-per session. This is a deployment decision, not new code: `web_server.py` already
-binds `0.0.0.0:8001`, ships a prebuilt frontend (no Node needed), and spawns the
+per session. `web_server.py` defaults to
+`127.0.0.1:8001`, uses the prebuilt frontend (no Node needed at runtime), and spawns the
 `core` / `midas` / `motor` MCP servers itself.
+
+The application currently has a shared MCP client and no application login.
+Use one trusted operator per instance. Remote operators can use an SSH tunnel:
+`ssh -N -L 8001:127.0.0.1:8001 user@beamline-host`, then open
+`http://127.0.0.1:8001`. For network service, place an authenticated reverse proxy
+in front of localhost and protect **both HTTP and WebSocket** routes. Authentication
+alone does not provide session isolation. See [APS readiness review](APS_READINESS.md)
+for the remaining production gates.
 
 ---
 
@@ -29,8 +37,8 @@ on reboot and won't auto-restart. Documented last as a fallback.
 
 ```bash
 cd /path/to/APEXA-APS-Beamline-Assistant
-git pull                 # get the latest
-uv sync                  # create/refresh .venv (~1s)
+# Check out the release commit validated for this beamline before installing.
+uv sync --locked         # install the release's dependency versions
 ./setup_user.sh          # writes .env (ANL_USERNAME, ARGO_MODEL, MIDAS_PATH)
 test -f frontend/dist/index.html && echo "frontend OK"   # prebuilt, shipped
 ```
@@ -39,7 +47,7 @@ Smoke-test in the foreground before daemonizing:
 
 ```bash
 .venv/bin/python3 web_server.py
-# → open http://<machine>:8001 in a browser, run one query, Ctrl+C
+# → open http://127.0.0.1:8001 locally or through the SSH tunnel
 ```
 
 > **Air-gapped / no-internet machine?** The RAG knowledge base needs its ~523 MB
@@ -63,7 +71,7 @@ loginctl enable-linger "$USER"               # keep running when logged out / af
 systemctl --user status apexa-web            # should read "active (running)"
 ```
 
-Browse to `http://<machine-hostname>:8001`.
+Browse to `http://127.0.0.1:8001` locally or through the SSH tunnel.
 
 ### Day-to-day operations
 
@@ -78,7 +86,8 @@ journalctl --user -u apexa-web --since "1 hour ago"
 
 ```bash
 cd /path/to/APEXA-APS-Beamline-Assistant
-git pull && uv sync
+# Check out the next validated release commit; retain the previous release for rollback.
+uv sync --locked
 systemctl --user restart apexa-web
 ```
 
@@ -126,16 +135,14 @@ Dies on reboot, no auto-restart — use only for short-lived hosting.
    per-user attribution or quota matters you need a login layer that swaps the
    username per session. Raise this explicitly — it's policy, not code.
 
-2. **Network exposure.** `0.0.0.0:8001` is reachable by anything that can route to
-   the host. Confirm `:8001` is open on the beamline subnet / behind the APS
-   firewall, or front it with a reverse proxy (nginx) for TLS + a friendly
-   hostname. Change host/port via `APEXA_WEB_HOST` / `APEXA_WEB_PORT` in the unit.
+2. **Network exposure.** Keep the default `127.0.0.1:8001` backend. Use an SSH
+   tunnel or an authenticated reverse proxy with TLS. An explicit override to
+   `0.0.0.0` exposes the backend to any host that can route to it.
 
 3. **Security surface.** APEXA can run shell commands and drive motors via its MCP
-   tools. Keep the service on the internal network only; if it's reachable more
-   widely, add authentication (reverse-proxy basic auth at minimum) before going
-   live. The destructive-command block and motor-confirmation prompts are a floor,
-   not a substitute for network isolation.
+   tools. Require authenticated access for shared network hosting, including on
+   the internal network. Scope the deployment account and enabled tools to the
+   intended analysis workflow.
 
 ---
 
@@ -146,3 +153,5 @@ curl -sS http://localhost:8001/ >/dev/null && echo "APEXA web up"
 ```
 
 Wire this into a monitoring check or a `systemd` timer if you want alerting.
+This checks HTTP availability only; it does not establish MCP, model, storage,
+or MIDAS readiness.

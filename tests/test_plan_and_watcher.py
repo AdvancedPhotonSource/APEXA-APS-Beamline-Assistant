@@ -18,7 +18,9 @@ import os
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 
+import pytest
 import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -85,19 +87,96 @@ def test_stem_grouping_and_dark_exclusion():
 def test_is_complete_count_and_quiet():
     paths = ["a", "b", "c"]
     done, why = watcher.is_complete(paths, expected_count=3)
-    assert done and "expected_count" in why
+    assert not done and "vanished" in why
     wait, why = watcher.is_complete(paths, expected_count=5)
     assert not wait and "3/5" in why
     # quiet-period path needs real files with mtimes
     with tempfile.TemporaryDirectory() as td:
         fp = os.path.join(td, "f.h5")
-        open(fp, "w").close()
+        with open(fp, "w") as fh:
+            fh.write("data")
         old = time.time() - 120
         os.utime(fp, (old, old))
         done, why = watcher.is_complete([fp], expected_count=None,
                                         quiet_seconds=30.0)
         assert done and "no new frames" in why
     print("test_is_complete_count_and_quiet OK")
+
+
+def test_count_waits_for_last_write(tmp_path):
+    frame = tmp_path / "scan_000001.h5"
+    frame.write_bytes(b"detector data")
+    os.utime(frame, (100, 100))
+    assert not watcher.is_complete([frame], expected_count=1, now=110)[0]
+    assert watcher.is_complete([frame], expected_count=1, now=131)[0]
+    frame.write_bytes(b"")
+    assert not watcher.is_complete([frame], expected_count=1, now=time.time()+100)[0]
+    assert not watcher.is_complete([], now=200)[0]
+    assert not watcher.is_complete([frame, frame], expected_count=1, now=200)[0]
+
+
+def _watch_args(tmp_path):
+    return SimpleNamespace(
+        directory=str(tmp_path), pattern="*.h5", exclude_substring="dark",
+        expected_count=1, quiet_seconds=0, technique="waxs", instrument="",
+        energy=None, param_file="p.txt", calibrant="", data_location="",
+        dark_source="none", dark_kind="after", dark_location="",
+        result_folder=str(tmp_path / "results"), execute=True,
+    )
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("worker lost"),
+    '{"status":"error"}', {"status":"partial", "failed":1},
+    {"status":"dispatch_recommended"}, "unparseable", None])
+def test_failed_job_can_retry(tmp_path, monkeypatch, failure):
+    (tmp_path / "scan_000001.h5").write_bytes(b"data")
+    args = _watch_args(tmp_path)
+    outcomes = iter([failure, '{"status":"success", "failed":0}'])
+    calls = []
+    def execute(plan):
+        calls.append(plan)
+        out = next(outcomes)
+        if isinstance(out, Exception):
+            raise out
+        return out
+    monkeypatch.setattr(watcher, "execute_plan", execute)
+    fired = watcher.scan_once(args, set())
+    assert not fired
+    fired = watcher.scan_once(args, fired)
+    assert len(fired) == 1
+    watcher.scan_once(args, fired)
+    assert len(calls) == 2
+
+
+def test_scan_isolates_directories_and_exact_inputs(tmp_path, monkeypatch):
+    for folder in ("first", "second"):
+        d = tmp_path / folder
+        d.mkdir()
+        (d / "scan_000001.h5").write_bytes(b"data")
+        (d / "scan_notes.txt").write_text("not detector data")
+    (tmp_path / "directory.h5").mkdir()
+    calls = []
+    def execute(plan):
+        calls.append(plan)
+        return {"status": "success"}
+    monkeypatch.setattr(watcher, "execute_plan", execute)
+    fired = watcher.scan_once(_watch_args(tmp_path), set())
+    assert len(fired) == len(calls) == 2
+    assert len({p.result_folder for p in calls}) == 2
+    for plan in calls:
+        kw = plan.to_integrate_series_kwargs()
+        assert kw["images"] == [str(tmp_path / plan.data.image_dir / "scan_000001.h5")]
+        back = APEXAPlan.from_dict(yaml.safe_load(plan.to_yaml()))
+        assert back.data.images == plan.data.images
+
+
+@pytest.mark.parametrize("flag,value", [("--expected-count", "0"),
+    ("--interval", "0"), ("--interval", "nan"),
+    ("--quiet-seconds", "-1"), ("--quiet-seconds", "inf")])
+def test_watcher_rejects_invalid_timing(tmp_path, flag, value):
+    with pytest.raises(SystemExit) as exc:
+        watcher.main([str(tmp_path), flag, value, "--once"])
+    assert exc.value.code == 2
 
 
 def test_watcher_refuses_hedm_autoexecute():

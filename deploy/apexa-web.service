@@ -37,7 +37,9 @@ WorkingDirectory=__APEXA_DIR__
 EnvironmentFile=__APEXA_DIR__/.env
 
 # Network binding — change host/port here without touching code:
-Environment=APEXA_WEB_HOST=0.0.0.0
+# Local console / SSH tunnel by default. Authenticate HTTP and WebSocket traffic
+# at a reverse proxy before providing shared network access.
+Environment=APEXA_WEB_HOST=127.0.0.1
 Environment=APEXA_WEB_PORT=8001
 Environment=NUMEXPR_MAX_THREADS=10
 

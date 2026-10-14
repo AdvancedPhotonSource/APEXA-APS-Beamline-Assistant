@@ -45,7 +45,7 @@ SCHEMA_VERSION = "0.1"
 TECHNIQUES = (
     "ff-hedm", "nf-hedm", "pf-hedm",   # 3D microstructure
     "waxs", "saxs", "integration",     # azimuthal integration / scattering
-    "calibration",                     # CeO2 / LaB6 detector calibration
+    "calibration", "powder-refinement", # detector calibration and powder models
 )
 
 
@@ -105,6 +105,7 @@ class DataSpec:
     data_location: str = ""                  # HDF5 dataset path, e.g. "exchange/data"
     expected_count: Optional[int] = None     # frames needed for a COMPLETE set
     exclude_substring: str = "dark"
+    images: list[str] = field(default_factory=list)  # exact acquisition snapshot
 
 
 @dataclass
@@ -142,6 +143,14 @@ class Compute:
 
 
 @dataclass
+class PowderRefinement:
+    mode: str = "independent"
+    observations: list[dict] = field(default_factory=list)
+    max_steps: int = 100
+    workers: int = 2
+
+
+@dataclass
 class APEXAPlan:
     """A complete, reviewable analysis plan. YAML is the canonical form."""
     technique: str = "integration"
@@ -155,6 +164,7 @@ class APEXAPlan:
     dark: DarkSpec = field(default_factory=DarkSpec)
     grid: Grid = field(default_factory=Grid)
     compute: Compute = field(default_factory=Compute)
+    refinement: PowderRefinement = field(default_factory=PowderRefinement)
     result_folder: str = ""
 
     # Provenance: everything the planner INFERRED rather than was told.
@@ -182,6 +192,15 @@ class APEXAPlan:
                 issues.append("calibration.parameter_file is required for integration/HEDM")
             if not self.data.image_dir and not self.data.stem:
                 issues.append("data: need image_dir or stem")
+        if self.technique == "powder-refinement":
+            if self.refinement.mode not in ("independent", "sequential", "joint", "search"):
+                issues.append("invalid powder refinement mode")
+            if not self.refinement.observations:
+                issues.append("refinement.observations are required")
+            for i, o in enumerate(self.refinement.observations):
+                if not all(o.get(k) for k in ("data_path", "instrument_path", "cif_paths")):
+                    issues.append(f"observation {i} requires data_path, instrument_path and cif_paths")
+            return issues
         # Energy is only required when it can't be read from a parameter file
         # (integration/HEDM carry energy in the MIDAS params; calibration needs it up front).
         if (self.beam.energy_keV is None and self.beam.wavelength_A is None
@@ -209,7 +228,7 @@ class APEXAPlan:
         sub = {
             "sample": Sample, "beam": Beam, "detector": Detector,
             "calibration": Calibration, "data": DataSpec, "dark": DarkSpec,
-            "grid": Grid, "compute": Compute,
+            "grid": Grid, "compute": Compute, "refinement": PowderRefinement,
         }
         kw: dict = {}
         for key, klass in sub.items():
@@ -233,6 +252,11 @@ class APEXAPlan:
             return cls.from_dict(yaml.safe_load(fh))
 
     # ── bridge to the executor ───────────────────────────────────────────────
+    def to_powder_refine_kwargs(self) -> dict:
+        return {"observations": self.refinement.observations, "mode": self.refinement.mode,
+                "max_steps": self.refinement.max_steps, "workers": self.refinement.workers,
+                "output_dir": self.result_folder or "powder_refinement"}
+
     def to_integrate_series_kwargs(self) -> dict:
         """Project the plan onto ``midas_integrate_series`` arguments.
 
@@ -241,6 +265,7 @@ class APEXAPlan:
         """
         kw = {
             "parameter_file": self.calibration.parameter_file,
+            "images": self.data.images or None,
             "image_dir": self.data.image_dir or None,
             "pattern": self.data.pattern,
             "exclude_substring": self.data.exclude_substring,

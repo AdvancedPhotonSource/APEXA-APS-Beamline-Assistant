@@ -31,11 +31,14 @@ and the agentic_gsas2 package on that interpreter's path.
 """
 from typing import Any, Dict, List, Optional
 import json
+import asyncio
 import os
 import subprocess
 import sys
 import time
 import uuid
+import re
+import textwrap
 from pathlib import Path
 
 import logging
@@ -105,8 +108,8 @@ def _run_python(code: str, timeout: int = 900) -> Dict[str, Any]:
                            env=env)
     except subprocess.TimeoutExpired:
         return {"status": "error",
-                "error": f"timed out after {timeout}s; use refine_pattern "
-                         f"with wait=false for long refinements"}
+                "error": f"Timed out after {timeout}s. Inspect output/logs before retrying. "
+                         "For pattern series use refine_series_submit and refinement_status."}
     if p.returncode != 0:
         return {"status": "error", "error": (p.stderr or "")[-1500:]}
     # The framework prints progress to stdout, so take the last JSON object.
@@ -136,6 +139,8 @@ def _trust(summary: Dict[str, Any]) -> Dict[str, Any]:
     reason, so the agent can act on the reason rather than on a score.
     """
     flags: List[str] = []
+    if summary.get("scientific_status") != "qualified":
+        flags.append("scientific qualification is " + str(summary.get("scientific_status", "unavailable")))
     # Findings the framework itself recorded, each a symptom named in
     # Toby's textbook with the cause it assigns. Carried through rather
     # than re-derived here, so the MCP layer and the framework cannot
@@ -202,8 +207,7 @@ async def refine_pattern(
 
     Args:
         data_file: powder pattern.
-        cif_files: starting structures. Pass [] to retrieve one instead
-            (see propose_structures).
+        cif_files: starting structures; retrieve a candidate pool with propose_structures first.
         output_dir: where the GPX, CIF, plots and decision trace are written.
         instprm_file: GSAS-II instrument parameter file.
         bkg_terms: Chebyshev background terms.
@@ -223,6 +227,9 @@ async def refine_pattern(
     Returns JSON: Rwp, GOF, cell, phase fractions, stop reason, and a
     trust verdict naming any reason the result should be inspected.
     """
+    if not cif_files:
+        return format_result({"tool": "refine_pattern", "status": "error",
+                              "error": "Supply CIFs. Use propose_structures for retrieval, then powder_refine_submit(mode='search') to compare mixtures."})
     code = f"""
 import json, sys
 sys.path.insert(0, {DEFAULT_AGENTIC_REPO!r})
@@ -258,7 +265,7 @@ except Exception:
     pass
 print(json.dumps(s, default=str))
 """
-    out = _run_python(code, timeout=1800)
+    out = await asyncio.to_thread(_run_python, code, timeout=1800)
     if out.get("status") == "error":
         return format_result({"tool": "refine_pattern", **out})
     verdict = _trust(out)
@@ -268,6 +275,9 @@ print(json.dumps(s, default=str))
         "stop_reason": out.get("stop_reason"),
         "steps": out.get("step_count"),
         "phases": out.get("phases"),
+        **{k: out.get(k) for k in ("weight_fractions", "phase_fraction_reports", "effective_cells",
+                                   "execution_status", "numerical_status", "scientific_status", "qualification",
+                                   "evidence_coverage", "input_identity", "gpx_path", "provenance", "diagnostics")},
         "output_dir": output_dir,
         "trust": verdict,
         "instrument_policy": out.get("instrument_policy"),
@@ -318,6 +328,10 @@ async def propose_structures(
     Returns JSON: ranked candidates with COD id, space group, cell, M20
     and the local CIF path for each.
     """
+    from apexa_network import tool_unavailable_reason
+    unavailable = tool_unavailable_reason("propose_structures")
+    if unavailable:
+        return format_result({"tool": "propose_structures", "status": "error", "error": unavailable})
     code = f"""
 import json, sys
 import numpy as np
@@ -350,7 +364,7 @@ print(json.dumps({{"status": "success", "candidates": [
       "cell": list(z.entry.cell), "cif": str(z.cif_path)}} for z in c]}},
     default=str))
 """
-    out = _run_python(code, timeout=600)
+    out = await asyncio.to_thread(_run_python, code, timeout=600)
     return format_result({"tool": "propose_structures", **out})
 
 
@@ -422,7 +436,7 @@ plan = recommend(ctx, n_histograms=1, n_phases={n_phases!r},
                      {instrument_profile_calibrated!r}))
 print(json.dumps(plan.to_dict(), default=str))
 """
-    out = _run_python(code, timeout=300)
+    out = await asyncio.to_thread(_run_python, code, timeout=300)
     if out.get("status") == "error":
         return format_result({"tool": "plan_refinement", **out})
     return format_result({"tool": "plan_refinement", "status": "success",
@@ -476,12 +490,8 @@ async def refine_series_submit(
     agent driving an instrument must not wait on it. Poll with
     refinement_status.
 
-    KNOWN LIMITATION, stated because it bears directly on in-situ use:
-    on our 17-temperature benchmark the reported lattice parameter is
-    identical at every temperature. The sequential entry point predates
-    the framework's direct cell-refinement path and does not yet carry
-    it, so a thermal-expansion trend cannot currently be read out of this
-    tool. Phase fractions and residuals are unaffected.
+    Warm starts transfer compatible model state into each new observation.
+    Reported reference and effective cells remain provisional until validated.
 
     Args:
         data_files: patterns in acquisition order.
@@ -492,56 +502,14 @@ async def refine_series_submit(
         max_steps: cap per pattern.
         fmthint: GSAS-II reader hint; pass "GSAS" for legacy .XRA/.CWN/.fxye.
     """
-    err = _env_ok()
-    if err:
-        return format_result({"tool": "refine_series_submit",
-                              "status": "error", "error": err})
-    JOBS_DIR.mkdir(parents=True, exist_ok=True)
-    job_id = f"gsas2-{uuid.uuid4().hex[:10]}"
-    job = JOBS_DIR / job_id
-    job.mkdir()
-    script = job / "run.py"
-    script.write_text(f"""
-import json, sys
-sys.path.insert(0, {DEFAULT_AGENTIC_REPO!r})
-from dataclasses import replace
-from agentic_gsas2 import AgentConfig
-from agentic_gsas2.orchestrator import refine_one
-from pathlib import Path
-cfg = replace(AgentConfig(), refine_atoms=True)
-cfg = replace(cfg, worstfit=replace(cfg.worstfit, max_steps={max_steps!r}))
-out = []
-for i, f in enumerate({data_files!r}):
-    d = Path({output_dir!r}) / ("pattern_%03d" % i)
-    d.mkdir(parents=True, exist_ok=True)
-    try:
-        kw = {{}}
-        if {fmthint!r}: kw["fmthint"] = {fmthint!r}
-        s = refine_one(data_path=f, cif_paths={cif_files!r},
-                       output_dir=str(d), instprm_path={instprm_file!r},
-                       config=cfg, **kw)
-        out.append({{"i": i, "file": f, "Rwp": s.get("Rwp"),
-                     "stop_reason": s.get("stop_reason"),
-                     "phases": s.get("phases")}})
-    except Exception as e:
-        out.append({{"i": i, "file": f, "error": str(e)[:200]}})
-    Path({str(job)!r}, "progress.json").write_text(
-        json.dumps({{"done": i + 1, "total": len({data_files!r}),
-                     "results": out}}, default=str))
-Path({str(job)!r}, "done").write_text("ok")
-""")
-    log = (job / "log.txt").open("w")
-    env = dict(os.environ)
-    env["PYTHONPATH"] = DEFAULT_AGENTIC_REPO
-    for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
-        env.setdefault(v, "1")
-    subprocess.Popen([DEFAULT_GSASII_PYTHON, str(script)],
-                     stdout=log, stderr=subprocess.STDOUT, env=env,
-                     start_new_session=True)
-    return format_result({
-        "tool": "refine_series_submit", "status": "submitted",
-        "job_id": job_id, "n_patterns": len(data_files),
-        "poll_with": f"refinement_status(job_id='{job_id}')"})
+    if not data_files or not cif_files or not instprm_file:
+        return format_result({"tool": "refine_series_submit", "status": "error",
+                              "error": "Supply data, candidate CIFs and an instrument file."})
+    observations = [{"data_path": f, "instrument_path": instprm_file,
+                     "cif_paths": cif_files, "format": fmthint or "xye",
+                     "frame_id": str(i)} for i, f in enumerate(data_files)]
+    return await powder_refine_submit(observations, mode="sequential" if warm_start else "independent",
+                                      output_dir=output_dir, max_steps=max_steps)
 
 
 @mcp.tool()
@@ -551,10 +519,38 @@ async def refinement_status(job_id: str) -> str:
     Args:
         job_id: id returned by refine_series_submit.
     """
+    if re.fullmatch(r"[0-9a-f]{24}", job_id):
+        from apexa_powder import status
+        try:
+            current = await asyncio.to_thread(status, DEFAULT_GSASII_PYTHON, DEFAULT_AGENTIC_REPO,
+                                              JOBS_DIR / "engine", [job_id])
+            job = current["jobs"][0]
+            return format_result({"tool": "refinement_status", "job_id": job_id,
+                                  "status": job["state"], "jobs": [job]})
+        except Exception as exc:
+            return format_result({"tool": "refinement_status", "status": "error", "error": str(exc)})
+    if not re.fullmatch(r"gsas2-[0-9a-f]{10}", job_id):
+        return format_result({"tool": "refinement_status", "status": "error", "error": "Invalid job id"})
     job = JOBS_DIR / job_id
     if not job.is_dir():
         return format_result({"tool": "refinement_status", "status": "error",
                               "error": f"unknown job {job_id}"})
+    manifest = job / "engine.json"
+    if manifest.is_file():
+        from apexa_powder import status
+        info = json.loads(manifest.read_text())
+        try:
+            current = await asyncio.to_thread(status, DEFAULT_GSASII_PYTHON, DEFAULT_AGENTIC_REPO,
+                                              info["store"], info["job_ids"])
+            jobs = current["jobs"]
+            terminal = all(j["state"] in ("completed", "failed", "cancelled") for j in jobs)
+            failed = sum(j["state"] in ("failed", "cancelled") for j in jobs)
+            return format_result({"tool": "refinement_status", "job_id": job_id,
+                                  "status": ("error" if failed == len(jobs) else "partial" if failed else "complete") if terminal else "running",
+                                  "done": sum(j["state"] == "completed" for j in jobs), "total": len(jobs),
+                                  "failed_patterns": failed, "jobs": jobs})
+        except Exception as exc:
+            return format_result({"tool": "refinement_status", "status": "error", "error": str(exc)})
     prog = job / "progress.json"
     done = (job / "done").exists()
     payload: Dict[str, Any] = {"tool": "refinement_status", "job_id": job_id,
@@ -568,7 +564,179 @@ async def refinement_status(job_id: str) -> str:
             pass
     elif not done:
         payload["note"] = "started; no pattern has finished yet"
+    results = payload.get("results") or []
+    failed = sum(bool(r.get("error")) for r in results)
+    payload["failed_patterns"] = failed
+    if done and failed:
+        payload["status"] = "error" if failed == len(results) else "partial"
+    if (job / "error.json").exists():
+        payload.update(status="error", error=json.loads((job / "error.json").read_text()).get("error"))
+    elif not done and (job / "process.json").exists():
+        try:
+            pid = json.loads((job / "process.json").read_text())["pid"]
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            payload.update(status="error", error="Worker exited without completing; inspect log.txt before retrying.")
+        except (OSError, ValueError, KeyError):
+            payload.update(status="unknown", note="Worker state could not be established; inspect log.txt before retrying.")
     return format_result(payload)
+
+
+@mcp.tool()
+async def powder_refine_submit(
+    observations: List[Dict[str, Any]], mode: str = "independent",
+    output_dir: str = "powder_refinement", max_steps: int = 100, workers: int = 2,
+) -> str:
+    """Submit heterogeneous powder observations as independent, sequential, joint or phase-search jobs.
+
+    Each observation requires data_path, instrument_path and cif_paths. Optional
+    axis/units, format, source, sample_id, frame_id, conditions, calibration_id,
+    limits and intensity_semantics preserve laboratory/synchrotron provenance.
+    Joint mode requires explicit matching sample/condition/phase identity.
+    Search treats cif_paths as the bounded pool. Poll refinement_status.
+    """
+    from apexa_powder import submit
+    if mode not in ("independent", "sequential", "joint", "search") or not 1 <= workers <= 8 or not 1 <= max_steps <= 1000:
+        return format_result({"tool": "powder_refine_submit", "status": "error", "error": "Invalid mode or resource budget"})
+    error = _env_ok()
+    if error:
+        return format_result({"tool": "powder_refine_submit", "status": "error", "error": error})
+    job_id = "gsas2-" + uuid.uuid4().hex[:10]
+    folder = JOBS_DIR / job_id
+    folder.mkdir(parents=True)
+    try:
+        result = await asyncio.to_thread(submit, DEFAULT_GSASII_PYTHON, DEFAULT_AGENTIC_REPO,
+                                         JOBS_DIR / "engine", observations, mode=mode, workers=workers,
+                                         policy={"max_steps": max_steps})
+        (folder / "engine.json").write_text(json.dumps(result))
+        export = Path(output_dir).expanduser().resolve()
+        export.mkdir(parents=True, exist_ok=True)
+        (export / (job_id + ".json")).write_text(json.dumps(result, indent=2))
+        return format_result({"tool": "powder_refine_submit", "status": "submitted", "job_id": job_id,
+                              "mode": mode, **result, "poll_with": "refinement_status"})
+    except Exception as exc:
+        (folder / "error.json").write_text(json.dumps({"error": str(exc)}))
+        return format_result({"tool": "powder_refine_submit", "status": "error", "error": str(exc)})
+
+
+@mcp.tool()
+async def powder_job_control(job_id: str, action: str) -> str:
+    """Cancel, retry or resume a powder job group or individual live job."""
+    if not re.fullmatch(r"(?:gsas2-[0-9a-f]{10}|[0-9a-f]{24})", job_id) or action not in ("cancel", "retry", "resume"):
+        return format_result({"status": "error", "error": "Invalid job or action"})
+    from apexa_powder import engine_call, start_broker
+    manifest = JOBS_DIR / job_id / "engine.json"
+    if len(job_id) == 24:
+        info = {"store": str(JOBS_DIR / "engine"), "job_ids": [job_id]}
+    elif not manifest.is_file():
+        return format_result({"status": "error", "error": "No durable job manifest"})
+    else:
+        info = json.loads(manifest.read_text())
+    try:
+        if action != "resume":
+            code = "from agentic_gsas2.jobs import JobStore\ns=JobStore(payload['store'])\nprint(json.dumps({i:getattr(s,payload['action'])(i) for i in payload['job_ids']}))"
+            await asyncio.to_thread(engine_call, DEFAULT_GSASII_PYTHON, DEFAULT_AGENTIC_REPO, code, {**info, "action": action})
+        if action != "cancel":
+            start_broker(DEFAULT_GSASII_PYTHON, DEFAULT_AGENTIC_REPO, info["store"])
+        return format_result({"status": "success", "job_id": job_id, "action": action})
+    except Exception as exc:
+        return format_result({"status": "error", "error": str(exc)})
+
+
+@mcp.tool()
+async def powder_report(job_id: str, output_path: str = "powder_report.html") -> str:
+    """Write a self-contained APEXA report with fit, coverage and scientific statuses."""
+    from apexa_report import build_report, render_html
+    try:
+        current = json.loads(await refinement_status(job_id))
+        if not current.get("jobs"):
+            raise ValueError(current.get("error", "No durable powder results available"))
+        spec = await asyncio.to_thread(build_report, current, technique="powder-refinement")
+        path = Path(output_path).expanduser().resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(render_html(spec))
+        return format_result({"tool": "powder_report", "status": "success", "path": str(path),
+                              "verdict": spec.verdict, "summary": spec.verdict_note})
+    except Exception as exc:
+        return format_result({"tool": "powder_report", "status": "error", "error": str(exc)})
+
+
+@mcp.tool()
+async def powder_trial(evidence_json: str, proposal: Dict[str, Any], output_dir: str, shadow: bool = True) -> str:
+    """Evaluate a typed multimodal or numerical proposal against its immutable evidence snapshot."""
+    from apexa_powder import engine_call
+    code = "from agentic_gsas2.trials import Proposal,evaluate_proposal\nfrom pathlib import Path\nb=json.loads(Path(payload['evidence']).read_text())\nprint(json.dumps(evaluate_proposal(Proposal(**payload['proposal']),b,payload['output'],shadow=payload['shadow'])))"
+    try:
+        result = await asyncio.to_thread(engine_call, DEFAULT_GSASII_PYTHON, DEFAULT_AGENTIC_REPO, code,
+                                        {"evidence": evidence_json, "proposal": proposal, "output": output_dir, "shadow": shadow}, 180)
+        return format_result({"tool": "powder_trial", **result})
+    except Exception as exc:
+        return format_result({"tool": "powder_trial", "status": "error", "error": str(exc)})
+
+
+@mcp.tool()
+async def powder_evidence(gpx_path: str, observation_id: str, output_dir: str) -> str:
+    """Create immutable global/peak-window evidence for numerical or image-based diagnosis."""
+    from apexa_powder import engine_call
+    code = "from agentic_gsas2.project import Project\nfrom agentic_gsas2.core import import_gsasii\nfrom agentic_gsas2.trials import evidence_bundle\nfrom pathlib import Path\np=Project(import_gsasii().G2Project(gpxfile=payload['gpx']),Path(payload['gpx']),[],[])\nprint(json.dumps(evidence_bundle(p,payload['observation_id'],payload['output'])))"
+    try:
+        result = await asyncio.to_thread(engine_call, DEFAULT_GSASII_PYTHON, DEFAULT_AGENTIC_REPO, code,
+                                        {"gpx": gpx_path, "observation_id": observation_id, "output": output_dir}, 120)
+        return format_result({"tool": "powder_evidence", "status": "success", **result})
+    except Exception as exc:
+        return format_result({"tool": "powder_evidence", "status": "error", "error": str(exc)})
+
+
+@mcp.tool()
+async def powder_advise(evidence_json: str, output_dir: str, model: Optional[str] = None,
+                        username: Optional[str] = None, evaluate_trials: bool = True) -> str:
+    """Ask the configured image-capable structured provider for up to three evidence-bound proposals.
+
+    Evaluations run in shadow mode and preserve the current model. A configured
+    endpoint/model is required. Numerical batch refinement works without it.
+    """
+    model = model or os.environ.get("APEXA_POWDER_VISION_MODEL")
+    username = username or os.environ.get("ARGO_USER") or os.environ.get("ANL_USERNAME")
+    if not model or not username:
+        return format_result({"tool": "powder_advise", "status": "unavailable",
+                              "error": "Configure an image-capable model and APEXA/Argo username before a real vision trial."})
+    from apexa_powder import advise, engine_call
+    from apexa_provider_openai import OpenAICompatProvider
+    provider = OpenAICompatProvider(username, model)
+    try:
+        bundle = json.loads(Path(evidence_json).read_text())
+        result = await advise(provider, bundle)
+        code = "from agentic_gsas2.trials import Proposal\nprint(json.dumps([Proposal(**p).__dict__ for p in payload['proposals']]))"
+        await asyncio.to_thread(engine_call, DEFAULT_GSASII_PYTHON, DEFAULT_AGENTIC_REPO, code, result)
+        result['model'] = model
+        if evaluate_trials:
+            result['trials'] = [json.loads(await powder_trial(evidence_json, proposal, output_dir, True)) for proposal in result['proposals']]
+        directory = Path(output_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        artifact = directory / ('advisor_' + uuid.uuid4().hex + '.json')
+        artifact.write_text(json.dumps(result, indent=2))
+        return format_result({"tool": "powder_advise", "status": "success", "artifact": str(artifact), **result})
+    except Exception as exc:
+        return format_result({"tool": "powder_advise", "status": "error", "error": str(exc)})
+    finally:
+        await provider.close()
+
+
+@mcp.tool()
+async def powder_live_ingest(observation: Dict[str, Any], series: str, frame: int,
+                             completion_marker: Optional[str] = None) -> str:
+    """Submit a ready powder observation to durable fast tracking and periodic full diagnosis."""
+    from apexa_powder import engine_call, start_broker
+    code = "from agentic_gsas2.jobs import JobStore\nfrom agentic_gsas2.live import LiveRefinement\nfrom agentic_gsas2.observations import Observation\ns=JobStore(payload['root'])\nlive=LiveRefinement(s,payload['series'])\no=Observation(**payload['observation'])\nready=live.ready(o.data_path,completion_marker=payload['marker'])\nresult=live.ingest(o,payload['frame']) if ready else {}\nprint(json.dumps({'status':'submitted' if ready else 'waiting_for_completion','jobs':result,'diagnostic_jobs':live.inspect_completed()}))"
+    try:
+        root = JOBS_DIR / "engine"
+        result = await asyncio.to_thread(engine_call, DEFAULT_GSASII_PYTHON, DEFAULT_AGENTIC_REPO, code,
+                                        {"root": str(root), "series": series, "frame": frame,
+                                         "observation": observation, "marker": completion_marker})
+        start_broker(DEFAULT_GSASII_PYTHON, DEFAULT_AGENTIC_REPO, root)
+        return format_result({"tool": "powder_live_ingest", **result, "poll_with": "refinement_status"})
+    except Exception as exc:
+        return format_result({"tool": "powder_live_ingest", "status": "error", "error": str(exc)})
 
 
 if __name__ == "__main__":

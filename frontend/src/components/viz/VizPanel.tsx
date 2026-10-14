@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useImageStore } from '@/stores/imageStore'
 import { useVizStore } from '@/stores/vizStore'
 import { VizTabs } from './VizTabs'
 import { Dashboard } from './Dashboard'
 import { CanvasHistory } from './CanvasHistory'
+import { ResultGallery } from './ResultGallery'
 import { ArtifactBody } from './ArtifactBody'
 import { ProvenanceBar } from './ProvenanceBar'
 import { ViewerControls } from '@/components/viewer/ViewerControls'
@@ -18,10 +20,15 @@ import type { VizArtifact } from '@/api/types'
  * A persistent header states that role and toggles between the open artifact
  * (Active) and the full session record (Results) for reproducibility.
  */
-export function VizPanel() {
-  const { artifacts, openIds, activeId, setActive, closeTab, pinned, togglePin, compareIds, toggleCompare, clearCompare } =
+export function VizPanel({ onFocus, focused = false }: { onFocus?: () => void; focused?: boolean }) {
+  const { artifacts, openIds, activeId, setActive, closeTab, pinned, togglePin, compareIds, toggleCompare, clearCompare, revealRevision } =
     useVizStore()
-  const [view, setView] = useState<'active' | 'results'>('active')
+  type CanvasView = 'active' | 'gallery' | 'results'
+  const [choice, setChoice] = useState<{ view: CanvasView; revision: number }>({ view: 'active', revision: revealRevision })
+  // Derive from the store revision so requests made while this canvas is hidden
+  // still open Active when React resumes its effects and viewers.
+  const view = choice.revision === revealRevision ? choice.view : 'active'
+  const setView = (next: CanvasView) => setChoice({ view: next, revision: revealRevision })
 
   // Nothing produced yet → the empty state explains the panel's purpose itself.
   if (artifacts.length === 0) return <Dashboard />
@@ -36,11 +43,11 @@ export function VizPanel() {
   const inCompare = compareArtifacts.length === 2
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--apexa-surface)' }}>
+    <div className="apexa-canvas" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, background: 'var(--apexa-surface)' }}>
       {/* Canvas identity + Active/Results segmented control (always visible so the
           panel's role is legible). */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
+        display: 'flex', flexWrap: 'wrap', flexShrink: 0, alignItems: 'center', gap: 8,
         padding: '7px 12px', borderBottom: '1px solid var(--apexa-border)',
         background: 'linear-gradient(180deg, var(--apexa-surface-2), transparent)',
       }}>
@@ -48,15 +55,20 @@ export function VizPanel() {
         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: 'var(--apexa-text-2)' }}>
           Canvas
         </span>
-        <span style={{ fontSize: 10, color: 'var(--apexa-text-muted)' }}>results APEXA produced</span>
         <span style={{ flex: 1 }} />
+        {onFocus && <ToolbarBtn active={focused} onClick={onFocus} title="Expand the canvas for inspection or presentation">
+          {focused ? 'Restore layout' : 'Expand canvas'}
+        </ToolbarBtn>}
         <div style={{ display: 'flex', borderRadius: 7, overflow: 'hidden', border: '1px solid var(--apexa-border)' }}>
           <SegBtn active={view === 'active'} onClick={() => setView('active')}>Active</SegBtn>
+          <SegBtn active={view === 'gallery'} onClick={() => setView('gallery')}>Gallery</SegBtn>
           <SegBtn active={view === 'results'} onClick={() => setView('results')}>Results ({artifacts.length})</SegBtn>
         </div>
       </div>
 
-      {view === 'results' ? (
+      {view === 'gallery' ? (
+        <ResultGallery onOpen={() => setView('active')} />
+      ) : view === 'results' ? (
         <CanvasHistory onOpen={() => setView('active')} />
       ) : !active ? (
         <div style={{ padding: 24, color: 'var(--apexa-text-muted)', fontSize: 13 }}>
@@ -113,6 +125,12 @@ function ActiveView({
 }) {
   const isPinned = pinned.includes(active.id)
   const isComparing = compareIds.includes(active.id)
+  const [controlsOpen, setControlsOpen] = useState(false)
+  const setActiveImage = useImageStore(s => s.setActiveImage)
+  const fileId = active.type === 'diffraction' ? (active.data as { fileId?: string }).fileId : undefined
+  useEffect(() => {
+    if (fileId) setActiveImage(fileId)
+  }, [fileId, setActiveImage])
 
   return (
     <>
@@ -122,6 +140,7 @@ function ActiveView({
       <div
         style={{
           display: 'flex',
+          flexWrap: 'wrap', flexShrink: 0,
           alignItems: 'center',
           gap: 8,
           padding: '6px 12px',
@@ -134,6 +153,17 @@ function ActiveView({
           {active.title}
         </span>
         <span style={{ flex: 1 }} />
+        {active.type === 'diffraction' && fileId && !inCompare && (
+          <ToolbarBtn active={false} onClick={() => {
+            const image = useImageStore.getState().loadedImages.get(fileId ?? '')
+            if (image) useVizStore.getState().addArtifact({ id: `sequence-${image.path}`, type: 'sequence', title: image.filename, data: { path: image.path }, sourceMessageId: active.sourceMessageId })
+          }} title="Browse frames, apply dark/mask, inspect and simulate rings">Analyze frames</ToolbarBtn>
+        )}
+        {active.type === 'diffraction' && fileId && !inCompare && (
+          <ToolbarBtn active={controlsOpen} onClick={() => setControlsOpen(v => !v)} title="Show image contrast and analysis controls">
+            {controlsOpen ? 'Hide controls' : 'Image controls'}
+          </ToolbarBtn>
+        )}
         <ToolbarBtn active={isPinned} onClick={() => togglePin(active.id)} title="Pin this artifact">
           {isPinned ? '★ pinned' : '☆ pin'}
         </ToolbarBtn>
@@ -148,14 +178,14 @@ function ActiveView({
       </div>
 
       {/* Body — single active artifact, or two-up compare */}
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
+      <div className="apexa-canvas-body" style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden', display: 'flex' }}>
         {inCompare ? (
-          <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <div className="apexa-compare-grid">
             {compareArtifacts.map((a, i) => (
               <div
                 key={a.id}
                 style={{
-                  flex: 1,
+                  minWidth: 0, minHeight: 320,
                   display: 'flex',
                   flexDirection: 'column',
                   overflow: 'hidden',
@@ -165,7 +195,7 @@ function ActiveView({
                 <div style={{ padding: '4px 10px', fontSize: 11, color: 'var(--apexa-text-muted)', borderBottom: '1px solid var(--apexa-border)' }}>
                   {a.title}
                 </div>
-                <div style={{ flex: 1, overflow: 'auto' }}>
+                <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'auto' }}>
                   <ArtifactBody artifact={a} />
                 </div>
                 <ProvenanceBar prov={deriveProvenance(a)} />
@@ -174,15 +204,16 @@ function ActiveView({
           </div>
         ) : (
           <>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <div style={{ flex: 1, overflow: 'auto' }}>
+            <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'auto' }}>
                 <ArtifactBody artifact={active} />
               </div>
               <ProvenanceBar prov={deriveProvenance(active)} />
             </div>
 
-            {active.type === 'diffraction' && (
+            {active.type === 'diffraction' && fileId && controlsOpen && (
               <div
+                className="apexa-image-controls"
                 style={{
                   width: 270,
                   flexShrink: 0,

@@ -19,7 +19,7 @@ overlap:
 
 | | Owns |
 |---|---|
-| **FF-HEDM graph** (`APEXA_WORKFLOW_MODE=graph`) | The **gated HEDM procedure** — calibrate → in-plane tx → reconstruct, with human-in-the-loop decision gates, checkpoint/resume, and per-step idempotency. This is the plan-and-execute engine for FF/NF/PF-HEDM setup; it writes its own record (`APEXA_ffhedm_workflow.json`). |
+| **FF-HEDM graph** (`APEXA_WORKFLOW_MODE=graph`) | The gated FF procedure — calibrate → in-plane tx → reconstruct, with human decision gates, checkpoint/resume, and per-step idempotency. It writes `APEXA_ffhedm_workflow.json`. NF/PF need their matching procedures and tools. |
 | **Plan schema + watcher** (this doc) | **Acquisition-driven triggering** for the azimuthal-integration family (`waxs`/`saxs`/`integration`): detect a completed scan and fire one idempotency-guarded `midas_integrate_series`. |
 
 So the plan YAML is **not** a second agent-facing planning paradigm — for HEDM
@@ -71,6 +71,17 @@ kwargs = plan.to_integrate_series_kwargs()   # -> midas_integrate_series(**kwarg
 `data_location`/`dark_location` matter: a separate `.h5` dark's frame is at
 `exchange/data`, **not** the integrator's default `exchange/dark` (see
 `CLAUDE.md` → batch integration).
+
+Watcher plans also record `data.images`, the exact list of files observed for
+that directory/stem. Execution passes this list to the integration tool instead
+of expanding the stem wildcard again. `expected_count` counts **files**, not
+frames within a multi-frame HDF5 file. The watcher requires non-empty regular
+files and `--quiet-seconds` since the newest write even when a count is supplied;
+an excess count requires review of grouping. A quiet period is a heuristic,
+not proof that an HDF5 writer has closed its file. Failed/partial executions
+retry at the polling interval, and successful jobs are remembered in process
+memory only. `--result-folder` is an output root with separate subfolders for
+each relative acquisition directory and stem.
 
 ## Examples
 

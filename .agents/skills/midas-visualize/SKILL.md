@@ -13,8 +13,17 @@ metadata:
 
 ### APEXA Agent Usage
 
+For the Web UI right pane, use `open_science_view(path=..., kind="structure")`
+for an existing local CIF, or `kind="sequence"` for local raw detector frames
+(HDF5/TIFF/Fabio formats). It validates the file and emits a native canvas
+artifact. Use `dataset` for ambiguous HDF5 contents and `pattern` for sample-only
+directory sequences. Files do not need to live in the project directory.
+Do not generate HTML, invoke a desktop `open`, or copy a CIF merely to display it.
+These native views take precedence over the raw-image desktop viewer below when
+the user wants the Web UI canvas. MP/COD fetch results also produce CIF artifacts.
+
 When running through APEXA, use the `run_midas_viewer` MCP tool instead of constructing
-manual Python commands. The tool handles MIDAS path resolution and Python environment
+manual Python commands for the MIDAS analysis viewers below. The tool handles MIDAS path resolution and Python environment
 automatically.
 
 **All 17 viewer names** (`run_midas_viewer(viewer=...)`):

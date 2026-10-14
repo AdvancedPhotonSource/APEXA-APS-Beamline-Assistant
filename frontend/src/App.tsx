@@ -32,8 +32,9 @@ export default function App() {
   const initChat = useChatStore((s) => s.init)
 
   useEffect(() => {
-    initConnection()
-    initChat()
+    const disposeChat = initChat()
+    const disposeConnection = initConnection()
+    return () => { disposeChat(); disposeConnection() }
   }, [initConnection, initChat])
 
   return (

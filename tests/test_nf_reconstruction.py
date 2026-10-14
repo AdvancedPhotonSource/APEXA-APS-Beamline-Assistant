@@ -1,9 +1,8 @@
 """Regression test for run_nf_hedm_reconstruction command-building + output parse.
 
 Does NOT run the heavy NF pipeline. It monkeypatches subprocess.run to capture
-the argv the tool builds, and stages a REAL consolidated H5 (produced offline by
-`midas-nf-pipeline consolidate` on the reference Au reconstruction) so the
-post-run voxel/grain counting is exercised against genuine data.
+the argv the tool builds and writes a synthetic consolidated H5 with the expected
+dataset shapes during the fake run, exercising counts and output freshness.
 
 Guards the specific robustness fixes:
   1. new flags (--dtype/--refine/--skip-validation/--install-dir) are forwarded,
@@ -54,6 +53,9 @@ def test_nf_argbuild_sanitize_and_counts(monkeypatch):
 
     def fake_run(cmd, *a, **kw):
         captured["cmd"] = cmd
+        _make_consolidated_h5(os.path.join(rf, "Au_txt_Reconstructed_consolidated.h5"))
+        with open(os.path.join(rf, "Au_txt_Reconstructed.mic"), "w") as fh:
+            fh.write("%header\n0 1 0.0 -20 -48 1 -1 4.8 0.7 2.1 0.11 1\n")
         return _FakeCompleted()
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -73,11 +75,6 @@ def test_nf_argbuild_sanitize_and_counts(monkeypatch):
 
         rf = os.path.join(d, "out")
         os.makedirs(rf)
-        # Stage the real-shaped consolidated H5 + a mic map the tool must find.
-        _make_consolidated_h5(os.path.join(rf, "Au_txt_Reconstructed_consolidated.h5"))
-        with open(os.path.join(rf, "Au_txt_Reconstructed.mic"), "w") as fh:
-            fh.write("%header\n0 1 0.0 -20 -48 1 -1 4.8 0.7 2.1 0.11 1\n")
-
         out = _run_tool(
             param_file=param, result_folder=rf,
             n_cpus=8, device="cpu", dtype="fp64", refine="nm-batched",
@@ -116,8 +113,10 @@ def test_nf_argbuild_sanitize_and_counts(monkeypatch):
 def test_nf_no_sanitize_when_no_inline_comments(monkeypatch):
     """A clean param file is passed through unchanged (no .apexa_clean copy)."""
     captured = {}
-    monkeypatch.setattr(subprocess, "run",
-                        lambda cmd, *a, **kw: captured.setdefault("cmd", cmd) or _FakeCompleted())
+    def fake_run(cmd, *args, **kwargs):
+        captured["cmd"] = cmd
+        return _FakeCompleted()
+    monkeypatch.setattr(subprocess, "run", fake_run)
     # accepts path= : production resolves MIDAS CLIs through midas_search_path()
     monkeypatch.setattr(shutil, "which",
                         lambda _n, path=None: "/usr/bin/midas-nf-pipeline")
@@ -132,10 +131,31 @@ def test_nf_no_sanitize_when_no_inline_comments(monkeypatch):
 
     res = json.loads(out)
     assert captured["cmd"][2] == param, "clean param should pass through unchanged"
+    assert res["status"] == "warning"  # no output was produced by the fake run
     assert not res.get("param_sanitized")
     # dtype=auto and empty refine must NOT be forwarded
     assert "--dtype" not in captured["cmd"]
     assert "--refine" not in captured["cmd"]
+
+
+def test_nf_old_voxels_and_fresh_unrelated_csv_are_not_success(monkeypatch, tmp_path):
+    monkeypatch.setattr(shutil, "which", lambda _n, path=None: "/usr/bin/midas-nf-pipeline")
+    param = tmp_path / "ps.txt"
+    param.write_text("GridSize 2.5\nMicFileText m\nSpaceGroup 225\n")
+    output = tmp_path / "out"
+    output.mkdir()
+    stale = output / "old_consolidated.h5"
+    _make_consolidated_h5(stale)
+
+    def fake_run(*args, **kwargs):
+        (output / "GrainsLayer1.csv").write_text("1,2,3\n")
+        return _FakeCompleted()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = json.loads(_run_tool(param_file=str(param), result_folder=str(output), device="cpu", force=True))
+    assert result["status"] == "warning"
+    assert result["total_voxels"] == 0
+    assert str(stale) in result["stale_outputs_on_disk"]
 
 
 if __name__ == "__main__":

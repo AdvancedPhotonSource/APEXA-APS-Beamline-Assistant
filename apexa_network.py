@@ -18,8 +18,8 @@ The model
 Three tiers, ordered by what the host can reach:
 
 ``data``
-    Filesystem only. No LLM, so APEXA cannot really run — useful for offline
-    validation, linting and tests.
+    No off-host services. Validation and analysis work locally; agentic use
+    requires a separately installed, qualified model on a loopback endpoint.
 ``internal``  **← the beamline default**
     ANL-internal network: Argo Gateway, argo-proxy, ALCF Inference Service, SSH
     to analysis hosts. Everything that matters for data reduction works. The RAG
@@ -53,6 +53,7 @@ _TRUTHY = ("1", "true", "yes", "on")
 # disabled on beamline hosts, so it must genuinely require the open web.
 WEB_ONLY_TOOLS: Dict[str, str] = {
     "fetch_cif_from_mp": "Materials Project API (next-gen.materialsproject.org)",
+    "propose_structures": "Crystallography Open Database retrieval",
     # NOTE: get_bibtex is NOT here — despite the name it makes no network call. It
     # reads local .bib sidecars from knowledge_base/papers/ (no DOI/CrossRef
     # fallback), so it works at every tier and must not be disabled offline.
@@ -118,6 +119,7 @@ def tool_unavailable_reason(tool_name: str) -> Optional[str]:
     Returned to the model as a normal tool result so it can adapt, rather than
     letting the call block on a network that isn't there.
     """
+    tool_name = tool_name.rsplit(":", 1)[-1]
     if tool_name in WEB_ONLY_TOOLS and not has_web():
         return (f"{tool_name} needs the public internet ({WEB_ONLY_TOOLS[tool_name]}), "
                 f"but APEXA is running at network tier '{tier()}'. It is unavailable "

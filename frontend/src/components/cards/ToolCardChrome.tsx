@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { ToolResult } from '@/api/types'
 import { useVizStore } from '@/stores/vizStore'
 import { provenanceFromToolResult } from '@/lib/provenance'
+import { extractArtifacts } from '@/lib/parseToolResult'
 
 /**
  * Shared chrome for every chat-side tool card. Adds the two things that make a
@@ -19,17 +20,25 @@ export function ToolCardChrome({
 }) {
   const addArtifact = useVizStore((s) => s.addArtifact)
   const [copied, setCopied] = useState(false)
+  const cardId = useId()
   const prov = provenanceFromToolResult(result)
 
   const openInCanvas = () => {
+    const visuals = extractArtifacts([result], '')
+    if (visuals.length) {
+      useVizStore.getState().addArtifacts(visuals)
+      useVizStore.getState().showCanvas()
+      return
+    }
     addArtifact({
-      id: `tr-${result.tool}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `tr-${result.tool}-${cardId}`,
       type: 'table',
       title: result.tool,
       data: result.data,
       sourceMessageId: '',
       provenance: prov,
     })
+    useVizStore.getState().showCanvas()
   }
 
   const copyCommand = async () => {
@@ -49,6 +58,14 @@ export function ToolCardChrome({
 
   return (
     <div>
+      {typeof result.data.mode === 'string' && result.data.mode !== 'real' && (
+        <div style={{ fontSize: 12, padding: '6px 8px', color: 'var(--apexa-text-2)', background: 'var(--apexa-surface-2)' }}>
+          {result.data.mode === 'synthetic' ? 'Simulation using generated inputs'
+            : result.data.mode === 'input-inspection' ? 'Input inspection only — inversion has not run'
+            : result.data.mode === 'deferred' ? 'Real-data workflow is not implemented in this adapter'
+            : result.data.mode}
+        </div>
+      )}
       {children}
       <div
         className="flex items-center gap-2 flex-wrap"

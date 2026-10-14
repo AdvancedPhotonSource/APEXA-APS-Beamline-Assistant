@@ -501,6 +501,8 @@ _STAGE_FOR_TOOL = {
     "run_ff_hedm_full_workflow": "ff-reconstruction",
     "run_nf_hedm_reconstruction": "nf-reconstruction",
     "run_pf_hedm_workflow": "pf-reconstruction",
+    "refinement_status": "powder-refinement", "refine_pattern": "powder-refinement",
+    "powder_refine_submit": "powder-refinement", "powder_live_ingest": "powder-refinement",
 }
 
 
@@ -546,6 +548,9 @@ def build_report(manifest: Dict[str, Any], *, esaf=None, logbook=None,
         source_path=source_path or str(manifest.get("outcome_manifest", "")),
         generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
     )
+    if stage == "powder-refinement" or technique == "powder-refinement":
+        from apexa_powder_report import populate
+        populate(spec, manifest, with_plates=with_plates)
 
     if logbook is not None:
         spec.logbook = logbook if isinstance(logbook, dict) else logbook.to_dict()

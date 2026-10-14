@@ -42,6 +42,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
+from pathlib import Path
+from apexa_sessions import file_lock
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypedDict
 
 try:
@@ -190,6 +193,8 @@ class FFHEDMWorkflow:
         self._gen: Dict[str, int] = {}
         self._paused: Dict[str, bool] = {}
         self._gate: Dict[str, Optional[str]] = {}
+        self._inflight: Dict[str, bool] = {}
+        self._state_error = None
         self._load_state()
         # Eager, synchronous checkpointer when a checkpointer is supplied (tests) or
         # no durable db_path was requested. Durable AsyncSqliteSaver is built lazily
@@ -222,36 +227,65 @@ class FFHEDMWorkflow:
             self._async_saver = False
         self._app = self._build().compile(checkpointer=self._checkpointer)
 
-    def _load_state(self) -> None:
+    def _read_state(self):
         if not self._state_path or not os.path.exists(self._state_path):
-            return
+            if self._state_path and self._db_path and os.path.exists(self._db_path):
+                import sqlite3
+                # A missing index beside existing checkpoints is lost state,
+                # rather than permission to start the same workflow again.
+                try:
+                    with sqlite3.connect(f"{Path(self._db_path).resolve().as_uri()}?mode=ro", uri=True) as connection:
+                        exists = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'").fetchone()
+                        if exists and connection.execute("SELECT 1 FROM checkpoints LIMIT 1").fetchone():
+                            raise RuntimeError("FF-HEDM checkpoint index is missing beside an existing database. Restore the index before resuming; no workflow was restarted.")
+                except sqlite3.Error as exc:
+                    raise RuntimeError(f"FF-HEDM checkpoint database cannot be read: {exc}. No workflow was restarted.") from exc
+            return {}
         try:
-            with open(self._state_path) as f:
-                data = json.load(f)
-            for sess, rec in (data or {}).items():
-                if not isinstance(rec, dict):
-                    continue
-                self._gen[sess] = int(rec.get("gen", 0))
-                self._paused[sess] = bool(rec.get("paused", False))
-                self._gate[sess] = rec.get("gate")
-        except Exception:
-            pass  # a corrupt sidecar must never block the workflow
+            with open(self._state_path) as stream:
+                data = json.load(stream)
+            if not isinstance(data, dict) or any(not isinstance(r, dict) for r in data.values()):
+                raise ValueError("expected a session map")
+            return data
+        except (OSError, ValueError) as exc:
+            raise RuntimeError(f"FF-HEDM checkpoint index cannot be read: {exc}. Restore the index before resuming; no workflow was restarted.") from exc
 
-    def _save_state(self) -> None:
+    def _load_state(self) -> None:
         if not self._state_path:
             return
         try:
-            os.makedirs(os.path.dirname(os.path.abspath(self._state_path)), exist_ok=True)
-            data = {s: {"gen": self._gen.get(s, 0),
-                        "paused": self._paused.get(s, False),
-                        "gate": self._gate.get(s)}
-                    for s in set(self._gen) | set(self._paused)}
-            tmp = self._state_path + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp, self._state_path)
-        except Exception:
-            pass  # best-effort; losing the sidecar only costs cross-restart resume
+            data = self._read_state()
+            self._gen = {s: int(r.get("gen", 0)) for s, r in data.items()}
+            self._paused = {s: bool(r.get("paused", False)) for s, r in data.items()}
+            self._gate = {s: r.get("gate") for s, r in data.items()}
+            self._inflight = {s: bool(r.get("inflight", False)) for s, r in data.items()}
+            self._state_error = None
+        except (RuntimeError, ValueError, TypeError) as exc:
+            self._state_error = str(exc)
+
+    def _save_state(self, session: str) -> None:
+        if not self._state_path:
+            return
+        path = Path(self._state_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with file_lock(path.with_suffix(path.suffix + ".lock")):
+            # Merge just this session so a different CLI/WebUI process cannot
+            # erase other workflows using a stale in-memory map.
+            data = self._read_state()
+            data[session] = {"gen": self._gen.get(session, 0),
+                             "paused": self._paused.get(session, False),
+                             "gate": self._gate.get(session),
+                             "inflight": self._inflight.get(session, False)}
+            fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".ff-state-")
+            try:
+                with os.fdopen(fd, "w") as stream:
+                    json.dump(data, stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
 
     async def aclose(self) -> None:
         """Close the durable connection (best-effort). Safe to call repeatedly."""
@@ -276,30 +310,51 @@ class FFHEDMWorkflow:
         Sync + cheap: reads the persisted paused-map, not the checkpointer (whose
         async store can't be queried synchronously). ``astep`` keeps the map true.
         """
-        return bool(self._paused.get(session or "_ffhedm"))
+        self._load_state()
+        return bool(self._state_error or self._paused.get(session or "_ffhedm") or self._inflight.get(session or "_ffhedm"))
 
     def pending_gate(self, session: str) -> Optional[str]:
         """Name of the gate this session is paused on, or None. For UI signalling."""
         session = session or "_ffhedm"
+        self._load_state()
         return self._gate.get(session) if self._paused.get(session) else None
 
     def cancel(self, session: str) -> None:
         """Abandon this session's in-flight workflow; next input starts fresh."""
         session = session or "_ffhedm"
-        if self._paused.get(session):
+        self._load_state()
+        if self._state_error:
+            raise RuntimeError(self._state_error)
+        if self._paused.get(session) or self._inflight.get(session):
+            self._inflight[session] = False
             self._gen[session] = self._gen.get(session, 0) + 1
             self._paused[session] = False
             self._gate[session] = None
-            self._save_state()
+            self._save_state(session)
 
     async def astep(self, query: str, provider, session: str) -> str:
         session = session or "_ffhedm"
         self._provider = provider
         await self._ensure_app()
+        self._load_state()
+        if self._state_error:
+            raise RuntimeError(self._state_error)
+        if query.strip().lower() in ("cancel workflow", "abandon workflow"):
+            self.cancel(session)
+            return "Workflow checkpoint abandoned. External jobs were not stopped; inspect them before starting another run."
+        if self._inflight.get(session):
+            raise RuntimeError("The previous FF-HEDM step was interrupted. Inspect existing outputs and external jobs before retrying. No tool was rerun. Use a new session or 'abandon workflow' after checking them.")
+        if self._paused.get(session):
+            snapshot = await self._app.aget_state(self._cfg(session))
+            if not snapshot.values or not snapshot.next:
+                raise RuntimeError("The saved FF-HEDM checkpoint is unavailable. Restore its database before resuming; no workflow was restarted.")
+        else:
+            self._gen[session] = self._gen.get(session, 0) + 1
+        self._inflight[session] = True
+        self._save_state(session)
         if self._paused.get(session):
             result = await self._app.ainvoke(Command(resume=query), self._cfg(session))
         else:
-            self._gen[session] = self._gen.get(session, 0) + 1  # fresh generation
             init: FFHEDMState = {
                 "raw_query": query,
                 "working_dir": extract_working_dir(query),
@@ -307,6 +362,7 @@ class FFHEDMWorkflow:
                 "output_dirs": {}, "tilts": {},
             }
             result = await self._app.ainvoke(init, self._cfg(session))
+        self._inflight[session] = False
         # Reflect the new pause-state into the persisted sidecar.
         intr = result.get("__interrupt__")
         if intr:
@@ -316,7 +372,7 @@ class FFHEDMWorkflow:
         else:
             self._paused[session] = False
             self._gate[session] = None
-        self._save_state()
+        self._save_state(session)
         return self._render(result)
 
     def _render(self, result: Dict[str, Any]) -> str:

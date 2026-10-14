@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-14",
+  "scope": "Local CPU frame_payload microbenchmark; not browser or beamline latency",
+  "seed": 42,
+  "warmups": 1,
+  "iterations": 5,
+  "before": {
+    "case": "2048x2048 seeded Poisson frame; exact stats/radial profile; automatic contrast; viridis PNG",
+    "median_ms": 475.89,
+    "preview_base64_bytes": 11129002,
+    "times_ms": [
+      482.8,
+      473.51,
+      484.82,
+      475.1,
+      475.89
+    ]
+  },
+  "after": {
+    "case": "2048x2048 seeded Poisson frame; exact stats/radial profile; automatic contrast; viridis PNG",
+    "median_ms": 170.51,
+    "preview_base64_bytes": 3911142,
+    "times_ms": [
+      170.28,
+      170.04,
+      176.98,
+      171.62,
+      170.51
+    ]
+  }
+}

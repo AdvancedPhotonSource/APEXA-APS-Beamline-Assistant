@@ -7,11 +7,12 @@ export interface ChatMessage {
   timestamp: number
   toolResults?: ToolResult[]
   artifacts?: VizArtifact[]
+  toolEvents?: { id?: string; tool: string; args?: Record<string, unknown>; result: string }[]
 }
 
 export interface ToolResult {
   tool: string
-  status: 'success' | 'error' | 'completed' | 'failed' | 'warning'
+  status: 'success' | 'error' | 'completed' | 'failed' | 'warning' | 'running' | 'submitted' | 'partial' | 'unknown'
   data: Record<string, unknown>
   args?: Record<string, unknown>   // tool-call inputs, for the "in:" view
 }
@@ -22,9 +23,33 @@ export interface ChatSession {
   messages: ChatMessage[]
   createdAt: number
   updatedAt: number
+  workspace?: SessionWorkspace
+  workspaceRevision?: number
+  workspaceDirty?: boolean
+  revision?: number
+  origin?: string
+  status?: string
+  messageCount?: number
+  model?: string
+  resume_notice?: string
+  error?: string
+  serverBacked?: boolean
 }
 
-export type ArtifactType = 'plotly' | 'image' | 'table' | 'text' | 'diffraction' | 'report'
+export interface SessionAttachment { name: string; path: string; isImage: boolean }
+export interface SessionWorkspace {
+  recordedArtifactIds?: string[]
+  artifacts: VizArtifact[]
+  openIds: string[]
+  activeId: string | null
+  pinned: string[]
+  compareIds: string[]
+  draft?: string
+  attachments?: SessionAttachment[]
+  browsePath?: string
+}
+
+export type ArtifactType = 'plotly' | 'image' | 'table' | 'text' | 'diffraction' | 'report' | 'structure' | 'sequence' | 'html-report'
 
 /**
  * Provenance travels with every scientific artifact so a result is never just
@@ -51,6 +76,7 @@ export interface VizArtifact {
 }
 
 export interface WsOutgoing {
+  viewer_context?: Record<string, unknown>
   type: 'chat' | 'change_model' | 'confirm_response' | 'delete_thread'
   message?: string
   model?: string
@@ -63,7 +89,11 @@ export interface WsOutgoing {
 }
 
 export interface WsIncoming {
-  type: 'chat_response' | 'error' | 'analysis_progress' | 'model_changed' | 'tool_start' | 'tool_result' | 'confirm_required'
+  thread_id?: string
+  type: 'chat_response' | 'error' | 'analysis_progress' | 'model_changed' | 'tool_start' | 'tool_result' | 'confirm_required' | 'connection_status'
+  connected?: boolean
+  close_code?: number
+  close_reason?: string
   message?: string
   step?: string
   progress?: number

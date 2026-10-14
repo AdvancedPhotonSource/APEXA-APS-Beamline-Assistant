@@ -118,6 +118,117 @@
 
 * { box-sizing: border-box; }
 
+.apexa-app-shell { height: 100vh; height: 100dvh; overflow: hidden; }
+.apexa-topbar {
+  display: flex; flex-shrink: 0; align-items: center; min-height: 40px;
+  gap: 10px; padding: 4px 10px; min-width: 0;
+  border-bottom: 1px solid var(--apexa-border); background: var(--apexa-surface);
+}
+.apexa-brand { font-size: 17px; font-weight: 800; letter-spacing: -0.5px; color: var(--apexa-accent); }
+.apexa-header-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
+.apexa-model-select {
+  width: clamp(100px, 19vw, 230px); min-width: 0; height: 28px; padding: 2px 5px;
+  font-size: 11px; border: 1px solid var(--apexa-border); border-radius: 5px;
+  background: var(--apexa-surface-2); color: var(--apexa-text-2); text-overflow: ellipsis;
+}
+.apexa-connection-status { display: flex; align-items: center; gap: 5px; font-size: 10px; color: var(--apexa-text-muted); }
+.apexa-compact-button {
+  display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border: 1px solid var(--apexa-border); border-radius: 6px;
+  cursor: pointer; color: var(--apexa-text-2); background: var(--apexa-surface-2);
+}
+.apexa-compact-button:hover { border-color: var(--apexa-accent); }
+.apexa-compact-button:focus-visible { outline: 2px solid var(--apexa-accent); outline-offset: 1px; }
+.apexa-compact-button:disabled { opacity: 0.4; cursor: default; }
+.apexa-send-button:not(:disabled) { background: var(--apexa-accent); color: white; border-color: var(--apexa-accent); }
+.apexa-layout-switch {
+  display: flex; flex-shrink: 0; padding: 2px; gap: 2px; border-radius: 7px;
+  border: 1px solid var(--apexa-border); background: var(--apexa-surface-2);
+}
+.apexa-layout-switch button {
+  display: flex; align-items: center; gap: 4px; padding: 3px 10px; min-height: 24px;
+  border: 0; border-radius: 5px; font-size: 11px; cursor: pointer;
+  background: transparent; color: var(--apexa-text-muted);
+}
+.apexa-layout-switch button[aria-pressed="true"] {
+  background: var(--apexa-surface-3); color: var(--apexa-text); box-shadow: var(--apexa-elev-1);
+}
+.apexa-layout-switch button:disabled { opacity: 0.4; cursor: default; }
+.apexa-result-count {
+  padding: 1px 5px; border-radius: 5px; font-size: 10px;
+  background: var(--apexa-accent-soft); color: var(--apexa-accent);
+}
+.apexa-pane-divider {
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  width: 6px; cursor: col-resize; touch-action: none; user-select: none;
+  background: var(--apexa-border); color: var(--apexa-text-muted);
+}
+.apexa-pane-divider:hover, .apexa-pane-divider[data-dragging="true"] {
+  background: var(--apexa-accent-soft); color: var(--apexa-accent);
+}
+.apexa-pane-divider:focus-visible, .apexa-layout-switch button:focus-visible,
+.apexa-gallery-button:focus-visible { outline: 2px solid var(--apexa-accent); outline-offset: -2px; }
+.apexa-chat-examples { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+.apexa-workflow-option:hover { border-color: var(--apexa-accent) !important; }
+.apexa-workflow-option:focus-visible { outline: 2px solid var(--apexa-accent); outline-offset: 2px; }
+.apexa-composer {
+  display: flex; flex-direction: column; flex: 0 1 auto; min-height: 0; width: 100%;
+  max-height: 55%; padding: 3px 8px 6px; background: var(--apexa-panel-bg); container-type: inline-size;
+}
+.apexa-prompt-toolbar { display: flex; align-items: center; gap: 4px; margin-bottom: 3px; font-size: 11px; color: var(--apexa-text-muted); }
+.apexa-prompt-hint { font-size: 10px; margin-left: 6px; }
+@container (max-width: 450px) { .apexa-prompt-hint { display: none; } }
+.apexa-composer > :first-child { flex-shrink: 0; }
+.apexa-composer-editor { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.apexa-prompt-textarea {
+  display: block; width: calc(100% - 20px); margin: 7px 10px; padding: 0;
+  min-height: min(44px, 12dvh); max-height: min(220px, 30dvh); overflow-y: auto;
+  border: 0; outline: none; box-shadow: none;
+}
+.apexa-prompt-textarea:focus, .apexa-prompt-textarea:focus-visible { outline: none; box-shadow: none; }
+.apexa-composer[data-expanded="true"] { flex: 1; max-height: none; }
+.apexa-composer[data-expanded="true"] .apexa-composer-editor { flex: 1; }
+.apexa-composer[data-expanded="true"] .apexa-prompt-textarea { flex: 1; min-height: 0; max-height: none; }
+
+/* Visuals respond to the canvas width, including manual pane resizing. */
+.apexa-canvas { container-type: inline-size; }
+.apexa-gallery-button {
+  padding: 4px 9px; border: 1px solid var(--apexa-border); border-radius: 6px;
+  background: var(--apexa-surface-2); color: var(--apexa-text); font-size: 11px; cursor: pointer;
+}
+.apexa-gallery-button[aria-pressed="true"] { border-color: var(--apexa-accent); color: var(--apexa-accent); }
+.apexa-viewer-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); gap: 8px; margin: 8px 0; }
+.apexa-gallery-button:disabled { opacity: 0.45; cursor: default; }
+.apexa-compare-grid {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: auto;
+}
+@container (max-width: 720px) {
+  .apexa-compare-grid { grid-template-columns: minmax(0, 1fr); grid-auto-rows: 420px; }
+  .apexa-canvas-body { flex-direction: column; }
+  .apexa-image-controls { width: 100% !important; max-height: 35%; border-top: 1px solid var(--apexa-border); }
+}
+@media (max-width: 900px) {
+  .apexa-side-pane {
+    position: absolute; inset: 0 auto 0 68px; z-index: 10; max-width: calc(100% - 92px);
+    border-right: 1px solid var(--apexa-border); box-shadow: var(--apexa-elev-2);
+  }
+  .apexa-sidebar-divider { display: none; }
+  .apexa-header-tagline { display: none; }
+}
+@media (max-width: 600px) {
+  .apexa-topbar { flex-wrap: wrap; gap: 4px 8px; padding: 4px 8px; }
+  .apexa-layout-switch button { padding: 3px 7px; }
+  .apexa-composer { padding: 8px; }
+  .apexa-connection-label { display: none; }
+  .apexa-header-controls { gap: 5px; }
+}
+@media (pointer: coarse) { .apexa-compact-button { width: 36px; height: 36px; } }
+
 html, body, #root {
   height: 100%;
   width: 100%;

@@ -12,7 +12,7 @@ import { useChatStore } from '@/stores/chatStore'
 // Grounded quick-asks — composed into chat prompts that reference the active path.
 const ASKS: { label: string; icon: string; prompt: (p: string) => string }[] = [
   { label: 'Recommend a workflow', icon: '💡', prompt: (p) => `Inspect ${p} and recommend a workflow: what should I do with this, my options, and the parameters — before running anything.` },
-  { label: 'Calibrate detector', icon: '🎯', prompt: (p) => `Calibrate the detector using the calibrant image ${p}. Auto-detect material and energy from the filename.` },
+  { label: 'Plan detector calibration', icon: '🎯', prompt: (p) => `Prepare calibration for ${p}. Inspect file contents and acquisition metadata; confirm calibrant, measured energy/wavelength, pixel size, geometry and corrections. Treat filenames only as hints. Report missing inputs and a plan before running calibration.` },
   { label: 'Overlay calibrant rings', icon: '◎', prompt: (p) => `Overlay the calibrant (CeO2/LaB6) ring positions on ${p} using the refined calibration parameters, and show me how well they line up.` },
   { label: 'Integrate to 1D', icon: '📈', prompt: (p) => `Integrate ${p} from 2D to a 1D lineout using the calibrated parameters.` },
   { label: 'Find beam center', icon: '✛', prompt: (p) => `Estimate the beam center and detector distance from the diffraction rings in ${p}.` },

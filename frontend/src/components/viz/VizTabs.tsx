@@ -12,13 +12,13 @@ export function VizTabs({ artifacts, activeId, onSelect, onClose }: VizTabsProps
   if (artifacts.length === 0) return null
 
   return (
-    <div className="flex items-center gap-0.5 px-2 pt-2 overflow-x-auto border-b"
+    <div role="tablist" aria-label="Open results" className="flex shrink-0 items-center gap-0.5 px-2 pt-2 overflow-x-auto border-b"
       style={{ borderColor: 'var(--apexa-border)', background: 'var(--apexa-surface-2)' }}>
       {artifacts.map((a) => (
         <div
           key={a.id}
           className={cn(
-            'group flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-xs cursor-pointer transition-colors',
+            'group shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-xs cursor-pointer transition-colors',
             a.id === activeId ? 'border-b-2 border-blue-500' : 'opacity-60 hover:opacity-100'
           )}
           style={{
@@ -26,10 +26,13 @@ export function VizTabs({ artifacts, activeId, onSelect, onClose }: VizTabsProps
             color: a.id === activeId ? 'var(--apexa-text)' : 'var(--apexa-text-muted)',
           }}
           onClick={() => onSelect(a.id)}
+          role="tab" aria-selected={a.id === activeId} tabIndex={0}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(a.id) } }}
         >
           <TypeIcon type={a.type} />
           <span className="max-w-[120px] truncate">{a.title}</span>
           <button
+            aria-label={`Close ${a.title}`}
             onClick={(e) => { e.stopPropagation(); onClose(a.id) }}
             className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-400"
           >
@@ -56,6 +59,7 @@ function TypeIcon({ type }: { type: string }) {
           <circle cx="12" cy="12" r="10" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="2" />
         </svg>
       )
+    case 'html-report':
     case 'report':
       return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>

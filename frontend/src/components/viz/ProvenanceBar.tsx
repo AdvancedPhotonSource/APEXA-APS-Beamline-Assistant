@@ -66,6 +66,7 @@ export function ProvenanceBar({ prov }: { prov?: Provenance }) {
     <div
       style={{
         borderTop: '1px solid var(--apexa-border)',
+        flexShrink: 0, maxHeight: 160, overflow: 'auto',
         background: 'var(--apexa-surface-2)',
         padding: '8px 12px',
         display: 'flex',

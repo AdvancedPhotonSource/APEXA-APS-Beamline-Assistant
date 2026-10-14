@@ -36,10 +36,14 @@ once and caches it. This doc is only for the offline case.
 
 ---
 
-## 0. Dependencies & network tier — the base install is offline-clean
+## 0. Dependencies & network tier — prepare dependencies before disconnecting
 
-`uv sync` **with no extras has no public-internet dependency.** Everything needed
-for data reduction and RAG installs and runs on an air-gapped host:
+Plain `uv sync` may download packages, build dependencies, or Python itself.
+Offline installation requires a pre-staged environment or a complete cache built
+for the target OS, architecture, Python, and optional packages. Verify with
+`uv sync --locked --offline` on the target; a missing dependency must fail before
+beamtime. A macOS environment cannot be copied to a Linux beamline host.
+See [deployment modes](DEPLOYMENT_MODES.md) for the three supported topologies.
 
 - The RAG stack (`chromadb` + `sentence-transformers`) is a **base** dependency, so
   retrieval works offline — it only needs the network for the *first* embedder
@@ -58,18 +62,22 @@ for data reduction and RAG installs and runs on an air-gapped host:
   path (runtime `get_knowledge_base`, the `index_knowledge.py` re-index script, and
   `apexa_network.apply_offline_env`). So no anonymised PostHog call is attempted —
   one fewer thing that can block or leak from a beamline host.
-- The **only** online-only feature is Materials Project CIF fetch
+- An online-only feature is Materials Project CIF fetch
   (`fetch_cif_from_mp`). Its `mp-api` package (and the large pymatgen tree it drags
   in) lives in a **separate optional extra**, deliberately kept out of the base:
 
   ```bash
-  uv sync              # offline-clean: NO mp-api, NO public-internet dep
+  uv sync --locked --offline  # requires a complete, platform-matched staged cache
   uv sync --extra mp   # ONLY on a web-capable host — adds Materials Project CIF fetch
   ```
 
   On an internal/offline host, omit `--extra mp`. The tool is hidden below the
   `web` tier and, if a non-standard client reaches it anyway, returns a structured
   "unavailable at this tier" error — it never hangs on the network.
+
+COD candidate retrieval (`propose_structures`) also requires public web access
+and is disabled below the `web` tier. Existing local CIFs remain available for
+structure viewing, ring simulation, and refinement.
 
 - **tiktoken is tier-gated too.** `tiktoken.get_encoding` downloads its BPE vocab
   from a public URL on first use; on an air-gapped host that download BLOCKS (a
@@ -226,7 +234,7 @@ network per file.
 ## Quick checklist for an air-gapped node
 
 - [ ] `git pull` — brings source docs **and** the prebuilt `chroma_db/`
-- [ ] `uv sync` — base install is offline-clean (do **not** add `--extra mp`; §0)
+- [ ] `uv sync --locked --offline` succeeds with a staged, platform-matched dependency cache (do **not** add `--extra mp`; §0)
 - [ ] Pre-stage the Nomic model cache (§1) — the only large offline artifact
 - [ ] `APEXA_NETWORK=internal` (or `APEXA_OFFLINE=1`) in `.env`
 - [ ] Mount or stage any off-machine data to a local path — or SSH-route it (§2)

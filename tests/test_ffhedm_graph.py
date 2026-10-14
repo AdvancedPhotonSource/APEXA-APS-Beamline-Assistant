@@ -218,3 +218,52 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_live_instances_refresh_and_merge_shared_pause_index(tmp_path):
+    if not LANGGRAPH_AVAILABLE:
+        return
+    state = str(tmp_path / 'shared.state.json')
+    async def unused(*args):
+        raise AssertionError('no analysis expected')
+    first = FFHEDMWorkflow(unused, state_path=state)
+    second = FFHEDMWorkflow(unused, state_path=state)
+    first._gen['cli'] = 1
+    first._paused['cli'] = True
+    first._gate['cli'] = 'ring_overlay'
+    first._save_state('cli')
+    assert second.is_active('cli')
+    assert second.pending_gate('cli') == 'ring_overlay'
+    second._gen['web'] = 1
+    second._paused['web'] = True
+    second._gate['web'] = 'select_calibrant'
+    second._save_state('web')
+    # A stale object updates only its own session.
+    first._paused['cli'] = False
+    first._gate['cli'] = None
+    first._save_state('cli')
+    assert second.is_active('web')
+    assert not second.is_active('cli')
+    assert set(json.loads((tmp_path / 'shared.state.json').read_text())) == {'cli', 'web'}
+
+
+def test_unavailable_or_interrupted_graph_never_restarts_tools(tmp_path):
+    if not LANGGRAPH_AVAILABLE:
+        return
+    import pytest
+    state = tmp_path / 'shared.state.json'
+    async def unused(*args):
+        raise AssertionError('no analysis expected')
+    wf = FFHEDMWorkflow(unused, state_path=str(state))
+    state.write_text('{broken')
+    assert wf.is_active('scan')
+    with pytest.raises(RuntimeError, match='checkpoint index'):
+        asyncio.run(wf.astep('yes', None, 'scan'))
+    state.write_text(json.dumps({'scan': {'gen': 1, 'paused': True, 'gate': 'ring_overlay'}}))
+    with pytest.raises(RuntimeError, match='checkpoint is unavailable'):
+        asyncio.run(wf.astep('yes', None, 'scan'))
+    state.write_text(json.dumps({'scan': {'gen': 1, 'paused': True, 'inflight': True}}))
+    with pytest.raises(RuntimeError, match='step was interrupted'):
+        asyncio.run(wf.astep('yes', None, 'scan'))
+    assert 'External jobs were not stopped' in asyncio.run(wf.astep('abandon workflow', None, 'scan'))
+    assert not wf.is_active('scan')

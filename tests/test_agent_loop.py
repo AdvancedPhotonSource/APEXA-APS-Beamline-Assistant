@@ -485,7 +485,12 @@ def test_all_presets_resolve_or_reject_explicitly(monkeypatch):
         try:
             assert active_endpoint().base_url.startswith("http")
         except EndpointRejected as e:
-            assert "tool calling" in str(e)          # only legitimate rejection reason
+            # Two legitimate reasons to refuse a preset at configuration time,
+            # both "APEXA structurally cannot drive this", not "it might fail":
+            #   - the endpoint does no tool calling (alcf-metis)
+            #   - APEXA ships no provider for its wire (openai-responses)
+            # Anything else means a preset is broken rather than unsupported.
+            assert ("tool calling" in str(e)) or ("wire" in str(e)), str(e)
 
 
 def test_minerva_usable_despite_missing_T_flag(monkeypatch):

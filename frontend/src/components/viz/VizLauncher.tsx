@@ -97,6 +97,7 @@ export function VizLauncher() {
       }
       if (artifacts.length > 0) {
         addArtifacts(artifacts)
+        useVizStore.getState().showCanvas()
       }
     } catch (e) {
       setError((e as Error).message)

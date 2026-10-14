@@ -1437,7 +1437,7 @@ async def run_ff_hedm_full_workflow(
         else:
             run_started = _time.time()
 
-        proc = _run_midas_maybe_remote(cmd, data_paths=[param_file, data_file],
+        proc = await asyncio.to_thread(_run_midas_maybe_remote, cmd, data_paths=[param_file, data_file],
                                        cwd=None, timeout=14400, host=host)
         if proc.get("error") and proc.get("return_code") is None:
             # SSH-layer failure / unreachable host / host-resolution error — nothing
@@ -1614,7 +1614,7 @@ async def calibrate_ring_thresholds(
                        zpath, "--result-folder", rf, "--n-frames", str(n_frames)]
 
         print(f"[RING-THRESH] {' '.join(cmd)}", file=sys.stderr)
-        proc = _run_midas_maybe_remote(cmd, data_paths=[zarr_file], cwd=None,
+        proc = await asyncio.to_thread(_run_midas_maybe_remote, cmd, data_paths=[zarr_file], cwd=None,
                                        timeout=1800, host=host)
 
         if not proc.get("success"):
@@ -1771,22 +1771,33 @@ async def run_pf_hedm_workflow(
         cmd_str = " ".join(cmd)
         print(f"[PF-HEDM] {cmd_str}", file=sys.stderr)
 
-        proc = subprocess.run(
+        from apexa_result_integrity import output_snapshot, changed_outputs
+        before = output_snapshot(result_path.glob("LayerNr_*/Grains.csv"))
+        proc = await asyncio.to_thread(subprocess.run,
             cmd, capture_output=True, text=True, timeout=14400,
             env=get_midas_env(),
         )
 
         # midas-pipeline pf writes LayerNr_1/Grains.csv (per layer)
         layer_outputs = []
-        for gf in sorted(result_path.glob("LayerNr_*/Grains.csv")):
+        candidates = sorted(result_path.glob("LayerNr_*/Grains.csv"))
+        fresh = changed_outputs(candidates, before)
+        for gf in fresh:
             lines = gf.read_text().splitlines()
-            n = sum(1 for l in lines if l.strip() and not l.startswith("%"))
+            n = 0
+            for line in lines:
+                try:
+                    float(line.replace(",", " ").split()[0])
+                    n += 1
+                except (ValueError, IndexError):
+                    continue
             layer_outputs.append({"grains_file": str(gf), "n_grains": n})
 
         ok = proc.returncode == 0
+        total_grains = sum(l["n_grains"] for l in layer_outputs)
         return format_result({
             "tool": "run_pf_hedm_workflow",
-            "status": "success" if ok else "error",
+            "status": "success" if ok and total_grains > 0 else "warning" if ok else "error",
             "engine": "midas-pipeline --scan-mode pf",
             "command": cmd_str,
             "return_code": proc.returncode,
@@ -1794,7 +1805,10 @@ async def run_pf_hedm_workflow(
             "stderr": proc.stderr[-2000:] if proc.stderr else "",
             "result_folder": str(result_path),
             "layer_outputs": layer_outputs,
-            "total_grains": sum(l["n_grains"] for l in layer_outputs),
+            "total_grains": total_grains,
+            "produced_fresh_output": bool(fresh),
+            "stale_grains_on_disk": [str(p) for p in candidates if p not in fresh],
+            "run_note": "" if total_grains > 0 else "No fresh nonempty grain reconstruction was produced; existing results were not counted.",
         })
 
     except subprocess.TimeoutExpired:
@@ -2020,7 +2034,8 @@ async def match_grains(
     anchor=lambda kw: kw.get("result_folder") or "",
     salient=lambda kw: {k: kw.get(k) for k in (
         "param_file", "ff_seed_orientations", "do_image_processing",
-        "start_layer", "end_layer", "min_confidence", "device")},
+        "start_layer", "end_layer", "min_confidence", "device", "dtype",
+        "refine", "skip_validation", "install_dir", "ignore_handbook_traps")},
 )
 async def run_nf_hedm_reconstruction(
     param_file: str,
@@ -2038,8 +2053,11 @@ async def run_nf_hedm_reconstruction(
     skip_validation: bool = False,
     install_dir: str = "",
     ignore_handbook_traps: bool = False,
+    force: bool = False,
 ) -> str:
     """Run NF-HEDM voxel-level microstructure reconstruction.
+
+    Set force=True to bypass a previously completed run's idempotency record.
 
     Wraps `midas-nf-pipeline run` (pure-Python, from midas-suite). Produces a
     voxel orientation map — `<MicFileText>.mic` plus a consolidated
@@ -2224,9 +2242,9 @@ async def run_nf_hedm_reconstruction(
         cmd_str = " ".join(cmd)
         print(f"[NF-HEDM] {cmd_str}", file=sys.stderr)
 
-        import time as _time
-        run_started = _time.time()
-        proc = subprocess.run(
+        from apexa_result_integrity import output_snapshot, changed_outputs
+        before = output_snapshot(p for p in rp.rglob("*") if p.suffix.lower() in (".h5", ".hdf5", ".mic", ".csv"))
+        proc = await asyncio.to_thread(subprocess.run,
             cmd, capture_output=True, text=True, timeout=28800,
             env=get_midas_env(),
         )
@@ -2235,9 +2253,12 @@ async def run_nf_hedm_reconstruction(
         # the consolidated map is *_consolidated.h5.
         all_h5 = sorted(rp.glob("**/*.h5")) + sorted(rp.glob("**/*.hdf5"))
         consolidated = [h for h in all_h5 if h.name.endswith("_consolidated.h5")]
-        h5_files = consolidated or all_h5
-        mic_files = sorted(rp.glob("**/*.mic"))
-        grains_csvs = sorted(rp.glob("**/GrainsLayer*.csv"))
+        candidates = consolidated or all_h5
+        candidates += sorted(rp.glob("**/*.mic")) + sorted(rp.glob("**/GrainsLayer*.csv"))
+        fresh = changed_outputs(candidates, before)
+        h5_files = [p for p in fresh if p.suffix.lower() in (".h5", ".hdf5")]
+        mic_files = [p for p in fresh if p.suffix.lower() == ".mic"]
+        grains_csvs = [p for p in fresh if p.suffix.lower() == ".csv"]
 
         # Authoritative voxel/grain counts come from the consolidated H5
         # (voxels/position single-res, or the largest multi_resolution loop).
@@ -2274,13 +2295,7 @@ async def run_nf_hedm_reconstruction(
         # and a stale *.mic / *_consolidated.h5 from a prior run must never be
         # reported as this run's result. A real reconstruction must have produced
         # fresh output this run AND resolved >0 voxels.
-        def _is_fresh(p):
-            try:
-                return p.exists() and p.stat().st_mtime >= run_started - 1
-            except Exception:
-                return False
-        any_fresh = any(_is_fresh(p) for p in
-                        (list(h5_files) + list(mic_files) + list(grains_csvs)))
+        any_fresh = bool(fresh)
 
         if proc.returncode != 0:
             status, run_note = "error", ""
@@ -2304,6 +2319,7 @@ async def run_nf_hedm_reconstruction(
             "tool": "run_nf_hedm_reconstruction",
             "status": status,
             "engine": "midas-nf-pipeline",
+            "stale_outputs_on_disk": [str(p) for p in candidates if p not in fresh],
             "command": cmd_str,
             "return_code": proc.returncode,
             "stdout": proc.stdout[-3000:] if proc.stdout else "",
@@ -10634,7 +10650,7 @@ def _classify_input(p: Path) -> dict:
             if nm.lower() in low:
                 return nm
         return None
-    IMG_PATS = ("*.h5", "*.hdf5", "*.hdf", "*.tif", "*.tiff",
+    IMG_PATS = ("*.h5", "*.hdf5", "*.hdf", "*.nxs", "*.tif", "*.tiff",
                 "*.ge", "*.ge2", "*.ge3", "*.ge5", "*.cbf")
     if p.is_dir():
         info["kind"] = "directory"
@@ -10674,6 +10690,14 @@ def _classify_input(p: Path) -> dict:
     suf = p.suffix.lower(); name = p.name.lower()
     info["suffix"] = suf
     info["calibrant"] = _explicit_calibrant(p.stem)
+    # Recognize HDF5 by its signature even when its filename is misleading.
+    try:
+        import h5py
+        if h5py.is_hdf5(p):
+            suf = ".h5"
+            info["format_evidence"] = "HDF5 signature"
+    except (ImportError, OSError):
+        pass
     if "grains" in name and suf == ".csv":
         info["kind"] = "grains_csv"
     elif suf == ".mic":
@@ -10686,22 +10710,32 @@ def _classify_input(p: Path) -> dict:
                             or _looks_like_param_file(p)):
         info["kind"] = "param_file"
     elif suf in (".h5", ".hdf5", ".hdf", ".nxs"):
-        info["kind"] = "hdf5_image"
+        info["kind"] = "hdf5_metadata"
         try:
             import h5py
             dsets = []
             with h5py.File(p, "r") as h:
                 def _v(n, o):
-                    if isinstance(o, h5py.Dataset) and getattr(o, "ndim", 0) >= 2:
+                    if len(dsets) >= 256:
+                        info["inspection_truncated"] = True
+                        return True  # bound the number of candidate arrays inspected
+                    if (isinstance(o, h5py.Dataset) and o.ndim in (2, 3)
+                            and o.dtype.kind in "uif" and all(o.shape)):
                         dsets.append((n, list(o.shape)))
                 h.visititems(_v)
             info["hdf5_datasets"] = [{"path": n, "shape": s} for n, s in dsets[:6]]
             info["embedded_dark"] = any("dark" in n.lower() for n, _ in dsets)
-            info["data_location_guess"] = next(
-                (n for n, _ in dsets if n.lower().endswith("data")
-                 and "dark" not in n.lower()), (dsets[0][0] if dsets else None))
+            candidates = [n for n, _ in dsets if "dark" not in n.lower()]
+            preferred = [n for n in candidates if n.lower().endswith("/data")]
+            choices = preferred or candidates
+            info["data_location_guess"] = choices[0] if len(choices) == 1 else None
+            info["dataset_ambiguous"] = len(choices) > 1
+            info["inspection_scope"] = "array structure only; pixel integrity and acquisition completeness unverified"
+            if choices:
+                info["kind"] = "hdf5_image"
         except Exception as e:
             info["hdf5_peek_error"] = str(e)
+            info["kind"] = "unreadable_hdf5"
     elif suf in (".tif", ".tiff", ".cbf"):
         info["kind"] = "tiff_image"
     elif suf in (".ge", ".ge2", ".ge3", ".ge5"):
@@ -11316,7 +11350,7 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
             # accept n_subdirs when there are no top-level images.)
             if info.get("param_files") and (ns >= 1 or info.get("n_subdirs")):
                 mod = _infer_hedm_modality(p, info, goal)
-                modality = mod["modality"] or "ff"     # documented FF default
+                modality = mod["modality"]
                 # Rank grains first when asked OR when the data itself points at a
                 # modality (positive evidence, not the bare fallback).
                 wants_grains = (
@@ -11359,7 +11393,16 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
                                      if param_targets.get(n, {}).get("calib_kind") is None),
                                     None)
 
-                if modality == "nf":
+                if modality is None:
+                    hedm_rec = {
+                        "tool": "inspect_dataset_file",
+                        "why": "FF/NF/PF modality is unresolved; inspect detector metadata "
+                               "and acquisition geometry before choosing reconstruction",
+                        "params": {"dataset_file": "<representative raw detector file>"},
+                        "requires": ["confirmed modality", "rotation axis and units",
+                                     "detector geometry", "matching parameter file"],
+                    }
+                elif modality == "nf":
                     hedm_rec = {
                         "tool": "run_nf_hedm_reconstruction",
                         "why": f"near-field data — {mod['why']} — + parameter file ({pf}) "
@@ -11378,7 +11421,7 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
                         "tool": "run_pf_hedm_workflow",
                         "why": f"point-focus/scanning data — {mod['why']} — + parameter file ({pf})",
                         "params": {"param_file": f"<{pf}>",
-                                   "result_dir": "<where to write per-layer Grains.csv>"},
+                                   "result_folder": "<where to write per-layer Grains.csv>"},
                         "output": "LayerNr_*/Grains.csv + v_map.h5",
                         "alternative": "run_ff_hedm_full_workflow (far-field) | "
                                        "run_nf_hedm_reconstruction (near-field)",
@@ -11394,7 +11437,7 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
                                f"an IN-PLANE (tx) calibration / geometry-check run, NOT a "
                                f"sample FF pilot",
                         "params": {"param_file": f"<{pf}>",
-                                   "result_dir": "<in-plane-calibration output>"},
+                                   "result_folder": "<in-plane-calibration output>"},
                         "note": "run AFTER powder detector calibration (CeO2/LaB6 → Lsd/BC + "
                                 "out-of-plane ty/tz); the Au grains refine the in-plane tilt "
                                 "tx that Debye-Scherrer rings cannot see. Do not treat these "
@@ -11410,8 +11453,8 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
                         "why": f"{ff_why}+ parameter file ({pf}) + {frames_note} "
                                f"→ full FF-HEDM grain reconstruction",
                         "params": {"param_file": f"<{pf}>",
-                                   "result_dir": "<where to write Grains.csv>",
-                                   "refine_backend": "c-omp (for Grains.csv) | python"},
+                                   "result_folder": "<where to write Grains.csv>",
+                                   "refine_backend": "python"},
                         "output": "Grains.csv (grain centroid / orientation / strain)",
                         "alternative": "run_nf_hedm_reconstruction (near-field grain map) | "
                                        "run_pf_hedm_workflow (point-focus scanning)",
@@ -11432,9 +11475,9 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
                         "why": "real FF-HEDM pilot — run on an actual sample folder, not the "
                                "Au in-plane-calibration dataset",
                         "params": {"param_file": f"<{_sp}{_sp_note}>",
-                                   "data_dir": f"<{sample_ffs[0]}>",
-                                   "result_dir": "<Grains.csv output>",
-                                   "refine_backend": "c-omp (for Grains.csv) | python"},
+                                   "data_file": f"<raw detector file within {sample_ffs[0]}>",
+                                   "result_folder": "<Grains.csv output>",
+                                   "refine_backend": "python"},
                         "sample_candidates": sample_ffs[:6],
                         "output": "Grains.csv (grain centroid / orientation / strain)",
                     })
@@ -11454,7 +11497,15 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
         elif kind == "hdf5_image":
             dl = info.get("data_location_guess")
             dsrc = "embedded" if info.get("embedded_dark") else "file"
-            recs.append({
+            if dl is None or info.get("inspection_truncated"):
+                recs.append({
+                    "tool": "inspect_dataset_file",
+                    "why": "multiple detector arrays or truncated inspection; select the detector dataset before integration",
+                    "params": {"dataset_file": str(p)},
+                    "requires": ["explicit detector dataset path", "confirmed geometry and units"],
+                })
+            else:
+                recs.append({
                 "tool": "midas_integrate_series (image_dir=parent) or midas_integrate_2d_to_1d",
                 "why": "HDF5 detector image",
                 "params": {"data_location": dl,
@@ -11463,7 +11514,7 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
                                                       if "dark" in d["path"].lower()), None)}
                               if dsrc == "embedded" else {})},
                 "note": f"HDF5 datasets: {[d['path'] for d in info.get('hdf5_datasets', [])]}",
-            })
+                })
             if info.get("calibrant"):
                 _cal = info["calibrant"]
                 _powder = _cal in ("CeO2", "LaB6", "Si", "Al2O3")
@@ -11537,7 +11588,7 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
                     "tool": "run_pf_hedm_workflow",
                     "why": f"parameter file reads as point-focus/scanning — {pm['why']}",
                     "params": {"param_file": str(p),
-                               "result_dir": "<where to write per-layer Grains.csv>"},
+                               "result_folder": "<where to write per-layer Grains.csv>"},
                     "output": "LayerNr_*/Grains.csv + v_map.h5",
                 })
             elif pm.get("modality") == "ff":
@@ -11546,7 +11597,7 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
                     "why": f"parameter file reads as far-field — {pm['why']}",
                     "params": {"param_file": str(p),
                                "data_file": "<.analysis.MIDAS.zip zarr>",
-                               "result_dir": "<where to write Grains.csv>"},
+                               "result_folder": "<where to write Grains.csv>"},
                     "output": "Grains.csv / IndexBest.bin",
                 })
         else:
@@ -11699,7 +11750,10 @@ def _run_capability_runner(subcommand_args: list, timeout: int = 1800) -> dict:
     Mirrors the calibrate-v2 call site, NOT _run_stress_runner (conda + injected
     env). The runner keeps stdout clean (JSON only); chatter goes to stderr.
     """
-    cmd = [sys.executable, str(CAPABILITY_RUNNER_SCRIPT)] + subcommand_args
+    # Sites may stage the torch-based capability packages in a separate env.
+    # Never install them while a beamline request is running.
+    interpreter = os.environ.get("APEXA_CAPABILITY_PYTHON", sys.executable)
+    cmd = [interpreter, str(CAPABILITY_RUNNER_SCRIPT)] + subcommand_args
     result = subprocess.run(
         cmd, capture_output=True, text=True,
         timeout=timeout, env=dict(os.environ),
@@ -11744,7 +11798,8 @@ async def compute_pair_distribution(
         output_file: optional path to write a 2-column r, G(r) table.
 
     Returns:
-        JSON with G(r)/S(Q) statistics and the first-peak r (nearest neighbour).
+        JSON with G(r)/S(Q) statistics, a canvas plot, and the strongest peak
+        above 0.5 Å. Nearest-neighbour assignment requires separate validation.
     """
     try:
         valid, ppath = validate_file(pattern_file)
@@ -11760,7 +11815,7 @@ async def compute_pair_distribution(
             cargs += ["--q-max", str(q_max)]
         if output_file:
             cargs += ["--out", output_file]
-        out = _run_capability_runner(cargs, timeout=600)
+        out = await asyncio.to_thread(_run_capability_runner, cargs, timeout=600)
         # Bridge to the technique capsule (apexa_agents._maybe_capsule_msg
         # precedence 1). The tool NAME carries no capsule token — 'pdf' does not
         # appear in 'compute_pair_distribution' — so without this the PDF
@@ -11814,7 +11869,7 @@ async def analyze_grain_defects(
             cargs += ["--grains", gpath]
         if no_html:
             cargs.append("--no-html")
-        out = _run_capability_runner(cargs, timeout=3600)
+        out = await asyncio.to_thread(_run_capability_runner, cargs, timeout=3600)
         return format_result({"tool": "analyze_grain_defects", **out})
     except Exception as e:
         return format_result({"tool": "analyze_grain_defects",
@@ -11857,7 +11912,7 @@ async def fit_grain_odf(
         cargs = ["grain_odf", "--geometry", geometry_file, "--grains", grains_file,
                  "--spots", spots_file, "--frames", frames_file,
                  "--out", output_file, "--odf-type", odf_type]
-        out = _run_capability_runner(cargs, timeout=7200)
+        out = await asyncio.to_thread(_run_capability_runner, cargs, timeout=7200)
         return format_result({"tool": "fit_grain_odf", **out})
     except Exception as e:
         return format_result({"tool": "fit_grain_odf",
@@ -11892,7 +11947,7 @@ async def simulate_2d_diffraction(
     try:
         cargs = ["twod", "--tutorial", tutorial, "--out-dir", out_dir,
                  "--seed", str(seed)]
-        out = _run_capability_runner(cargs, timeout=1800)
+        out = await asyncio.to_thread(_run_capability_runner, cargs, timeout=1800)
         return format_result({"tool": "simulate_2d_diffraction", **out})
     except Exception as e:
         return format_result({"tool": "simulate_2d_diffraction",
@@ -11934,7 +11989,7 @@ async def design_xaf_experiment(
                  "--opening-deg", str(opening_deg), "--n-grains", str(n_grains),
                  "--n-mountings", str(n_mountings), "--material", material,
                  "--sample-radius-um", str(sample_radius_um), "--seed", str(seed)]
-        out = _run_capability_runner(cargs, timeout=1800)
+        out = await asyncio.to_thread(_run_capability_runner, cargs, timeout=1800)
         return format_result({"tool": "design_xaf_experiment", **out})
     except Exception as e:
         return format_result({"tool": "design_xaf_experiment",
@@ -11974,7 +12029,7 @@ async def simulate_dfxm_image(
                  "--d-spacing-A", str(d_spacing_a)]
         if output_file:
             cargs += ["--out", output_file]
-        out = _run_capability_runner(cargs, timeout=1800)
+        out = await asyncio.to_thread(_run_capability_runner, cargs, timeout=1800)
         return format_result({"tool": "simulate_dfxm_image", **out})
     except Exception as e:
         return format_result({"tool": "simulate_dfxm_image",
@@ -12011,7 +12066,7 @@ async def invert_pf_grain_odf(
             cargs += ["--layer-dir", layer_dir]
         if grain_id >= 0:
             cargs += ["--grain-id", str(grain_id)]
-        out = _run_capability_runner(cargs, timeout=1800)
+        out = await asyncio.to_thread(_run_capability_runner, cargs, timeout=1800)
         return format_result({"tool": "invert_pf_grain_odf", **out})
     except Exception as e:
         return format_result({"tool": "invert_pf_grain_odf",
@@ -12040,7 +12095,7 @@ async def invert_pink_beam(
     """
     try:
         cargs = ["pink", "--energy-keV", str(energy_kev), "--half-bw", str(half_bw)]
-        out = _run_capability_runner(cargs, timeout=600)
+        out = await asyncio.to_thread(_run_capability_runner, cargs, timeout=600)
         return format_result({"tool": "invert_pink_beam", **out})
     except Exception as e:
         return format_result({"tool": "invert_pink_beam",
@@ -12262,7 +12317,7 @@ async def build_detector_mask(
 
         # Differentiable mode recomputes the full forward each step → allow time.
         timeout = 7200 if "differentiable" in mode_list else 900
-        out = _run_capability_runner(cargs, timeout=timeout)
+        out = await asyncio.to_thread(_run_capability_runner, cargs, timeout=timeout)
 
         result = {"tool": "build_detector_mask", **out,
                   "detector_preset": preset_used}
@@ -12310,7 +12365,7 @@ async def read_grains_summary(
             return format_result({"tool": "read_grains_summary",
                                   "status": "error", "error": grains_path})
 
-        output = _run_stress_runner(["read_grains", "--grains", grains_path])
+        output = await asyncio.to_thread(_run_stress_runner, ["read_grains", "--grains", grains_path])
         return format_result({"tool": "read_grains_summary", **output})
 
     except Exception as e:
@@ -12356,7 +12411,7 @@ async def compute_grain_stress(
         if applied_stress:
             cmd_args.extend(["--applied-stress", applied_stress])
 
-        output = _run_stress_runner(cmd_args)
+        output = await asyncio.to_thread(_run_stress_runner, cmd_args)
         return format_result({"tool": "compute_grain_stress", **output})
 
     except Exception as e:
@@ -12383,7 +12438,7 @@ async def get_material_stiffness(
         list of all available materials
     """
     try:
-        output = _run_stress_runner(["material_info", "--material", material])
+        output = await asyncio.to_thread(_run_stress_runner, ["material_info", "--material", material])
         return format_result({"tool": "get_material_stiffness", **output})
 
     except Exception as e:
@@ -12429,7 +12484,7 @@ async def correct_d0_equilibrium(
         if applied_stress:
             cmd_args.extend(["--applied-stress", applied_stress])
 
-        output = _run_stress_runner(cmd_args)
+        output = await asyncio.to_thread(_run_stress_runner, cmd_args)
         return format_result({"tool": "correct_d0_equilibrium", **output})
 
     except Exception as e:
@@ -12475,7 +12530,7 @@ async def analyze_slip_systems(
                     "--load-direction", load_direction,
                     "--crss", str(crss)]
 
-        output = _run_stress_runner(cmd_args)
+        output = await asyncio.to_thread(_run_stress_runner, cmd_args)
         return format_result({"tool": "analyze_slip_systems", **output})
 
     except Exception as e:
@@ -12489,7 +12544,7 @@ async def analyze_slip_systems(
 
 def _run_midas_module(module: str, args: list, timeout: int = 7200) -> dict:
     """Invoke `python -m <module>` with MIDAS env. Returns dict with status/stdout/stderr."""
-    midas_python = find_midas_python()
+    midas_python = midas_bin_python() or find_midas_python()
     cmd = [midas_python, "-m", module] + [str(a) for a in args]
     print(f"\n  $ {' '.join(cmd)}", file=sys.stderr)
     try:
@@ -12603,7 +12658,7 @@ async def run_ff_pipeline(
     for s in (skip or []):  args += ["--skip", s]
     if extra_args:     args += list(extra_args)
 
-    out = _run_midas_module("midas_ff_pipeline.cli", args, timeout=14400)
+    out = await asyncio.to_thread(_run_midas_module, "midas_ff_pipeline.cli", args, timeout=14400)
     payload = {"tool": "run_ff_pipeline", "result_dir": str(Path(result).expanduser().absolute()), **out}
     return format_result(payload)
 
@@ -12660,7 +12715,7 @@ async def refine_grain_lattice(
     for _ in range(min(verbose, 2)):
         args += ["-v"]
 
-    out = _run_midas_module("midas_fit_grain.cli", args, timeout=3600)
+    out = await asyncio.to_thread(_run_midas_module, "midas_fit_grain.cli", args, timeout=3600)
     payload = {"tool": "refine_grain_lattice",
                "param_file": str(Path(param_file).expanduser().absolute()),
                "block": f"{block_nr}/{num_blocks}",
@@ -12696,7 +12751,7 @@ async def preprocess_nf_data(
                                        f"Valid: {sorted(valid)}"})
 
     cli_args = [subcommand] + [str(a) for a in (args or [])]
-    out = _run_midas_module("midas_nf_preprocess.cli", cli_args, timeout=3600)
+    out = await asyncio.to_thread(_run_midas_module, "midas_nf_preprocess.cli", cli_args, timeout=3600)
     payload = {"tool": "preprocess_nf_data", "subcommand": subcommand, **out}
     return format_result(payload)
 

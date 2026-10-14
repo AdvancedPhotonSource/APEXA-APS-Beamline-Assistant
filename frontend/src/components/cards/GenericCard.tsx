@@ -26,7 +26,7 @@ export function GenericCard({ result }: { result: ToolResult }) {
           <div className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
           <span className="text-[11px] font-medium text-zinc-400 uppercase tracking-wide font-mono">{tool}</span>
         </div>
-        <span className="text-[10px] text-emerald-400/80 font-medium">{result.status}</span>
+        <span className={`text-[10px] font-medium ${['success', 'completed'].includes(result.status) ? 'text-emerald-400/80' : 'text-amber-400'}`}>{result.status}</span>
       </div>
       {simple.length > 0 && (
         <div className="px-3 py-2 space-y-1">

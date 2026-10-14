@@ -1,6 +1,7 @@
 #!/bin/bash
 # Start Web Server with Image Viewer
 # Uses existing .venv managed by UV
+set -euo pipefail
 
 cd "$(dirname "$0")"
 
@@ -26,13 +27,20 @@ if [ -d "frontend" ]; then
     NEED_BUILD=0
     if [ ! -f "frontend/dist/index.html" ]; then
         NEED_BUILD=1
-    elif [ -n "$(find frontend/src -type f -newer frontend/dist/index.html 2>/dev/null | head -1)" ]; then
+    elif [ -n "$(find frontend/src -type f -newer frontend/dist/index.html -print -quit)" ]; then
         NEED_BUILD=1
     fi
+    for config in frontend/package.json frontend/package-lock.json frontend/vite.config.ts frontend/tsconfig*.json frontend/index.html; do
+        if [ "$config" -nt frontend/dist/index.html ]; then NEED_BUILD=1; fi
+    done
     if [ "$NEED_BUILD" = "1" ]; then
         echo ""
         echo "🔨 Building React frontend..."
-        (cd frontend && npm install --silent && npm run build) 2>&1 | tail -3
+        if [ ! -d frontend/node_modules ]; then
+            echo "Frontend build dependencies are absent. Stage them with npm ci on a connected setup host, or deploy a prebuilt frontend/dist."
+            exit 1
+        fi
+        (cd frontend && npm run build)
         echo "✓ Frontend built"
     fi
 fi
@@ -40,7 +48,7 @@ fi
 echo ""
 echo "🚀 Starting server..."
 echo "   Web UI:         http://localhost:8001"
-echo "   MIDAS Viewers:  Sidebar → Viewers icon → Scan a directory"
+echo "   MIDAS Results:  Sidebar → Results → Scan a directory"
 echo "   Image Viewer:   /api/viewer/* endpoints"
 echo "   Viz API:        /api/viz/* endpoints"
 echo ""
@@ -49,4 +57,4 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 
 # Run with venv Python directly
-.venv/bin/python3 web_server.py
+exec .venv/bin/python3 web_server.py
