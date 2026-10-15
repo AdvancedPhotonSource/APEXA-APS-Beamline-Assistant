@@ -120,6 +120,15 @@ alcf = ["globus-sdk>=3.40", "openai>=1.40"]
 # the tool degrades to a structured "mp-api not installed" error.
 mp = ["mp-api>=0.41.0"]
 
+# Tomography (TomoPy): there is deliberately NO `tomo` pip extra. The whole stack —
+# `tomopy`, `dxchange`, `astra-toolbox` — is conda-forge only (PyPI `dxchange` is a
+# stale 0.0.1 placeholder, and `dxchange>=…` makes the lock unsatisfiable), so there is
+# no working pip backend to offer. APEXA routes to a NATIVE tomo conda env via
+# APEXA_TOMO_PYTHON (see docs/TOMO_SETUP.md); `_tomo_runner.py` imports tomopy/dxchange
+# ONLY under that interpreter. APEXA's own `.venv` needs nothing for tomo:
+# `tomo_server.py` imports only mcp+stdlib, and the runner's pure-numpy guard helpers
+# (unit-tested here) use numpy, already in base. Base `uv sync` is therefore untouched.
+
 # Extra scientific packages (not currently imported but useful for future)
 extra = [
     "plotly>=6.3.0",
