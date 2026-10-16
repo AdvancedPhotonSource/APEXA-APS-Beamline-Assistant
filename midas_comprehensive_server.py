@@ -16,6 +16,7 @@ import numpy as np
 import xrayutilities as xu
 import re
 import subprocess
+import contextvars
 import time
 import shlex
 import asyncio
@@ -979,7 +980,8 @@ def _local_accelerator():
             pass
         return False, "cpu"
 
-def _pick_compute_target(n_frames: int = 1, megapixels: float = 8.3, prefer: str = "auto") -> dict:
+def _pick_compute_target(n_frames: int = 1, megapixels: float = 8.3, prefer: str = "auto",
+                         task: str = "") -> dict:
     """Decide where a job runs: local-cpu / local-gpu / remote-gpu.
 
     prefer: 'auto' (default) | 'local' | 'remote' | 'cpu' | 'cuda' | 'mps'.
@@ -987,9 +989,34 @@ def _pick_compute_target(n_frames: int = 1, megapixels: float = 8.3, prefer: str
     midas-pipeline --machine, e.g. 'polaris') and/or APEXA_GPU_ENDPOINT
     (ssh user@host or globus-compute endpoint id). Returns a dict with
     target, device, cost, reason, and (remote) machine/endpoint.
+
+    ``task`` opts a caller into the **measured** device gate in
+    ``apexa_compute``. Rule 2 below ("a local accelerator exists, so use it") is
+    an assumption, and for calibration it is measurably wrong: on copland a
+    four-stage fit took 224.7 s on an RTX A6000 versus 230.0 s on CPU, and that
+    GPU's float64 rate (0.56 TFLOP/s) is 4x *below* the host's own CPUs (2.33).
+    So when a task has a measured profile saying the GPU does not help, we stay
+    on CPU.
+
+    Deliberately scoped: callers that pass no ``task`` keep the legacy rule
+    byte-for-byte. Integration's GPU benefit has NOT been measured, and flipping
+    it on an assumption would repeat the mistake this fixes.
     """
     cost = max(1.0, float(n_frames)) * max(0.1, float(megapixels))
     accel, name = _local_accelerator()
+
+    if task and prefer in ("auto", ""):
+        try:
+            import apexa_compute as _AC
+            _prof = _AC.profile_for(task)
+            if accel and _prof.gpu_speedup < _AC.GPU_MIN_SPEEDUP:
+                return {"target": "local-cpu", "device": "cpu", "cost": cost,
+                        "reason": (f"{task}: GPU measured at {_prof.gpu_speedup:.2f}x "
+                                   f"(< {_AC.GPU_MIN_SPEEDUP:.2f}x) — staying on CPU "
+                                   f"despite a local {name}")}
+        except Exception:
+            pass        # profile layer unavailable → fall through to the legacy rule
+
     machine = os.environ.get("APEXA_GPU_MACHINE") or None
     endpoint = os.environ.get("APEXA_GPU_ENDPOINT") or None
     prefer = (prefer or "auto").lower()
@@ -1016,6 +1043,28 @@ def _pick_compute_target(n_frames: int = 1, megapixels: float = 8.3, prefer: str
             "reason": (f"large job (cost {cost:.0f}) on a CPU-only host and no GPU endpoint "
                        "configured (set APEXA_GPU_MACHINE or APEXA_GPU_ENDPOINT) — running "
                        "on CPU, which will be slow")}
+
+
+def _resolve_calib_device(device: str = "") -> str:
+    """Device for one calibration: explicit > env > measured profile.
+
+    ``auto`` resolves the way the FF pipeline already does, except that the
+    decision is gated on a MEASURED speedup rather than on a GPU merely being
+    present — on copland the A6000 ran a four-stage fit in 224.7 s against
+    230.0 s on CPU, so "a GPU exists" is not a reason to use it.
+
+    Previously this was reachable only through the undocumented
+    ``APEXA_MIDAS_DEVICE``, which defaulted to ``cpu`` with no auto path — so a
+    GPU host silently never used its GPU and nobody could tell.
+    """
+    d = (device or os.environ.get("APEXA_MIDAS_DEVICE") or "auto").strip().lower()
+    if d != "auto":
+        return d
+    try:
+        import apexa_compute as _AC
+        return _AC.plan(1, "calibration").device
+    except Exception:
+        return "cpu"
 
 
 def _apexa_scratch_dir(subdir: str = "") -> Path:
@@ -5533,6 +5582,14 @@ def _find_dark_for_image(image_path: Path):
     return str(cands[0].resolve())
 
 
+#: Wall-clock start of the calibration running in THIS async task. A ContextVar
+#: rather than a module global because a series fans out many calibrations
+#: concurrently and each must time itself. Until now no calibration recorded a
+#: runtime anywhere, which is precisely why a 2.7-hour serial loop over 43
+#: frames was invisible to everyone involved.
+_CALIB_T0: "contextvars.ContextVar[float]" = contextvars.ContextVar("_CALIB_T0", default=0.0)
+
+
 def _write_calibration_outcome(out_dir, payload: dict):
     """Drop a uniform machine-readable per-run outcome manifest
     (``APEXA_calibration.json``) into the calibration output directory.
@@ -5554,6 +5611,9 @@ def _write_calibration_outcome(out_dir, payload: dict):
         rec = dict(payload)
         rec.setdefault("manifest", "APEXA_calibration.json")
         rec.setdefault("written_at", datetime.now(timezone.utc).isoformat())
+        _t0 = _CALIB_T0.get()
+        if _t0:
+            rec.setdefault("elapsed_s", round(time.monotonic() - _t0, 1))
         p = d / "APEXA_calibration.json"
         p.write_text(json.dumps(rec, indent=2, default=str))
         print(f"  ↳ outcome manifest: {p}", file=sys.stderr)
@@ -5921,6 +5981,8 @@ async def midas_auto_calibrate(
     px_um: float = 0.0,                # detector pixel size in µm; overrides every guess
     lsd_tol_um: float = 0.0,           # override the Lsd bound (µm); default = template tolLsd (MIDAS: 15000)
     refine_distortion: str = "full",   # full | radial | none | "p2,p4,p5" — hard rule 11
+    device: str = "",                  # "" / auto → measured gate (cpu unless a GPU is
+                                       # measurably faster); cpu | cuda | cuda:N to force
     tol_tilts_deg: float = 0.0,        # ty/tz bound in degrees; default = template tolTilts (MIDAS: 3.0)
     trust_seed_lsd: bool = False,      # take the seeder's distance even if it contradicts the recorded one
     strain_gate_ue: float = 100.0,     # held-out strain cap, µε (handbook §4)
@@ -6036,6 +6098,7 @@ async def midas_auto_calibrate(
         px 200                      # Pixel size in microns
         SkipFrame 0
     """
+    _CALIB_T0.set(time.monotonic())     # every terminal payload records elapsed_s
     try:
         print(f"\n{'='*70}", file=sys.stderr)
         print(f"🔧 midas_auto_calibrate called:", file=sys.stderr)
@@ -6644,7 +6707,7 @@ async def midas_auto_calibrate(
                        "--calibrant", _calib_v2,
                        "--wavelength", f"{float(_resolved_wl):.8f}",
                        "--strain-gate-ue", str(float(strain_gate_ue)),
-                       "--device", os.environ.get("APEXA_MIDAS_DEVICE", "cpu")]
+                       "--device", _resolve_calib_device(device)]
             if _px_use > 0:
                 _cmd_v2 += ["--px-um", f"{_px_use:.4f}"]
 
@@ -7452,6 +7515,286 @@ def _batch_integrate_v2_python(frames, params_file, dark_file, out_dir,
         _write_fxye(fxye, tth, inten, title=stem)
         outputs += [str(xye), str(fxye)]
     return outputs
+
+
+
+async def _benchmark_calibration(files, plan, _AC, run_one, resolved_device: str) -> str:
+    """Measure this host's calibration profile and persist it.
+
+    Three measurements, each answering a question the planner would otherwise
+    have to assume:
+
+      * one frame on CPU          -> the serial baseline
+      * the same frame on GPU     -> gpu_speedup, the gate that decides whether a
+                                     GPU is used at all (copland measured 1.02x,
+                                     i.e. no benefit, despite two idle A6000s)
+      * a small concurrent sweep  -> that fan-out actually scales here
+
+    Writes ``~/.apexa/task_profiles.json``. Nothing is calibrated for real.
+    """
+    import time as _t
+    from datetime import datetime, timezone
+    img = files[0]
+    out: dict = {"tool": "midas_calibrate_series", "mode": "benchmark",
+                 "status": "success", "frame": img.name, "n_frames_available": len(files),
+                 "resources": plan.resources}
+
+    t0 = _t.monotonic()
+    rec_cpu = await run_one(img)
+    t_cpu = round(_t.monotonic() - t0, 1)
+    out["cpu_s"] = t_cpu
+    out["cpu_status"] = rec_cpu.get("status")
+    if rec_cpu.get("status") not in ("success", "warning"):
+        out["status"] = "error"
+        out["error"] = ("the CPU baseline frame did not calibrate, so nothing can be "
+                        "measured from it: " + str(rec_cpu.get("error"))[:200])
+        return format_result(out)
+
+    # GPU trial, only if the host has one at all.
+    gpu_speedup = 1.0
+    try:
+        res = _AC.inventory()
+        if res.gpus:
+            import os as _os
+            _prev = _os.environ.get("APEXA_MIDAS_DEVICE")
+            _os.environ["APEXA_MIDAS_DEVICE"] = f"cuda:{res.gpus[0].index}"
+            try:
+                t0 = _t.monotonic()
+                rec_gpu = await run_one(img)
+                t_gpu = round(_t.monotonic() - t0, 1)
+                out["gpu_s"] = t_gpu
+                out["gpu_name"] = res.gpus[0].name
+                if rec_gpu.get("status") in ("success", "warning") and t_gpu > 0:
+                    gpu_speedup = round(t_cpu / t_gpu, 2)
+                else:
+                    out["gpu_note"] = "GPU run did not produce a usable result"
+            finally:
+                if _prev is None:
+                    _os.environ.pop("APEXA_MIDAS_DEVICE", None)
+                else:
+                    _os.environ["APEXA_MIDAS_DEVICE"] = _prev
+        else:
+            out["gpu_note"] = "no GPU on this host"
+    except Exception as e:                                   # noqa: BLE001
+        out["gpu_note"] = f"GPU trial skipped: {type(e).__name__}: {e}"
+    out["gpu_speedup"] = gpu_speedup
+
+    # Concurrency sweep: does fan-out actually scale on THIS host?
+    k = min(4, len(files))
+    if k > 1:
+        sweep_plan = _AC.ExecutionPlan(n_workers=k,
+                                       threads_per_worker=plan.threads_per_worker)
+        t0 = _t.monotonic()
+        b = await _AC.run_batch_async(files[:k], run_one, sweep_plan,
+                                      label=lambda p: p.name, progress=False)
+        t_k = round(_t.monotonic() - t0, 1)
+        out["sweep_n"] = k
+        out["sweep_s"] = t_k
+        out["sweep_speedup"] = round(k * t_cpu / t_k, 1) if t_k > 0 else None
+        out["sweep_ok"] = b.n_ok
+
+    prof = _AC.profile_for("calibration")
+    prof = _AC.replace(prof, gpu_speedup=gpu_speedup,
+                       measured_on=(plan.host or "local"),
+                       measured_at=datetime.now(timezone.utc).date().isoformat(),
+                       note=(f"benchmark: cpu {t_cpu}s"
+                             + (f", gpu {out.get('gpu_s')}s" if out.get("gpu_s") else "")
+                             + (f", {out.get('sweep_n')}-way {out.get('sweep_speedup')}x"
+                                if out.get("sweep_speedup") else "")))
+    out["profile_saved"] = _AC.save_profile(prof)
+    out["device_the_planner_will_now_use"] = _AC.plan(1, "calibration").device
+    return format_result(out)
+
+
+@mcp.tool()
+async def midas_calibrate_series(
+    images: str,
+    output_root: str = "",
+    template_param_file: str = "",
+    dark_file: str = "",
+    calibrant: str = "CeO2",
+    energy_kev: float = 0.0,
+    wavelength_angstrom: float = 0.0,
+    px_um: float = 0.0,
+    lsd_guess: float = 1000000.0,
+    lsd_tol_um: float = 0.0,
+    refine_distortion: str = "full",
+    strain_gate_ue: float = 100.0,
+    image_transform: str = "",
+    data_loc: str = "",
+    detector: str = "",
+    seed_from_params: str = "",
+    n_parallel: int = 0,
+    device: str = "",
+    host: str = "",
+    benchmark: bool = False,
+) -> str:
+    """Calibrate MANY frames in ONE call, fanned out across the host's cores.
+
+    Use this for a rotation series or any multi-frame calibrant sweep. Do NOT
+    loop ``midas_auto_calibrate`` per file — the same rule that already applies
+    to ``midas_integrate_series``. A 43-frame loop costs 43 agent iterations and
+    ends in a forced finalize (the failure mode that produces fabricated file
+    lists), and it runs serially: measured on copland, 43 frames took ~2.7 hours
+    while 95 of 96 cores sat idle.
+
+    Concurrency is decided by ``apexa_compute`` from what the host actually has
+    free, not from a fixed number: one fit occupies ~1 effective core and ~7 GB,
+    so many run at once. Measured fan-out on copland was 1/4/12 concurrent ->
+    225/250/317 s, i.e. 8.5x at 12 workers, putting 43 frames at ~19 minutes.
+
+    ``images`` is a glob (``/path/*_avg.vrx.h5``) or a directory. Each frame goes
+    through the ordinary ``midas_auto_calibrate`` path, so every handbook lint,
+    the detector scope gate, the strain acceptance gate, the output-freshness
+    check and the per-run manifest all still apply, per frame.
+
+    Args:
+        images: glob or directory of calibrant frames.
+        output_root: parent for per-frame output dirs (default: alongside each image).
+        n_parallel: 0 = let the planner decide from free cores/RAM; >0 to force.
+        device: "" / auto = measured gate (CPU unless a GPU is measurably
+            faster); cpu | cuda | cuda:N to force.
+        host: explicit execution host (otherwise inferred from data locality).
+        benchmark: instead of calibrating the series, MEASURE this host — one
+            frame on CPU, the same frame on GPU if one exists, then a small
+            concurrent sweep — and save the result as the host's calibration
+            profile. This is what keeps the planner honest when hardware or
+            MIDAS versions change, and it is how the shipped numbers were
+            obtained. Published capability flags have been wrong in both
+            directions here before (Metis, Minerva), so capability is measured.
+    """
+    import glob as _glob
+    _t_series = time.monotonic()
+    try:
+        import apexa_compute as _AC
+    except Exception as _e:
+        return format_result({"tool": "midas_calibrate_series", "status": "error",
+                              "nothing_was_run": True,
+                              "error": f"apexa_compute unavailable: {_e}"})
+
+    # ---- discover frames -------------------------------------------------------
+    pat = str(images).strip()
+    if not pat:
+        return format_result({"tool": "midas_calibrate_series", "status": "error",
+                              "nothing_was_run": True, "error": "images is required"})
+    if Path(pat).is_dir():
+        files = sorted(p for p in Path(pat).iterdir()
+                       if p.suffix.lower() in (".h5", ".hdf5", ".tif", ".tiff", ".zip")
+                       and p.is_file())
+    else:
+        files = sorted(Path(p) for p in _glob.glob(pat) if Path(p).is_file())
+    if not files:
+        return format_result({"tool": "midas_calibrate_series", "status": "error",
+                              "nothing_was_run": True,
+                              "error": f"no calibrant frames matched {pat!r}"})
+
+    # ---- locality: refuse ONCE, not once per frame ------------------------------
+    # midas_auto_calibrate fails closed on remote data (its driver is
+    # local-FS-coupled). Fanning out first would turn one comprehensible refusal
+    # into 43 identical ones and burn the batch for nothing.
+    try:
+        _d = decide_exec_host(str(files[0]), template_param_file, host=host)
+        if _d.get("is_remote"):
+            return format_result({
+                "tool": "midas_calibrate_series", "status": "error",
+                "is_remote": True, "host": _d.get("host"),
+                "nothing_was_run": True, "n_frames": len(files),
+                "locality_reason": _d.get("reason"),
+                "error": (f"These {len(files)} frames live on remote host "
+                          f"'{_d.get('host')}', and calibration does not yet run over "
+                          f"SSH. NOTHING was run — refusing once rather than failing "
+                          f"{len(files)} times. Options: (1) run APEXA on that host, "
+                          f"(2) stage the frames locally, or (3) set "
+                          f"APEXA_LOCAL_HOSTNAMES if APEXA is already ON the data host "
+                          f"under another name."),
+            })
+    except Exception:
+        pass            # locality is advisory here; the per-frame guard still applies
+
+    # ---- plan ------------------------------------------------------------------
+    plan = _AC.plan(len(files), "calibration", host=host, max_workers=n_parallel)
+    _dev = device or plan.device
+    print(f"[midas_calibrate_series] {len(files)} frames  |  {plan.reason}  |  "
+          f"device={_dev}", file=sys.stderr)
+    print(f"[midas_calibrate_series] resources: {plan.resources}", file=sys.stderr)
+
+    out_root = Path(output_root) if output_root else None
+    if out_root:
+        out_root.mkdir(parents=True, exist_ok=True)
+
+
+    async def _one(img: Path):
+        od = str((out_root / img.stem) if out_root else (img.parent / f"{img.stem}_calib"))
+        raw = await midas_auto_calibrate(
+            image_file=str(img), output_dir=od,
+            template_param_file=template_param_file, dark_file=dark_file,
+            energy_kev=energy_kev, wavelength_angstrom=wavelength_angstrom,
+            px_um=px_um, lsd_guess=lsd_guess, lsd_tol_um=lsd_tol_um,
+            refine_distortion=refine_distortion, strain_gate_ue=strain_gate_ue,
+            image_transform=image_transform, data_loc=data_loc, detector=detector,
+            seed_from_params=seed_from_params, device=_dev, host=host)
+        try:
+            rec = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
+        except Exception:
+            rec = {"status": "error", "error": "unparseable calibration payload"}
+        rec["input_image"] = str(img)
+        return rec
+
+    if benchmark:
+        return await _benchmark_calibration(files, plan, _AC, _one, _dev)
+
+    batch = await _AC.run_batch_async(files, _one, plan, label=lambda p: p.name)
+
+    # ---- summarise -------------------------------------------------------------
+    # Same columns as the hand-built rotation_series_calibration_summary.csv that
+    # already exists at 20-ID, so a parallel run is directly diff-able against the
+    # serial baseline -- the check that matters is "did concurrency change any
+    # answer", not merely "was it faster".
+    rows = []
+    for rec in batch.records:
+        cp = rec.get("calibrated_parameters") or {}
+        cm = rec.get("convergence_metrics") or {}
+        gate = rec.get("gate") or {}
+        rows.append({
+            "image": Path(rec.get("input_image", "")).name,
+            "status": rec.get("status"),
+            "elapsed_s": rec.get("elapsed_s"),
+            "lsd_um": cp.get("lsd_um") or rec.get("lsd"),
+            "bc_x": cp.get("bc_x"), "bc_y": cp.get("bc_y"),
+            "ty_deg": cp.get("ty_deg"), "tz_deg": cp.get("tz_deg"),
+            "heldout_uE": cm.get("stage4_strain_uE_test"),
+            "gate_passed": gate.get("passed"),
+            "at_bounds": len(rec.get("at_bounds") or []) or None,
+            "param_file": rec.get("refined_param_file"),
+            "manifest": rec.get("manifest"),
+            "error": rec.get("error"),
+        })
+
+    n_gate = sum(1 for r in rows if r.get("gate_passed"))
+    n_rail = sum(1 for r in rows if r.get("at_bounds"))
+    elapsed = round(time.monotonic() - _t_series, 1)
+    serial_est = sum(r["elapsed_s"] or 0 for r in rows)
+
+    payload = {
+        "tool": "midas_calibrate_series",
+        "status": "success" if batch.n_ok else "error",
+        "n_frames": len(files), "n_ok": batch.n_ok, "n_failed": batch.n_fail,
+        "n_gate_passed": n_gate,
+        # A railed parameter and a converged fit have the same residual, so a
+        # gate pass alone cannot separate them (23 of 35 gate-passed runs in the
+        # 20-ID series had a parameter pinned to a bound). Surface it up front.
+        "n_with_railed_parameter": n_rail,
+        "elapsed_s": elapsed,
+        "serial_equivalent_s": round(serial_est, 1),
+        "speedup": (round(serial_est / elapsed, 1) if elapsed > 0 and serial_est else None),
+        "compute": plan.as_dict(),
+        "per_frame": rows,
+    }
+    if n_rail:
+        payload["warning"] = (f"{n_rail} frame(s) finished with a parameter at a search "
+                              f"bound — run generate_run_report on those before trusting "
+                              f"the geometry.")
+    return format_result(payload)
 
 
 @mcp.tool()
