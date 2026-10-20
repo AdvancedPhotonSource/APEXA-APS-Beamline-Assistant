@@ -1,0 +1,35 @@
+# Maximize a diode reading by scanning a single motor (the "hotspot finder").
+# Simplest case — 1D grid scan + Gaussian fit, no BO needed.
+name: diode_max_1d_scan
+description: "1D scan: maximize diode current by scanning one motor; fit a Gaussian to the trace; move to the fitted peak."
+beamline: "1-ID-E"
+technique: beam_steering
+scope:
+  requires: [one scalar diode PV, one motor with a known safe scan range]
+devices:
+  motors: [SCAN_MOTOR]           # resolved per invocation
+  observations:
+    - type: epics_ca
+      pv_from_arg: diode_pv
+      reducer: time_average
+      integration_s: 0.5
+vocs:
+  variables:
+    SCAN_MOTOR: [-5.0, 5.0]      # mm or deg; task caller provides real bounds
+  objectives:
+    diode_current: MAXIMIZE
+algorithm:
+  class: "scan_then_fit"
+  grid_points: 21                # 21 points across the range
+  fit_model: gaussian_plus_offset
+  convergence:
+    peak_fit_r2: 0.90            # Gaussian fit must explain >=90% variance
+    peak_width_fraction_of_range: 0.25  # peak must be <25% of scan range (not just drift)
+prior_source: history
+success_criteria:
+  - "fitted peak position within scan range"
+  - "fit R^2 >= 0.90"
+notes:
+  - "This is the dumbest-possible-that-works pattern for the 'move slit until diode peaks' step. For 2D (slit H + V), use the slit_tune_for_ic_target task."
+  - "The Gaussian + offset model (not pure Gaussian) handles the dark-current / background floor correctly."
+  - "If the fit fails (R^2 < 0.90 or peak at a boundary), the task reports status='partial' and leaves the motor at the sample-max position, not the fitted peak."

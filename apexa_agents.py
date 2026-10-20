@@ -1288,6 +1288,52 @@ If unsure which motor the user means, call list_motors first to see all descript
 After each move report: target, final RBV, and units.""",
 )
 
+ALIGNMENT_AGENT = APEXAAgent(
+    name        = "AlignmentAgent",
+    temperature = 0.2,   # alignment is deterministic — low temp for reproducibility
+    tool_names  = [
+        # Alignment-specific tools (apexa_alignment_server)
+        "list_alignment_tasks",
+        "recommend_initial",
+        "query_alignment_history",
+        "ingest_experiment_h5",
+        "ingest_experiment_archive",
+        "fit_rotation_axis",
+        "grab_pva_frame",
+        "analyze_detector_frame",
+        # Motor tools — ALL alignment motion dispatches through the gated motor server
+        "get_motor_position",
+        "get_motor_limits",
+        "move_motor_absolute",
+        "move_motor_relative",
+        "jog_motor",
+        "tweak_motor",
+        "stop_motor",
+        "list_motors",
+    ],
+    instructions = """You are a beamline alignment specialist for APS beamlines (first target: 1-ID-E).
+
+Follow the beamline-alignment capsule's THE ORDER phases:
+  Phase 1 — Select task:    list_alignment_tasks → match operator phrase → one task from the library.
+  Phase 2 — Warm-start:     recommend_initial(beamline, technique, detector, role) → check n_good_runs ≥ 3.
+  Phase 3 — Execute:        algorithm per task (fit_rotation_axis | scan+fit | Xopt BO) → dispatch moves via motor tools.
+  Phase 4 — Verify:         decide converged|partial|failed|dry_run honestly; record to DB.
+
+HARD RULES (never violate):
+1. NO raw caput. Every motor move goes through move_motor_absolute (or relative/jog/tweak) — the safety gates (soft-limit, large-move, velocity, jog-duration) MUST run.
+2. Honest status. Never report "aligned" without the convergence block. A fit that didn't converge is "partial", not "success-with-warning".
+3. Warm-start requires evidence. recommend_initial with n_good_runs < 3 → refuse with nothing_was_run unless the operator passes allow_cold_start=true.
+4. Saturation is a safety constraint, not a cost. If analyze_detector_frame reports saturation_fraction > 0.01, halt (H3) — do not let BO optimize into the saturated region.
+5. One task per invocation. Do not fuse multiple alignment problems into one BO run.
+6. Dry-run default on first invocation of a new task — propose moves, do NOT dispatch, let operator approve.
+
+ROTATION AXIS specifically: fit_rotation_axis is analytical (algotom Vo's method + sinusoid+drift fit). It produces a px offset — translate to mm using the px_to_mm scale from the beamline-alignment capsule's RUNBOOK.md. If the scale is missing, refuse the move (T5), do not guess.
+
+SAXS BEAM CENTERING: grab_pva_frame (one frame from the PVA stream the ImageJ plugin reads) → analyze_detector_frame(geometry="circ_with_beamstop") → distance_from_beamstop_px is the objective to minimize via BO over sample X/Y.
+
+Report every alignment turn as a one-paragraph summary + three bullets: status, final objective + Δ from start, final motor positions. Keep chat terse; the DB record carries the full trajectory.""",
+)
+
 VISUALIZATION_AGENT = APEXAAgent(
     name        = "VisualizationAgent",
     temperature = 0.3,
@@ -3716,6 +3762,7 @@ class OrchestratorAgent:
         "knowledge":     KNOWLEDGE_AGENT,
         "visualization": VISUALIZATION_AGENT,
         "motor":         MOTOR_AGENT,
+        "alignment":     ALIGNMENT_AGENT,
     }
 
     _KEYWORDS: Dict[str, set] = {
@@ -3786,6 +3833,21 @@ class OrchestratorAgent:
             "samx", "samy", "samz", "detx", "dety", "detz",
             # PV name patterns — " m1", " m2", etc. (leading space avoids false matches)
             " m1", " m2", " m3", " m4", " m5", " m6", " m7", " m8",
+        },
+        "alignment": {
+            # Beamline alignment / optimization — AlignmentAgent + apexa_alignment_server
+            "align", "alignment", "center the beam", "beam center on",
+            "beamstop", "beam stop", "hotspot", "hot spot", "find the hotspot",
+            "rotation axis", "cor", "center of rotation",
+            "tune slit", "tune slits", "slit tuning", "slit alignment",
+            "ic target", "ic value", "typical ic", "typical slit",
+            "diode max", "max diode", "maximize diode", "scan the diode",
+            "pva stream", "pva frame", "pva channel", "live stream",
+            "pixirad", "circular beamstop", "rectangular beam",
+            "bayesian", "bo tune", "warm start", "warm-start", "warm starting",
+            "alignment history", "past alignment", "recommend initial",
+            "saxs beam", "saxs centering", "saxs alignment",
+            "ingest experiment", "ingest archive", "fit rotation",
         },
     }
 

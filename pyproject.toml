@@ -120,6 +120,27 @@ alcf = ["globus-sdk>=3.40", "openai>=1.40"]
 # the tool degrades to a structured "mp-api not installed" error.
 mp = ["mp-api>=0.41.0"]
 
+# Beamline alignment (apexa_alignment_server) — Bayesian optimization + live PV
+# Access streaming. OPT-IN by design — the base alignment server works offline
+# (history ingestion, DB query, analytical rotation-axis fit via algotom).
+# `xopt`: SLAC/LCLS BO + VOCS schema; pure Python, offline-safe. Backs the
+# saxs_beam_center_on_beamstop and slit_tune_for_ic_target tasks.
+# `pvapy`: PV Access binding, used by grab_pva_frame to read the same stream
+# the ImageJ PVA plugin reads. Requires EPICS7; most beamlines have it. On a
+# host without EPICS7 the task refuses with a structured error.
+# `algotom`: Vo's center-of-rotation (fit_rotation_axis). Already pulled into
+# the base install for the current rotation-axis fit code path; listed here
+# too so the alignment extra is self-contained for a fresh env.
+# `scikit-image`: used by analyze_detector_frame for beam/beamstop centroids
+# via gaussian_filter.  Already in base; listed here for the same reason.
+alignment = [
+    "xopt>=2.4",
+    "pvapy>=5.5 ; sys_platform != 'win32'",
+    "algotom>=1.6",
+    "scikit-image>=0.22",
+    "scipy>=1.11",
+]
+
 # Tomography (TomoPy): there is deliberately NO `tomo` pip extra. The whole stack —
 # `tomopy`, `dxchange`, `astra-toolbox` — is conda-forge only (PyPI `dxchange` is a
 # stale 0.0.1 placeholder, and `dxchange>=…` makes the lock unsatisfiable), so there is

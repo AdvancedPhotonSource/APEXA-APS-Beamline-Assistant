@@ -1,0 +1,45 @@
+# Center a circular SAXS beam on a circular beamstop by reading a PVA stream
+# (the same stream the ImageJ PVA plugin reads) and moving the sample X/Y stage.
+#
+# Objective = pixel distance from beam centroid to beamstop centroid, minimized
+# via Bayesian optimization. Safety constraints prevent saturation and shutter
+# drops. All moves route through epics_motor_server (safety-gated).
+name: saxs_beam_center_on_beamstop
+description: "Center a circular SAXS beam on a circular beamstop (pixirad class); BO over sample X/Y; distance_from_beamstop_px as objective, saturation + total_counts as safety constraints."
+beamline: "1-ID-E"
+technique: saxs
+scope:
+  detector: ["pixirad", "eiger"]   # circular-beamstop detectors seen at 1-ID
+  requires: [PVA stream from areaDetector, calibrated px -> um scale per detector]
+devices:
+  motors: [samX, samY]             # decision variables (mm)
+  observations:
+    - type: pva_stream
+      pv_from_arg: image_pv        # resolved per run; e.g. "1ide:pixirad:image"
+      reducer: analyze_detector_frame
+      geometry: circ_with_beamstop
+      sample_rate_hz: 2            # one frame per BO evaluation
+vocs:
+  variables:
+    samX: [-2.0, 2.0]              # mm — soft-limit cap per motor_server
+    samY: [-2.0, 2.0]
+  objectives:
+    distance_from_beamstop_px: MINIMIZE
+  constraints:
+    saturation_fraction: [LESS_THAN, 0.01]   # <1% saturated pixels
+    total_counts:        [GREATER_THAN, 1000] # not shuttered
+algorithm:
+  class: "xopt.generators.bayesian.ExpectedImprovementGenerator"
+  n_initial: 4                     # random seed samples
+  n_steps: 15                      # BO iterations (early-stop on convergence)
+  convergence:
+    improvement_rel: 0.01          # <1% improvement
+    patience: 3                    # for 3 consecutive steps
+prior_source: history              # warm-start from past good saxs runs
+success_criteria:
+  - "distance_from_beamstop_px < 1.0"
+  - "no safety constraint violated"
+notes:
+  - "The reducer picks beam = top-20% brightness; beamstop = bottom-20% inside the beam bbox. For non-pixirad geometries, provide a mask hint."
+  - "Warm-start pulls `samX`, `samY` means from the alignment history DB for the (beamline, technique, detector) tuple matched."
+  - "Each proposed move is dispatched via `move_motor_absolute` on epics_motor_server; any denied move (soft-limit, large-move, saturation) is reported as a BO constraint violation (score=inf), so BO learns the safe region."

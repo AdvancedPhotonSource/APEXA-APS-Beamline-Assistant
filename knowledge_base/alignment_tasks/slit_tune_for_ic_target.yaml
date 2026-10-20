@@ -1,0 +1,43 @@
+# Tune downstream slits (H_cen, V_cen, H_size, V_size) to hit an IC target
+# learned from the alignment history for this (beamline, technique) tuple.
+#
+# This is the "which IC numbers are good from previous experiments" pattern:
+# `recommend_initial(beamline, technique, role="ic")` tells us the typical
+# IC2 is ~1.2e5 cps for FF-HEDM at 1-ID-E; this task's objective is to drive
+# the current IC2 to within 10% of that learned target.
+name: slit_tune_for_ic_target
+description: "Tune downstream slits to hit the historically-typical IC2 reading for the active (beamline, technique); 2D BO over H_cen/V_cen with H_size/V_size as fixed constraints."
+beamline: "1-ID-E"
+technique: ff-hedm
+scope:
+  requires: [downstream slit motors, IC2 PV, >=3 past good runs in history DB]
+devices:
+  motors: [DS_slit_H_cen, DS_slit_V_cen]   # decision variables (mm)
+  constants: [DS_slit_H_size, DS_slit_V_size]  # held at current readback
+  observations:
+    - type: epics_ca
+      pv_from_history: "ic2_pv"            # resolved from RUNBOOK or arg
+      reducer: time_average
+      integration_s: 1.0
+vocs:
+  variables:
+    DS_slit_H_cen: [-0.5, 0.5]  # mm
+    DS_slit_V_cen: [-0.5, 0.5]
+  objectives:
+    ic2_error_relative: MINIMIZE   # |IC2 - target| / target
+  constraints:
+    ic2_absolute: [GREATER_THAN, 100]   # not shuttered
+algorithm:
+  class: "xopt.generators.bayesian.ExpectedImprovementGenerator"
+  n_initial: 3
+  n_steps: 10
+prior_source: history
+history_lookup:
+  target_scalar: IC2
+  role: ic
+  min_good_runs: 3
+success_criteria:
+  - "ic2_error_relative < 0.10"
+notes:
+  - "Target is derived at runtime from recommend_initial(beamline, technique, role='ic'). If <3 historical runs, the task refuses (nothing_was_run) rather than guessing."
+  - "If the beamline has drifted substantially since the last ingested run, the target may be wrong — the agent should surface the historical sample size + date range."

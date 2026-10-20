@@ -1,0 +1,40 @@
+# Fit rotation axis + vertical beam drift from a tomo projection stack.
+#
+# Analytical, no live motor moves required. Driven by `fit_rotation_axis`;
+# the resulting proposal is executed through epics_motor_server after human review.
+name: rotation_axis_from_tomo
+description: "Fit rotation-axis offset + vertical beam drift from a 360-degree tomo H5 (Vo CoR + sinusoid+drift fit); recommend sample-X / beam-steering correction."
+beamline: "1-ID-E"
+technique: tomography
+scope:
+  requires: [projection stack with dark+white fields, theta array in degrees]
+  works_on: [strip detectors (90x510 class), area detectors (2k x 2k)]
+devices:
+  motors: [samX]            # candidate for CoR correction (sign per RUNBOOK)
+  observations:
+    - type: h5_dataset
+      path_from_arg: tomo_h5
+      datasets:
+        projections: "exchange/data"
+        theta:       "exchange/theta"
+        dark:        "exchange/data_dark"
+        white:       "exchange/data_white"
+vocs:
+  variables:
+    samX: [-2.0, 2.0]       # mm search bounds (will be clipped to soft limits)
+  objectives:
+    cor_offset_px: MINIMIZE # absolute offset from geometric center
+  constraints:
+    vertical_fit_rms_rows: [LESS_THAN, 3.0]  # drift fit must be meaningful
+algorithm:
+  class: "custom:vo_center_fit"
+  convergence:
+    cor_offset_px_tolerance: 0.5
+    rms_rows_tolerance: 1.5
+prior_source: history   # pull typical samX from past good tomo runs
+success_criteria:
+  - "|cor_offset_px| < 0.5"
+  - "vertical_fit_rms_rows < 1.5"
+notes:
+  - "Verified on 1-ID LaB6-on-diamond difficult case (Oct 2026): Vo CoR = 254.50 px vs ideal 255.00 (0.5 px off); vertical drift = +15.86 rows / 360deg; vertical fit RMS = 1.48 rows."
+  - "No ML required. Classical methods (Vo + sinusoid fit) handle the low-contrast / drift case this task was designed for."
