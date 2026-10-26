@@ -24,7 +24,7 @@ A preset only sets *defaults*; any field can still be overridden by the matching
 
 Selected with ``APEXA_LLM_PRESET``:
 
-    argo-proxy    local argo-proxy sidecar (default)      ANL username as key
+    argo          Argo Gateway native /v1 (default)       ANL username as key
     alcf-sophia   ALCF Inference Service, Sophia cluster  Globus token, per-user
     alcf-metis    ALCF Metis cluster                      REJECTED: no tool calling
     openai        api.openai.com                          personal key (keyring)
@@ -193,7 +193,7 @@ class OpenAIEndpoint:
 
         Precedence: ``APEXA_LLM_API_KEY`` → OS keyring (personal endpoints only)
         → preset ``api_key`` → ``token_cmd`` output (cached) → ANL username (the
-        argo-proxy convention).
+        Argo convention).
 
         The env var stays first so an operator can always override without
         touching the keyring — the same "never boxed in" rule the presets follow.
@@ -272,7 +272,7 @@ class OpenAIEndpoint:
 
 @dataclass
 class ArgoNativeEndpoint(OpenAIEndpoint):
-    """Argo Gateway's own OpenAI-compatible surface. The preferred ANL path.
+    """Argo Gateway's own OpenAI-compatible surface. The ANL path.
 
     Argo serves ``/v1/chat/completions`` directly as of the Oct-2026 update
     ("OpenAI-compatibility is now native to the Argo Gateway API"), so the
@@ -298,22 +298,6 @@ class ArgoNativeEndpoint(OpenAIEndpoint):
     notes: str = ("Argo Gateway, native OpenAI-compatible endpoint. No sidecar. "
                   "ANL internal network or VPN required; api_key is your ANL "
                   "domain username.")
-
-
-@dataclass
-class ArgoProxyEndpoint(OpenAIEndpoint):
-    """Local argo-proxy sidecar fronting the Argo Gateway.
-
-    Authenticates with the ANL **username** in the api_key slot — there is no
-    secret, which is exactly why the sidecar must bind 127.0.0.1
-    (see docs/ARGO_PROXY_DEPLOYMENT.md).
-    """
-
-    name: str = "argo-proxy"
-    base_url: str = "http://127.0.0.1:44497/v1"
-    tool_calling: bool = True
-    notes: str = ("Argo via local sidecar. Shared ANL identity — inference is "
-                  "attributed to whoever's username the proxy is configured with.")
 
 
 @dataclass
@@ -542,7 +526,6 @@ class OllamaEndpoint(OpenAIEndpoint):
 
 PRESETS: dict[str, type[OpenAIEndpoint]] = {
     "argo":             ArgoNativeEndpoint,
-    "argo-proxy":       ArgoProxyEndpoint,
     "alcf-sophia":      ALCFSophiaEndpoint,
     "alcf-minerva":     ALCFMinervaEndpoint,
     "alcf-metis":       ALCFMetisEndpoint,
@@ -561,10 +544,18 @@ PRESETS: dict[str, type[OpenAIEndpoint]] = {
 #: ``tool_calling`` strikes for alcf-metis.
 SUPPORTED_WIRES = ("openai", "anthropic")
 
-#: Argo's native OpenAI-compatible endpoint, not the sidecar: one less moving
-#: part on the beamline host, and no 127.0.0.1-binding hazard. argo-proxy stays
-#: registered and selectable for hosts already running it.
+#: Argo's native OpenAI-compatible endpoint. The argo-proxy sidecar this used to
+#: default to was removed once Argo served /v1/chat/completions itself.
 DEFAULT_PRESET = "argo"
+
+#: Names that used to exist, mapped to what replaced them, so an old .env or a
+#: saved session keeps starting instead of dying on "unknown preset".
+LEGACY_PRESETS = {"argo-proxy": "argo"}
+
+#: The retired sidecar's default address. An APEXA_LLM_BASE_URL still pointing
+#: here is a leftover: it would silently override the native endpoint and then
+#: fail to connect, which reads as "Argo is down" rather than "delete one line".
+_RETIRED_SIDECAR = re.compile(r"^https?://(127\.0\.0\.1|localhost|\[::1\]):44497(/|$)", re.I)
 
 
 # ── ALCF candidate models for APEXA ──────────────────────────────────────────
@@ -611,7 +602,7 @@ def preset_for_model(model_id: str) -> Optional[str]:
     Lets the CLI's ``model <name>`` switch **endpoint and model together**: moving
     from ``claudeopus5`` to ``inkling-bf16`` is not a model change, it is a change
     of cluster, credential, and base URL. Without this the CLI would silently ask
-    argo-proxy for an ALCF model and 404.
+    Argo for an ALCF model and 404.
     """
     mid = (model_id or "").strip()
     for c in ALCF_CANDIDATES:
@@ -654,6 +645,10 @@ def active_endpoint() -> OpenAIEndpoint:
     the first query.
     """
     name = (os.environ.get("APEXA_LLM_PRESET") or DEFAULT_PRESET).strip().lower()
+    if name in LEGACY_PRESETS:
+        print(f"[apexa] APEXA_LLM_PRESET={name!r} was retired; using "
+              f"{LEGACY_PRESETS[name]!r}. Update .env to silence this.", file=sys.stderr)
+        name = LEGACY_PRESETS[name]
     cls = PRESETS.get(name)
     if cls is None:
         raise EndpointRejected(
@@ -662,6 +657,11 @@ def active_endpoint() -> OpenAIEndpoint:
         )
     ep = cls()
     override = (os.environ.get("APEXA_LLM_BASE_URL") or "").strip()
+    if override and _RETIRED_SIDECAR.match(override):
+        raise EndpointRejected(
+            f"APEXA_LLM_BASE_URL={override} points at the retired argo-proxy "
+            f"sidecar. Argo now serves this API itself -- remove that line from "
+            f".env (the `argo` preset supplies https://apps.inside.anl.gov/argoapi/v1).")
     if override:
         ep.base_url = override
     if not ep.tool_calling:

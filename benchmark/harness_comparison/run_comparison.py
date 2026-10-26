@@ -2,7 +2,7 @@
 """Harness comparison: same backend, same task, different driver.
 
 Measures how much of an agent's reliability is a property of the HARNESS rather than
-the model. All arms are pointed at one argo-proxy endpoint, so model and transport
+the model. All arms are pointed at one Argo endpoint, so model and transport
 are held identical and the driver is the only variable.
 
 What makes this more than a task-completion score: each trial records three
@@ -48,7 +48,7 @@ sys.path.insert(0, str(REPO))
 
 # ── harness adapters ─────────────────────────────────────────────────────────
 # Each adapter says how to drive one harness non-interactively and how to point it
-# at argo-proxy. Keeping the env per-adapter is what holds the backend identical:
+# at Argo. Keeping the env per-adapter is what holds the backend identical:
 # the harnesses disagree about which variable names their base URL and key live in,
 # and getting that wrong would silently benchmark different endpoints.
 
@@ -435,7 +435,7 @@ def main() -> int:
 
     spec = json.loads((HERE / "tasks.json").read_text())
     tasks = [t for t in spec["tasks"] if not args.tasks or t["id"] in args.tasks]
-    base_url = args.base_url or "http://localhost:44497/v1"
+    base_url = args.base_url or "https://apps.inside.anl.gov/argoapi/v1"
     api_key = os.environ.get("APEXA_LLM_API_KEY") or os.environ.get("ANL_USERNAME", "")
 
     missing = [n for n in args.harnesses

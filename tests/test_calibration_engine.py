@@ -445,8 +445,10 @@ def test_endpoint_failure_hint_distinguishes_auth_from_reachability():
     argo = hint("https://apps.inside.anl.gov/argoapi/v1", "AuthenticationError")
     assert "ANL_USERNAME" in argo
 
-    proxy = hint("http://localhost:44497/v1", "APIConnectionError")
-    assert "argo-proxy serve" in proxy
+    # A generic unreachable endpoint points at the override, not at a sidecar
+    # that no longer exists.
+    other = hint("http://localhost:8000/v1", "APIConnectionError")
+    assert "APEXA_LLM_BASE_URL" in other and "argo-proxy serve" not in other
 
 
 def test_an_explicit_dark_gets_the_same_checks_as_an_auto_resolved_one(tmp_path):

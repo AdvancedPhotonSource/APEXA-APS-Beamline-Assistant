@@ -201,7 +201,7 @@ tool-heavy execution. Type `models` for what the gateway actually serves.
 | `APEXA_AGENT_MODE` | `single` | `single` = one persistent reasoning loop, full context across turns (Claude-Code style). `legacy` = keyword-routed specialists + guards. |
 | `ARGO_MODEL` | `claudeopus5` | Default model at startup (overridable in-session with `model`). |
 | `APEXA_LLM_MODE` | `argo` | `argo` = legacy `/chat/`. `proxy` = OpenAI-compatible `/v1` with structured tool calls. See `docs/ARGO_NATIVE_ENDPOINT.md`. |
-| `APEXA_LLM_BASE_URL` | *(unset)* | The `/v1` base for `proxy` mode — Argo's native endpoint or a local argo-proxy. |
+| `APEXA_LLM_BASE_URL` | *(unset)* | Override the `/v1` base for `proxy` mode. Leave unset for Argo — the `anl` profile supplies its native endpoint. |
 | `APEXA_LLM_STRICT` | on with `proxy` | Abort startup on an unreachable endpoint rather than silently downgrading. |
 | `APEXA_NETWORK` | `internal` | `data` / `internal` / `web`. Beamline hosts are `internal`; only `fetch_cif_from_mp` needs `web`. |
 | **`APEXA_MIDAS_BIN`** | *(unset)* | **`bin/` of the pip `midas-suite` env.** Prepended to PATH with conda stripped. The primary MIDAS mechanism — no repo clone needed. |

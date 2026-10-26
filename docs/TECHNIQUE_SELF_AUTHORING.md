@@ -148,7 +148,7 @@ covered by the lint contract. The last two are the danger zone and stay human-ow
    inside `handbook_guardrails` (they are structural — "has all parts, diagnosis entries
    well-formed, spine carries scope/install/halt"). Must not reintroduce the offline-hang
    class (see `docs/OFFLINE_DEPLOYMENT.md`).
-2. **Generation transport.** The authoring LLM call goes through argo-proxy
+2. **Generation transport.** The authoring LLM call goes through Argo's native /v1
    (`APEXA_LLM_MODE=proxy`), internal tier, no public net.
 3. **Where generated capsules live vs. vendored ones.** Vendored MIDAS capsules are
    overwritten by `sync_midas_capsules.py`. APEXA-authored capsules for techniques MIDAS

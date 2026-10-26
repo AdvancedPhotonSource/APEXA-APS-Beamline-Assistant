@@ -8,7 +8,7 @@ own Globus identity**. Since APEXA's `OpenAICompatProvider` speaks plain OpenAI
 protocol, pointing at ALCF needs **no code change** — only configuration. Inference
 is attributed to the user who ran it, and no beamline data leaves ANL.
 
-> Read `ARGO_PROXY_DEPLOYMENT.md` first for the transport model and the
+> Read `ARGO_NATIVE_ENDPOINT.md` first for the transport model and the
 > `APEXA_LLM_STRICT` fail-closed behaviour. This document covers only what differs.
 
 ---

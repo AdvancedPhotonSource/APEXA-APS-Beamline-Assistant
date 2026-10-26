@@ -37,7 +37,7 @@ def test_env_beats_saved_choice(monkeypatch):
     P.set_choice("alcf")
     monkeypatch.setenv("APEXA_PROFILE", "anl-service")
     prof, how = P.resolve_active()
-    assert (prof.name, how) == ("anl-service", "env")
+    assert (prof.name, how) == ("anl", "env")
 
 
 def test_saved_choice_beats_auto(monkeypatch):
@@ -133,7 +133,7 @@ def test_toml_can_define_a_new_profile():
 
 def test_malformed_toml_does_not_strand_the_operator():
     P.PROFILES_TOML.write_text("this is not toml {{{", encoding="utf-8")
-    assert "anl-service" in P.load_profiles()      # built-ins still available
+    assert "anl" in P.load_profiles()      # built-ins still available
 
 
 # ── applying a profile ───────────────────────────────────────────────────────
@@ -146,16 +146,23 @@ def test_apply_sets_what_the_rest_of_apexa_reads(monkeypatch):
     assert os.environ["APEXA_ACTIVE_PROFILE"] == "gemini-personal"
 
 
-def test_facility_profile_does_not_touch_llm_mode(monkeypatch):
-    """Regression guard: anl-service must not change an existing install.
-
-    It deliberately carries llm_mode=None so a site that runs the legacy Argo
-    transport keeps running it after profiles ship.
+def test_facility_profile_does_not_override_an_explicit_legacy_choice(monkeypatch):
+    """Regression guard: the ANL profile must not silently change an existing
+    install's transport. A site that explicitly runs the legacy Argo transport
+    keeps running it; only an unset mode defaults to the native structured path.
     """
     monkeypatch.setenv("APEXA_LLM_MODE", "argo")
-    P.apply(P.load_profiles()["anl-service"])
+    P.apply(P.load_profiles()["anl"])
     import os
     assert os.environ["APEXA_LLM_MODE"] == "argo"
+
+
+def test_the_retired_sidecar_profile_name_still_starts(monkeypatch, capsys):
+    """An old .env with APEXA_PROFILE=anl-service must not fail to start."""
+    monkeypatch.setenv("APEXA_PROFILE", "anl-service")
+    prof, how = P.resolve_active()
+    assert (prof.name, how) == ("anl", "env")
+    assert "retired" in capsys.readouterr().err
 
 
 # ── reachability cache ───────────────────────────────────────────────────────
@@ -198,7 +205,7 @@ def test_gemini_rides_the_openai_compat_layer():
 
 def test_facility_presets_never_read_the_keyring():
     """A stray stored secret must not shadow the ANL-username convention."""
-    for name in ("argo-proxy", "alcf-sophia", "alcf-minerva", "ollama"):
+    for name in ("argo", "alcf-sophia", "alcf-minerva", "ollama"):
         assert E.PRESETS[name]().uses_keyring is False
 
 

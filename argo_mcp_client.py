@@ -1676,7 +1676,7 @@ class APEXAClient:
             self.session = self.sessions["midas"]
 
         # LLM transport preflight. Runs once at startup so a misconfigured or
-        # not-yet-started argo-proxy sidecar fails HERE — visibly, before any
+        # unreachable endpoint fails HERE — visibly, before any
         # science — instead of surfacing as a failed query mid-experiment.
         # Under APEXA_LLM_STRICT (default on when APEXA_LLM_MODE=proxy) an
         # unreachable proxy aborts startup rather than silently downgrading to the
@@ -1693,7 +1693,7 @@ class APEXAClient:
                 if _llm_strict():
                     print(f"  {C.RED}✗ LLM transport unavailable{C.RESET}: {_detail}")
                     print(f"  {C.DIM}APEXA_LLM_STRICT is on — refusing to run on the "
-                          f"legacy text protocol. Start the sidecar, fix "
+                          f"legacy text protocol. Fix "
                           f"APEXA_LLM_BASE_URL, or set APEXA_LLM_STRICT=0.{C.RESET}")
                     raise RuntimeError(f"LLM transport preflight failed: {_detail}")
                 print(f"  {C.YELLOW}⚠ LLM transport degraded{C.RESET}: {_detail}")
@@ -2107,7 +2107,8 @@ class APEXAClient:
                     default=18)
         width = min(max(width, 18), 44)
 
-        active_preset = (os.environ.get("APEXA_LLM_PRESET") or "argo-proxy").strip()
+        from apexa_llm_endpoints import DEFAULT_PRESET as _default_preset
+        active_preset = (os.environ.get("APEXA_LLM_PRESET") or _default_preset).strip()
         print(f"\n  {C.BOLD}Available Models{C.RESET}  "
               f"{C.DIM}(active: {self.selected_model} via {active_preset}){C.RESET}")
         print(f"  {C.DIM}{'─' * (width + 34)}{C.RESET}")
@@ -2986,7 +2987,7 @@ class APEXAClient:
                     model_name = user_input[6:].strip()
                     # An ALCF model lives on a different CLUSTER, not just a
                     # different name — switching it must also move the preset
-                    # (base URL + credential), or we'd ask argo-proxy for a model
+                    # (base URL + credential), or we'd ask Argo for a model
                     # it has never heard of. select_provider() re-reads the env
                     # per query, so setting it here takes effect on the next turn.
                     from apexa_model_policy import disallowed_reason as _why_not

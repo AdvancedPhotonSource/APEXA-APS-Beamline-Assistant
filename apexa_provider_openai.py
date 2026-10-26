@@ -1,16 +1,18 @@
-"""OpenAI-compatible LLM provider for APEXA (via argo-proxy).
+"""OpenAI-compatible LLM provider for APEXA.
 
 Why this exists
 ---------------
-``ArgoProvider`` talks to Argo's ``/chat/`` endpoint, whose payload sanitizer
-flattens every message to ``{role, content:<string>}``. That makes it impossible
-to send a *structured* tool result back, so APEXA's follow-up turns fall back to a
-text ``TOOL_CALL:`` / ``ARGUMENTS:`` protocol — which frontier models drift off,
-which is why a cluster of regex anti-fabrication guards grew around the loop.
+``ArgoProvider`` talks to Argo's legacy ``/chat/`` endpoint, whose payload
+sanitizer flattens every message to ``{role, content:<string>}``. That makes it
+impossible to send a *structured* tool result back, so APEXA's follow-up turns
+fall back to a text ``TOOL_CALL:`` / ``ARGUMENTS:`` protocol — which frontier
+models drift off, which is why a cluster of regex anti-fabrication guards grew
+around the loop.
 
-``argo-proxy`` (MIT, on-prem, https://github.com/Oaklight/argo-proxy) fronts the
-same Argo Gateway with a standard OpenAI ``/v1/chat/completions`` surface and
-handles per-vendor tool translation itself. Speaking that protocol gives APEXA:
+Argo now serves a standard OpenAI ``/v1/chat/completions`` surface itself
+(``https://apps.inside.anl.gov/argoapi/v1``) and does per-vendor tool
+translation server-side. This used to require the argo-proxy sidecar; it no
+longer does, and the sidecar was removed. Speaking that protocol gives APEXA:
 
   * real ``{"role":"tool","tool_call_id":...}`` results on EVERY turn, not just the
     first — so tool calling is structured end-to-end and format drift is impossible;
@@ -18,20 +20,18 @@ handles per-vendor tool translation itself. Speaking that protocol gives APEXA:
     per-model parameter table, no three-shape ``_parse_tool_calls``;
   * a stable, cacheable prompt prefix.
 
+The same provider drives ALCF's per-user clusters and any other OpenAI-compatible
+gateway; ``apexa_llm_endpoints`` supplies the URL and credential per endpoint.
+
 This module is a drop-in for ``ArgoProvider`` at the ``select_provider()`` seam:
 same duck-typed ``chat(messages, temperature, tools) -> AgentResponse`` contract,
 same ``close()``, same ``~/.apexa/timing.jsonl`` instrumentation.
 
-Setup (ANL internal network or VPN required):
+Setup (ANL internal network or VPN required) — nothing to install or run:
 
-    pip install argo-proxy
-    argo-proxy config init
-    argo-proxy serve                      # http://localhost:44497
+    export APEXA_LLM_MODE=proxy        # or select the `anl` profile, which sets it
 
-    export APEXA_LLM_MODE=proxy
-    export APEXA_LLM_BASE_URL=http://localhost:44497/v1
-
-Verify multi-turn support first with ``scripts/gate0_argo_proxy_smoke.py``.
+Verify multi-turn tool calling with ``scripts/gate0_llm_smoke.py``.
 """
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ from apexa_timing import (
     record_llm_call,
 )
 
-DEFAULT_BASE_URL = "http://localhost:44497/v1"
+DEFAULT_BASE_URL = "https://apps.inside.anl.gov/argoapi/v1"
 DEFAULT_MAX_TOKENS = 16000
 
 
@@ -63,7 +63,7 @@ def endpoint_failure_hint(url: str, exc_name: str = "") -> str:
     reachability problem -- the endpoint answered and rejected the credential, so
     telling the operator to check whether a sidecar is running sends them the wrong
     way. Second, APEXA now speaks to three different OpenAI-compatible endpoints
-    (a local argo-proxy, Argo's native /v1, and ALCF's per-user clusters) and the
+    (Argo's native /v1 and ALCF's per-user clusters) and the
     remedy differs for each; the message named argo-proxy unconditionally, so an
     expired ALCF Globus token read as a dead sidecar.
     """
@@ -86,10 +86,10 @@ def endpoint_failure_hint(url: str, exc_name: str = "") -> str:
         return ("Cannot reach Argo's native endpoint. It needs the ANL internal "
                 "network or VPN (see docs/ARGO_NATIVE_ENDPOINT.md).")
     if auth:
-        return ("The endpoint rejected the credential. For argo-proxy the key is "
-                "your ANL username; for another gateway set APEXA_LLM_API_KEY.")
-    return ("Is the sidecar running (`argo-proxy serve`), is APEXA_LLM_BASE_URL "
-            "pointing at its port, and are you on the ANL network/VPN?")
+        return ("The endpoint rejected the credential. On Argo the key is your "
+                "ANL username; for another gateway set APEXA_LLM_API_KEY.")
+    return ("Cannot reach the endpoint. Check APEXA_LLM_BASE_URL (unset it to use "
+            "Argo's native endpoint) and that you are on the ANL network/VPN.")
 
 
 def proxy_mode_enabled() -> bool:
@@ -115,7 +115,7 @@ def api_key_for(username: str) -> str:
 
     Precedence lives in ``OpenAIEndpoint.resolve_key``: ``APEXA_LLM_API_KEY`` →
     preset key → ``APEXA_LLM_TOKEN_CMD`` output (cached ~10 min) → ANL username
-    (the argo-proxy convention).
+    (the Argo convention).
 
     Resolution is deliberately lazy. ALCF Globus access tokens expire after 48 h, so
     a key captured once at construction would go stale mid-experiment; delegating
@@ -208,7 +208,7 @@ def _anagram_key(name: str) -> str:
     """Order-insensitive fold, for vendors whose id components are permuted.
 
     Argo names Anthropic models ``claude<tier><version>`` (``claudeopus5``) while
-    argo-proxy serves them ``claude-<version>-<tier>`` (``argo:claude-5-opus``).
+    the former argo-proxy sidecar served ``claude-<version>-<tier>`` (``argo:claude-5-opus``); still matched, harmlessly.
     Those are the same characters in a different order, so a sorted-character key
     matches them where ``_norm`` alone cannot. OpenAI and Gemini ids already agree
     under ``_norm``; this is the Anthropic-shaped fallback.
@@ -241,7 +241,7 @@ def strip_special_tokens(text: str) -> str:
 
 
 class ProviderUnavailable(RuntimeError):
-    """argo-proxy is not reachable — caller may fall back to ArgoProvider."""
+    """The OpenAI-compatible endpoint is not reachable — caller may fall back to ArgoProvider."""
 
 
 class OpenAICompatProvider:
@@ -273,7 +273,16 @@ class OpenAICompatProvider:
         self.username = username
         self.model = model
         self.url = base_url_override or base_url()
-        # argo-proxy authenticates with the ANL username in the api_key slot;
+        # Recorded on every timing row. This used to be the literal "argo-proxy",
+        # so native-Argo and ALCF calls were logged under the wrong endpoint and
+        # benchmark traces could not separate the transports they compare.
+        try:
+            from apexa_llm_endpoints import active_endpoint
+            self._endpoint_name = ("custom" if base_url_override
+                                   else active_endpoint().name)
+        except Exception:
+            self._endpoint_name = self.url
+        # Argo authenticates with the ANL username in the api_key slot;
         # ALCF / vLLM / commercial APIs need a real key or a Globus bearer token.
         # Resolved fresh per request (see _client_for_request) so an expiring ALCF
         # token can be refreshed without restarting a long beamline session.
@@ -282,6 +291,9 @@ class OpenAICompatProvider:
                                    timeout=120.0, max_retries=0)
         self._dropped: set[str] = set()
         self._resolved_model: Optional[str] = None
+        #: Learned, not configured: flips on the first "Streaming is required"
+        #: refusal and stays on for the session. See _create().
+        self._stream: bool = False
 
     # ── model resolution ────────────────────────────────────────────────────
 
@@ -370,7 +382,7 @@ class OpenAICompatProvider:
             near = [m for m in served if stem and stem in _norm(m)][:5]
             raise ProviderUnavailable(
                 f"model {self.model!r} is not served by {self.url}. "
-                f"Similar: {near or 'none'}. `argo-proxy models` lists all."
+                f"Similar: {near or 'none'}. `models` in the APEXA CLI lists all."
             )
 
         self._resolved_model = hit
@@ -412,6 +424,83 @@ class OpenAICompatProvider:
             if p in msg:
                 return p
         return None
+
+    # ── transport ───────────────────────────────────────────────────────────
+
+    _STREAM_REQUIRED = ("streaming is required",)
+
+    @classmethod
+    def _needs_streaming(cls, exc: Exception) -> bool:
+        """Argo's Anthropic path refuses every non-streaming request with a 500,
+        immediately and before any work ("Streaming is required for operations
+        that may take longer than 10 minutes"). Measured on the native endpoint
+        on 28 Sep and again on 26 Oct 2026 for Opus 5, Opus 5.5 and Sonnet 5.5;
+        GPT models pass either way.
+
+        Detected from the response rather than from a model-name table, for the
+        same reason sampling parameters are: the table would be stale the day a
+        new model ships."""
+        return any(k in str(exc).lower() for k in cls._STREAM_REQUIRED)
+
+    async def _create(self, kwargs: Dict):
+        """One completion, streamed if this session has learned it must be."""
+        client = self._client_for_request()
+        if not self._stream:
+            return await client.chat.completions.create(**kwargs)
+        stream = await client.chat.completions.create(**kwargs, stream=True)
+        return await self._reassemble(stream)
+
+    @staticmethod
+    async def _reassemble(stream):
+        """Fold a chat-completions stream back into the shape of a non-streamed
+        completion, so _to_agent_response stays the single parser.
+
+        Tool calls arrive as fragments keyed by `index`; the id and name come
+        once and the JSON arguments come in pieces. Some gateways that translate
+        another vendor's stream omit `index`, so a fragment with neither index
+        nor a new id is attached to the call it continues.
+        """
+        from types import SimpleNamespace as NS
+
+        text: List[str] = []
+        slots: Dict[Any, Dict[str, Any]] = {}
+        order: List[Any] = []
+        last: Any = None
+        async for chunk in stream:
+            for choice in (getattr(chunk, "choices", None) or [])[:1]:
+                d = getattr(choice, "delta", None)
+                if d is None:
+                    continue
+                if getattr(d, "content", None):
+                    text.append(d.content)
+                for frag in (getattr(d, "tool_calls", None) or []):
+                    idx = getattr(frag, "index", None)
+                    fid = getattr(frag, "id", None) or ""
+                    if idx is None:
+                        idx = fid if (fid and fid not in slots) else last
+                    if idx is None:
+                        idx = len(order)
+                    if idx not in slots:
+                        slots[idx] = {"id": "", "name": "", "args": []}
+                        order.append(idx)
+                    slot, last = slots[idx], idx
+                    if fid:
+                        slot["id"] = fid
+                    fn = getattr(frag, "function", None)
+                    if fn is not None:
+                        nm = getattr(fn, "name", None) or ""
+                        if nm:
+                            # Gateways differ: some resend the whole name each
+                            # fragment, some split it. Grow or replace, never double.
+                            slot["name"] = nm if nm.startswith(slot["name"]) else slot["name"] + nm
+                        if getattr(fn, "arguments", None):
+                            slot["args"].append(fn.arguments)
+        calls = [NS(id=slots[i]["id"], type="function",
+                    function=NS(name=slots[i]["name"],
+                                arguments="".join(slots[i]["args"]) or "{}"))
+                 for i in order]
+        msg = NS(content="".join(text), tool_calls=calls or None)
+        return NS(choices=[NS(message=msg)])
 
     # ── response parsing ────────────────────────────────────────────────────
 
@@ -480,8 +569,8 @@ class OpenAICompatProvider:
         for attempt in range(retries):
             t0 = time.monotonic()
             try:
-                completion = await self._client_for_request().chat.completions.create(
-                    **self._kwargs(messages, temperature, tools, model))
+                completion = await self._create(
+                    self._kwargs(messages, temperature, tools, model))
                 elapsed = time.monotonic() - t0
                 parsed = self._to_agent_response(completion)
                 if os.environ.get("APEXA_SHOW_TIMING"):
@@ -500,6 +589,21 @@ class OpenAICompatProvider:
                 elapsed = time.monotonic() - t0
                 last_exc = e
                 name = type(e).__name__
+
+                # "Streaming is required" is not a failure either: switch this
+                # session to streaming and retry at once. It arrives as a 500, so
+                # without this it is classed transient and the identical request
+                # is backed off and resent until the retries run out.
+                if not self._stream and self._needs_streaming(e):
+                    self._stream = True
+                    print(f"  \033[2m{model} requires streaming on {self.url} — "
+                          f"switching this session to streamed calls\033[0m",
+                          file=sys.stderr)
+                    log_llm_call(self._timing_record(
+                        attempt=attempt, status=500, elapsed=elapsed,
+                        prompt_tok=prompt_tok, n_messages=n_messages,
+                        temperature=temperature, error="retry_stream_required"))
+                    continue
 
                 # A rejected sampling parameter is not a failure — learn and retry
                 # immediately, without consuming a backoff slot.
@@ -557,7 +661,7 @@ class OpenAICompatProvider:
             record_llm_call(elapsed_s=elapsed, prompt_tok=prompt_tok,
                             response_tok=resp_tok)
         return {
-            "endpoint":     "argo-proxy",
+            "endpoint":     getattr(self, "_endpoint_name", self.url),
             "query_id":     current_query_id() or "",
             "model":        self.model,
             "attempt":      attempt,

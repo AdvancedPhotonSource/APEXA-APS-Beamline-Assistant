@@ -21,7 +21,7 @@ Three tiers, ordered by what the host can reach:
     No off-host services. Validation and analysis work locally; agentic use
     requires a separately installed, qualified model on a loopback endpoint.
 ``internal``  **← the beamline default**
-    ANL-internal network: Argo Gateway, argo-proxy, ALCF Inference Service, SSH
+    ANL-internal network: Argo Gateway, ALCF Inference Service, SSH
     to analysis hosts. Everything that matters for data reduction works. The RAG
     embedder loads from a pre-staged cache and never touches the network.
 ``web``

@@ -936,20 +936,20 @@ def select_provider(username: str, model: str):
       OpenAI client physically cannot reach it; this must be decided before the
       proxy branch below)
     - ``APEXA_LLM_MODE=proxy``                             → OpenAICompatProvider
-      (argo-proxy, OpenAI-compatible; STRUCTURED tool results on every turn)
+      (Argo native /v1, ALCF, …; STRUCTURED tool results on every turn)
     - ``APEXA_PROVIDER=streaming`` + a ``claude*`` model    → StreamingAnthropicProvider
     - anything else                                         → ArgoProvider
 
     Dispatching on the wire first is what lets a profile switch gateways without
     the user also having to keep ``APEXA_LLM_MODE`` consistent with it. The
-    default preset (argo-proxy) is OpenAI-wired, so this branch never fires for
+    default preset (argo) is OpenAI-wired, so this branch never fires for
     an existing install and today's behaviour is unchanged.
 
     The proxy path is preferred: Argo's ``/chat/`` sanitizer flattens messages to
     strings, so tool results can only be fed back as prose there, which is what
-    forces the fragile text ``TOOL_CALL:`` protocol. It is opt-in (default
-    ``argo``) until the sidecar has soaked on the beamline host — see
-    ``scripts/gate0_argo_proxy_smoke.py``. If the proxy is misconfigured we fall
+    forces the fragile text ``TOOL_CALL:`` protocol. The `anl` profile selects it;
+    an explicit APEXA_LLM_MODE=argo keeps the legacy transport — see
+    ``scripts/gate0_llm_smoke.py``. If the endpoint is misconfigured we fall
     back rather than stranding an operator mid-experiment.
 
     Non-Claude models under ``streaming`` fall back to Argo /chat/ with a

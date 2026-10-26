@@ -318,11 +318,34 @@ def test_argo_native_is_the_default_preset():
     assert ep.wire == "openai" and ep.tool_calling is True
 
 
-def test_the_sidecar_preset_still_exists():
-    """copland runs argo-proxy today; removing the preset would strand it."""
+def test_the_sidecar_preset_is_gone_but_its_name_still_starts(monkeypatch, capsys):
+    """argo-proxy was removed once Argo served the API itself. An old .env that
+    still names it must keep starting, on the native endpoint."""
     import apexa_llm_endpoints as E
-    assert "argo-proxy" in E.PRESETS
-    assert E.PRESETS["argo-proxy"]().base_url.startswith("http://127.0.0.1")
+    assert "argo-proxy" not in E.PRESETS
+    monkeypatch.delenv("APEXA_LLM_BASE_URL", raising=False)
+    monkeypatch.setenv("APEXA_LLM_PRESET", "argo-proxy")
+    ep = E.active_endpoint()
+    assert ep.name == "argo" and "retired" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:44497/v1", "http://localhost:44497/v1",
+                                 "http://localhost:44497"])
+def test_a_leftover_sidecar_url_is_refused_with_the_fix(monkeypatch, url):
+    """Left in .env it would override the native URL and fail to connect, which
+    reads as 'Argo is down' rather than 'delete one line'."""
+    import apexa_llm_endpoints as E
+    monkeypatch.setenv("APEXA_LLM_PRESET", "argo")
+    monkeypatch.setenv("APEXA_LLM_BASE_URL", url)
+    with pytest.raises(E.EndpointRejected, match="retired argo-proxy"):
+        E.active_endpoint()
+
+
+def test_an_unrelated_local_port_is_not_mistaken_for_the_sidecar(monkeypatch):
+    import apexa_llm_endpoints as E
+    monkeypatch.setenv("APEXA_LLM_PRESET", "custom")
+    monkeypatch.setenv("APEXA_LLM_BASE_URL", "http://127.0.0.1:8000/v1")
+    assert E.active_endpoint().base_url == "http://127.0.0.1:8000/v1"
 
 
 def test_argo_native_takes_the_anl_username_not_a_secret():
@@ -332,12 +355,11 @@ def test_argo_native_takes_the_anl_username_not_a_secret():
     assert ep.resolve_key("s20hedm") == "s20hedm"
 
 
-def test_the_native_profile_is_preferred_over_the_sidecar_profile():
+def test_the_native_profile_is_the_only_anl_profile():
     import apexa_profiles as P
     names = [p.name for p in P.BUILTIN_PROFILES]
-    assert "anl" in names and "anl-service" in names
-    assert names.index("anl") < names.index("anl-service")
-    assert dict((p.name, p.preset) for p in P.BUILTIN_PROFILES)["anl"] == "argo"
+    assert "anl" in names and "anl-service" not in names
+    assert {p.name: p.preset for p in P.BUILTIN_PROFILES}["anl"] == "argo"
 
 
 def test_the_anl_profile_uses_the_native_endpoint_on_a_clean_host(monkeypatch):

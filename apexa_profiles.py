@@ -6,7 +6,7 @@ Taking APEXA outside ANL used to mean hand-editing three independent
 environment variables that must agree: ``APEXA_LLM_MODE`` (which provider class
 runs), ``APEXA_LLM_PRESET`` (which URL and credential) and ``ARGO_MODEL`` (a
 model id whose names are Argo-specific and meaningless at api.anthropic.com).
-Any one of them wrong fails confusingly — argo-proxy 404s on an ALCF model, or
+Any one of them wrong fails confusingly — Argo 404s on an ALCF model, or
 the loop silently drops to the fabrication-prone text protocol.
 
 A **profile** bundles all of it behind a single name, so the combination can
@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -103,9 +104,6 @@ BUILTIN_PROFILES: List[Profile] = [
     # already say proxy silently got the legacy /chat/ provider instead.
     Profile("anl", "argo", requires=ANL, llm_mode="proxy",
             notes="Beamline default. Argo's native OpenAI endpoint — no sidecar."),
-    Profile("anl-service", "argo-proxy", requires=ANL,
-            notes="Argo via the local argo-proxy sidecar. Kept for hosts already "
-                  "running one; the `anl` profile needs no sidecar."),
     Profile("alcf", "alcf-minerva", model="inkling-bf16", requires=ALCF,
             llm_mode="proxy",
             notes="ALCF Inference Service, per-user Globus identity. On-prem DOE hardware."),
@@ -250,11 +248,24 @@ def auto_select(force_probe: bool = False) -> Optional[Profile]:
     return None
 
 
+#: Profiles that used to exist, mapped to their replacement, so an old .env or a
+#: saved choice keeps starting instead of failing on "unknown profile".
+LEGACY_PROFILES = {"anl-service": "anl"}
+
+
+def _modern(name: str) -> str:
+    if name in LEGACY_PROFILES:
+        print(f"[apexa] profile {name!r} was retired (it used the argo-proxy "
+              f"sidecar); using {LEGACY_PROFILES[name]!r}.", file=sys.stderr)
+        return LEGACY_PROFILES[name]
+    return name
+
+
 def resolve_active(force_probe: bool = False) -> Tuple[Optional[Profile], str]:
     """The active profile and a one-word reason, for the startup banner."""
     profiles = load_profiles()
 
-    env = (os.environ.get("APEXA_PROFILE") or "").strip()
+    env = _modern((os.environ.get("APEXA_PROFILE") or "").strip())
     if env:
         p = profiles.get(env)
         if p is None:
@@ -263,7 +274,7 @@ def resolve_active(force_probe: bool = False) -> Tuple[Optional[Profile], str]:
                 f"{', '.join(sorted(profiles))}, or define it in {PROFILES_TOML}.")
         return p, "env"
 
-    saved = saved_choice()
+    saved = _modern(saved_choice())
     if saved and saved in profiles:
         return profiles[saved], "saved"
 
@@ -282,7 +293,13 @@ def apply(profile: Profile) -> None:
     os.environ["APEXA_LLM_PRESET"] = profile.preset
     if profile.base_url:
         os.environ["APEXA_LLM_BASE_URL"] = profile.base_url
-    if profile.llm_mode:
+    # An operator who explicitly chose the legacy Argo transport keeps it on the
+    # Argo profile: that choice is only meaningful there (the legacy transport
+    # reaches nothing but Argo), and silently switching an existing install's
+    # transport is what this guard has always existed to prevent. Every other
+    # profile needs the OpenAI-compatible path, so its mode is applied as-is.
+    explicit_legacy = (os.environ.get("APEXA_LLM_MODE") or "").strip().lower() == "argo"
+    if profile.llm_mode and not (explicit_legacy and profile.preset == "argo"):
         os.environ["APEXA_LLM_MODE"] = profile.llm_mode
     model = profile.model or PRESETS[profile.preset]().default_model
     if model:

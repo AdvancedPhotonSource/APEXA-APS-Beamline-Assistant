@@ -336,7 +336,7 @@ def main() -> int:
                     help="well above the ~0.03 deg scatter of the clean fit, well "
                          "below the ~0.5 deg error a bound rail produces")
     ap.add_argument("--base-url", default=os.environ.get("APEXA_LLM_BASE_URL",
-                    "http://localhost:44497/v1"))
+                    "https://apps.inside.anl.gov/argoapi/v1"))
     ap.add_argument("--api-key", default=os.environ.get("ANL_USERNAME", "apexa"))
     ap.add_argument("--model", default="gpt56sol")
     ap.add_argument("--timeout", type=int, default=1800)

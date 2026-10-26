@@ -5,10 +5,11 @@ the **model**. Published agent comparisons report model names and vary the harne
 silently; to our knowledge none holds the harness fixed while varying the model, or
 the reverse.
 
-That is possible here because **argo-proxy exposes one OpenAI-compatible endpoint
-that several harnesses already speak natively** — Claude Code, OpenCode, Codex CLI,
-Aider, Gemini CLI — so model, harness, and transport can be varied one at a time
-against identical infrastructure.
+That is possible here because **Argo Gateway serves the two wire formats these
+harnesses already speak** — OpenAI `/v1/chat/completions` (OpenCode, Pi, Codex CLI,
+Aider) and Anthropic `/v1/messages` (Claude Code) — from one gateway, so model,
+harness, and transport can be varied one at a time against identical infrastructure.
+(This used to need the argo-proxy sidecar; Argo now serves both natively.)
 
 Harnesses under test: **APEXA, Claude Code, OpenCode, Pi** (`pi.dev`). EAA dropped.
 
@@ -160,9 +161,8 @@ this whole comparison exists to avoid.
 ## Prerequisites
 
 ```bash
-argo-proxy serve                       # backend, ANL network/VPN
-export APEXA_LLM_BASE_URL=http://localhost:<port>/v1
-export ANL_USERNAME=<user>
+export ANL_USERNAME=<user>             # the API key on Argo; ANL network/VPN required
+# backend defaults to https://apps.inside.anl.gov/argoapi/v1 -- nothing to run
 ```
 
 Harness installs (none are on PATH by default). **Install them one at a time** — npm fails a multi-package command atomically, so one bad name blocks the rest:
@@ -174,7 +174,8 @@ Harness installs (none are on PATH by default). **Install them one at a time** �
 | Pi | `npm i -g --ignore-scripts @earendil-works/pi-coding-agent` | `pi -p "<prompt>"` |
 | APEXA | in-tree | driven in-process by the runner |
 
-Each is pointed at argo-proxy through its own base-URL/API-key environment; the
+Each is pointed at Argo through its own base-URL/API-key environment (Claude Code at
+`…/argoapi`, to which it appends `/v1/messages`; the others at `…/argoapi/v1`); the
 runner sets these per harness so the backend is identical across arms.
 
 ## Running

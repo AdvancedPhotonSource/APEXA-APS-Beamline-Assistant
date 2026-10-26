@@ -1,6 +1,6 @@
 """Agent-loop tests: structured transport, execution ledger, progressive disclosure.
 
-No network, no argo-proxy, no MCP servers — a stub provider drives ``AgentRunner``
+No network, no LLM endpoint, no MCP servers — a stub provider drives ``AgentRunner``
 and a stub executor stands in for the tool chokepoint. These are the first tests to
 cover the loop itself, which previously had none despite being where every
 correctness-critical behaviour lives.
@@ -333,7 +333,7 @@ def test_specialist_agent_keeps_its_explicit_scope():
     assert set(provider.seen_tools[0]) == {"read_file", "run_command"}
 
 
-# ── model-id resolution against argo-proxy naming ────────────────────────────
+# ── model-id resolution against gateway naming ────────────────────────────
 #
 # Argo's own ids are compact (``claudeopus5``); argo-proxy serves dashed,
 # ``argo:``-prefixed ids and exposes MORE THAN ONE alias per model
@@ -438,7 +438,7 @@ def test_unreachable_proxy_is_fatal_not_swallowed():
     msg = str(e.value)
     assert "cannot reach" in msg
     assert "http://stub/v1" in msg          # names the endpoint that failed
-    assert "argo-proxy serve" in msg        # non-ANL host → sidecar advice
+    assert "APEXA_LLM_BASE_URL" in msg      # non-ANL host → points at the override
 
 
 def test_proxy_without_models_endpoint_still_works():
@@ -540,7 +540,7 @@ def test_unknown_preset_lists_valid_choices(monkeypatch):
     monkeypatch.setenv("APEXA_LLM_PRESET", "gemma-somewhere")
     with pytest.raises(EndpointRejected) as e:
         active_endpoint()
-    assert "alcf-sophia" in str(e.value) and "argo-proxy" in str(e.value)
+    assert "alcf-sophia" in str(e.value) and "argo" in str(e.value)
 
 
 def test_base_url_env_overrides_preset(monkeypatch):
@@ -551,10 +551,10 @@ def test_base_url_env_overrides_preset(monkeypatch):
 
 
 def test_credential_precedence(monkeypatch):
-    """APEXA_LLM_API_KEY beats everything; ANL username is the argo-proxy default."""
-    from apexa_llm_endpoints import ArgoProxyEndpoint
+    """APEXA_LLM_API_KEY beats everything; ANL username is the Argo default."""
+    from apexa_llm_endpoints import ArgoNativeEndpoint
     monkeypatch.delenv("APEXA_LLM_TOKEN_CMD", raising=False)
-    ep = ArgoProxyEndpoint()
+    ep = ArgoNativeEndpoint()
     monkeypatch.delenv("APEXA_LLM_API_KEY", raising=False)
     assert ep.resolve_key("anluser") == "anluser"
     monkeypatch.setenv("APEXA_LLM_API_KEY", "sk-personal")

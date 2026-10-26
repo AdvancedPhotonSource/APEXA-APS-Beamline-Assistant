@@ -67,7 +67,7 @@ system Python otherwise), and keeps the window open on error so you can read it.
 | Feature | Native Windows | Notes |
 |---|---|---|
 | CLI / Web / Desktop / Gradio UIs | ✅ | all four launchers included |
-| LLM transports (Argo `/chat/`, argo-proxy) | ✅ | needs ANL network / VPN |
+| LLM transports (Argo native `/v1`, legacy `/chat/`) | ✅ | needs ANL network / VPN |
 | RAG knowledge base (`query_hedm_knowledge`) | ✅ | offline-clean; stage the embedder cache for `internal` tier |
 | File ops, X-ray calcs, parameter lint/diagnose | ✅ | pure-Python |
 | **Remote execution / SSH routing** | ✅ | Windows 10+ ships the OpenSSH client; set up key-based SSH (below) |

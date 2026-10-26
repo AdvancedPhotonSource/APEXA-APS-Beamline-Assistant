@@ -40,7 +40,7 @@ Usage
     python scripts/grounding_experiment.py --preset alcf-sophia \\
         --models openai/gpt-oss-120b meta-llama/Llama-4-Scout-17B-16E-Instruct \\
         --trials 20
-    python scripts/grounding_experiment.py --preset argo-proxy \\
+    python scripts/grounding_experiment.py --preset argo \\
         --models argo:claude-opus-5 --trials 20 --out results/grounding
 
 Results are appended as JSONL (one row per trial) plus a printed summary with

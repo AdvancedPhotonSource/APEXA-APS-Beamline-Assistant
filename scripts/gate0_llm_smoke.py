@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate 0 — prove argo-proxy supports MULTI-TURN tool calling before APEXA depends on it.
+"""Gate 0 — prove an endpoint supports MULTI-TURN tool calling before APEXA depends on it.
 
 This is the load-bearing assumption of the architecture refactor: that we can send a
 tool RESULT back to the model as a structured ``{"role":"tool","tool_call_id":...}``
@@ -11,17 +11,13 @@ If this script prints PASS for a model, that model can drive the structured loop
 those guards become unnecessary. If it prints FAIL for every model, STOP — the
 refactor's foundation is gone.
 
-Prerequisites (ANL internal network or VPN on an Argonne-managed machine):
+Prerequisites: ANL internal network or VPN on an Argonne-managed machine, and
+ANL_USERNAME set. Nothing to install or run -- Argo serves the OpenAI surface
+itself (the argo-proxy sidecar this script was written for has been retired).
 
-    pip install argo-proxy openai
-    argo-proxy config init          # asks for your ANL username, port, prod/dev
-    argo-proxy serve                # defaults to http://localhost:44497
-
-Then:
-
-    python scripts/gate0_argo_proxy_smoke.py
-    python scripts/gate0_argo_proxy_smoke.py --models claudeopus5 gpt56sol
-    python scripts/gate0_argo_proxy_smoke.py --base-url http://localhost:44497/v1
+    python scripts/gate0_llm_smoke.py                          # Argo native
+    python scripts/gate0_llm_smoke.py --models claudeopus55 gpt56sol
+    python scripts/gate0_llm_smoke.py --preset alcf-sophia     # an ALCF cluster
 
 Exit code is 0 only if every tested model passes.
 """
@@ -59,6 +55,19 @@ SENTINEL = 61          # the value the tool returns
 DEFAULT_MODELS = ["claudeopus5", "gpt56sol", "gemini35flash"]
 
 
+# Send the SAME output limit APEXA does. Without one, Argo defaults to the model
+# maximum, and for Claude the Anthropic SDK behind Argo refuses any non-streaming
+# call whose max_tokens implies more than 10 minutes (cutoff 21,333 tokens,
+# measured to the token on 26 Oct 2026). That made this script report every
+# Claude model as unusable on the native endpoint when APEXA itself was fine.
+try:
+    import sys as _sys, os as _os
+    _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+    from apexa_provider_openai import DEFAULT_MAX_TOKENS as _MAX_TOKENS
+except Exception:
+    _MAX_TOKENS = 16000
+
+
 def probe(client: OpenAI, model: str, verbose: bool = False) -> tuple[bool, str]:
     """Run a two-turn tool exchange. Returns (passed, detail)."""
     messages = [
@@ -70,6 +79,7 @@ def probe(client: OpenAI, model: str, verbose: bool = False) -> tuple[bool, str]
     try:
         r1 = client.chat.completions.create(
             model=model, messages=messages, tools=TOOLS, tool_choice="auto",
+            max_completion_tokens=_MAX_TOKENS,
         )
     except Exception as e:
         return False, f"turn-1 request failed: {type(e).__name__}: {e}"
@@ -104,7 +114,8 @@ def probe(client: OpenAI, model: str, verbose: bool = False) -> tuple[bool, str]
     })
 
     try:
-        r2 = client.chat.completions.create(model=model, messages=messages, tools=TOOLS)
+        r2 = client.chat.completions.create(model=model, messages=messages, tools=TOOLS,
+                                            max_completion_tokens=_MAX_TOKENS)
     except Exception as e:
         return False, f"turn-2 (tool result) rejected: {type(e).__name__}: {e}"
 
@@ -123,11 +134,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--preset", default=None,
-                    help="APEXA endpoint preset (argo-proxy, alcf-sophia, openai, …). "
+                    help="APEXA endpoint preset (argo, alcf-sophia, openai, …). "
                          "Supplies base-url and credential automatically.")
     ap.add_argument("--base-url", default=None)
     ap.add_argument("--api-key", default=None,
-                    help="ANL username for argo-proxy, or a bearer token / API key")
+                    help="ANL username for Argo, or a bearer token / API key")
     ap.add_argument("--models", nargs="+", default=None)
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
@@ -167,7 +178,7 @@ def main() -> int:
             args.models = ["meta-llama/Llama-3.3-70B-Instruct", "openai/gpt-oss-120b"]
 
     args.base_url = args.base_url or os.environ.get("APEXA_LLM_BASE_URL",
-                                                    "http://localhost:44497/v1")
+                                                    "https://apps.inside.anl.gov/argoapi/v1")
     args.api_key = args.api_key or os.environ.get("APEXA_LLM_API_KEY") \
         or os.environ.get("ANL_USERNAME", "")
     args.models = args.models or DEFAULT_MODELS
@@ -188,19 +199,30 @@ def main() -> int:
         served = {m.id for m in client.models.list().data}
         print(f"reachable — {len(served)} models served\n")
     except Exception as e:
-        print(f"FAIL: cannot reach argo-proxy at {args.base_url}\n  {type(e).__name__}: {e}\n")
-        print("Is `argo-proxy serve` running, and are you on the ANL network/VPN?")
+        print(f"FAIL: cannot reach {args.base_url}\n  {type(e).__name__}: {e}\n")
+        print("Are you on the ANL network/VPN, and is ANL_USERNAME correct?")
         return 2
 
     results: list[tuple[str, bool, str]] = []
+    # Resolve ids the way OpenAICompatProvider does, so this tests what APEXA will
+    # actually send. An exact-match check (written for argo-proxy's id format)
+    # reported every model "not served" against Argo native, whose listing uses
+    # display names: `claudeopus55` is listed as `Claude Opus 5.5`.
+    import re as _re
+    def _norm(n: str) -> str:
+        return _re.sub(r"[^a-z0-9]", "", (n or "").lower()).removeprefix("argo")
+    by_norm = {_norm(x): x for x in served}
     for model in args.models:
         print(f"── {model}")
-        if served and model not in served:
-            near = [s for s in served if model[:6] in s][:4]
+        sent = model if (not served or model in served) else by_norm.get(_norm(model))
+        if sent is None:
+            near = [x for x in served if _norm(model)[:6] in _norm(x)][:4]
             print(f"    SKIP: not served. similar: {near or 'none'}\n")
-            results.append((model, False, "not served by this proxy"))
+            results.append((model, False, "not served by this endpoint"))
             continue
-        ok, detail = probe(client, model, verbose=args.verbose)
+        if sent != model:
+            print(f"    (listed as {sent!r})")
+        ok, detail = probe(client, sent, verbose=args.verbose)
         print(f"    {'PASS' if ok else 'FAIL'}: {detail}\n")
         results.append((model, ok, detail))
 
