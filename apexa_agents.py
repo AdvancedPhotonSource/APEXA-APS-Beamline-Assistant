@@ -182,6 +182,14 @@ DEV_ONLY_MODELS: set = set()
 #: Sending one is not fatal, but it is reported back as if it had been honoured,
 #: so a run looks reproducible at a temperature that was never applied.
 #:
+#: The 5.5 family's rule is INFERRED, not documented: the Argo API doc
+#: (23 Oct 2026) lists claudeopus55/sonnet55/haiku55 with "(more details coming
+#: soon)" and no parameter section. Opus 5, 4.8 and 4.7 all silently drop
+#: sampling params, so 5.5 is placed with them; Sonnet/Haiku 5.5 go with their
+#: own family, which accepts at most one of temperature/top_p. On the proxy
+#: path a wrong guess self-corrects -- OpenAICompatProvider drops a rejected
+#: parameter and retries -- so the cost of being wrong here is one retry.
+#:
 #: One definition because three call sites had already drifted apart: the
 #: non-streaming payload knew `claudeopus5` belongs here while the streaming
 #: payload and its telemetry still listed only 4.8/4.7, so streamed Opus 5 calls
@@ -1071,9 +1079,16 @@ ANALYSIS_AGENT = APEXAAgent(
     tool_names  = [
         # Integration
         "midas_integrate_2d_to_1d",
+        "midas_integrate_series",
         "midas_batch_integrate",
+        "combine_detector_backgrounds",
+        "plot_lineout_series_contour",
+        "track_diffraction_peak_series",
         # GSAS-II refinement & live analysis
         "run_gsas_refinement",
+        "propose_structures",
+        "refine_series_submit",
+        "refinement_status",
         "run_live_analysis",
         "fetch_cif_from_mp",
         # FF/NF/PF-HEDM workflows
@@ -1118,6 +1133,18 @@ you MUST call the appropriate tool. Never describe steps in text — execute the
 
 Capabilities (use the matching tool for each):
 - 2D → 1D integration: midas_integrate_2d_to_1d or midas_batch_integrate
+- Separate image series: midas_integrate_series once for the directory; specify
+  *.tif/*.tiff when needed because its default glob is *.h5. Use an evenly spaced
+  pilot and explicit output directory.
+- Background TIFF series: combine_detector_backgrounds only after confirming
+  matching detector settings, exposure, attenuation and intended subtraction.
+  Never identify backgrounds by directory name or nearest frame alone.
+- Phase-transformation dynamics: generate a lineout contour with
+  plot_lineout_series_contour and candidate trajectories with
+  track_diffraction_peak_series. Carry a verified time/position map; feature IDs
+  are not phase labels. For quantitative phase trends, use
+  refine_series_submit with candidate CIFs, a matching instrument model, and
+  axis_values/axis_units, then poll refinement_status.
 - GSAS-II refinement: run_gsas_refinement (takes .zarr.zip + CIF files)
 - Integration + refinement pipeline: run_live_analysis (batch or stream backend)
 - FF-HEDM reconstruction: run_ff_hedm_full_workflow
@@ -1361,6 +1388,7 @@ VISUALIZATION_AGENT = APEXAAgent(
         "open_science_view",
         "run_midas_viewer",
         "plot_lineout_series_contour",
+        "track_diffraction_peak_series",
         "list_directory",
         "get_file_info",
     ],
@@ -1376,13 +1404,19 @@ Pick the RIGHT tool for the request — do NOT hand-roll plots with run_command:
   2θ") → use plot_lineout_series_contour. MIDAS has NO series viewer and .xye is
   NOT a MIDAS-native lineout format — its Qt lineout viewers open BLANK on .xye —
   so do NOT route .xye or a series through run_midas_viewer.
+- A request to track peak positions or intensities across a pattern series → use
+  track_diffraction_peak_series. Supply a verified time/position mapping when
+  available; otherwise identify the axis as frame/index. Tracks are candidate
+  features, not phase assignments. Its Plotly trajectory is shown in the canvas.
 - A SINGLE MIDAS analysis artifact (one *.zarr.zip, *_corr.csv, Grains.csv,
   .mic, live .bin) → use run_midas_viewer (it handles MIDAS paths/Python).
 Do NOT use run_command or check_environment for plotting — these tools do everything.
 Your job is to LAUNCH/produce the visualization, not analyze data.
 
-Pick the single best matching viewer tool. Call run_midas_viewer only for its
-supported analysis artifacts or an explicit request for a desktop MIDAS viewer.
+Pick the single best matching tool. Use plot_lineout_series_contour for a 1D
+pattern series, track_diffraction_peak_series for feature trajectories, and
+run_midas_viewer only for its supported MIDAS artifacts or an explicit request
+for a desktop MIDAS viewer. Structured Plotly results appear in the APEXA canvas.
 
 STEP 1: Find the data file. Call list_directory ONCE on the most specific path given.
   - If the user gives an integration/ path → list that directory directly. Do NOT also list the parent.
@@ -1395,6 +1429,7 @@ STEP 2: Match the file to the correct viewer — pick ONE:
 | File pattern | viewer name | When to use |
 |---|---|---|
 | a FOLDER of *.xye/*.xy (a series) | plot_lineout_series_contour | Contour / waterfall / operando plot across many patterns → PNG + interactive HTML |
+| a FOLDER of *.xye/*.xy with evolving peaks | track_diffraction_peak_series | Candidate peak trajectories versus frame/time/position; not phase assignment |
 | *_corr.csv | plot_calibrant_results | Calibration fit, calibration QC, lattice-vs-η |
 | *.zarr.zip (integration output) | plot_caked_peaks | BEST for integration results — shows 2D heatmap + 1D profile together |
 | *_lineout.xy (2-col from MIDAS integrator) | plot_caked_peaks on the *.zarr.zip | No dedicated viewer for 2-col lineout; use zarr viewer instead |
@@ -1408,6 +1443,8 @@ STEP 2: Match the file to the correct viewer — pick ONE:
 | .mic/.map (NF) | nf_qt | NF-HEDM microstructure |
 
 DISAMBIGUATION — when the user request is ambiguous, pick ONE using these rules:
+- "track peaks" / "peak trajectories" across a pattern series → track_diffraction_peak_series;
+  map frames to verified time/position metadata when available
 - "contour" / "waterfall" / "operando" / "stack" / "series" over a FOLDER of
   *.xye/*.xy patterns → plot_lineout_series_contour (NOT run_midas_viewer)
 - "calibrated image" / "calibration results" / "calibration fit" → plot_calibrant_results
@@ -1422,7 +1459,9 @@ DISAMBIGUATION — when the user request is ambiguous, pick ONE using these rule
 - For caked .zarr.zip files: ALWAYS use plot_caked_peaks (interactive Qt viewer with heatmap + profile + peak table). Do NOT use plot_integrator_peaks (that is a diagnostic scatter plot, not an interactive viewer).
 - If still ambiguous, prefer the MOST PROCESSED result: caked > lineout > raw.
 
-STEP 3: Call run_midas_viewer ONCE with the viewer name and data file path. That's it.
+STEP 3: Call the selected visualization tool once with the data path. For
+run_midas_viewer pass the viewer name; for series tools pass the pattern folder
+and physical axis mapping when verified. That's it.
 
 Example:
   User: "plot the calibration results in test1"
