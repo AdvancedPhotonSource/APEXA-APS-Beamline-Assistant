@@ -531,7 +531,7 @@ def main():
     parser.add_argument("--difficulty", default=None,
                         help="Run only tasks at this difficulty level")
     parser.add_argument("--all-models", action="store_true",
-                        help="Run all 4 models (gpt5mini, gpt54, claudeopus47, gemini25pro)")
+                        help="Run all 4 models (gpt5mini, gpt54, claudeopus47, gemini35flash)")
     parser.add_argument("--all-configs", action="store_true",
                         help="Run all 4 configs (single, keyword, dspy, autogen)")
 
@@ -560,7 +560,7 @@ def main():
         dry_run(tasks)
         return
 
-    models = (["gpt5mini", "gpt54", "claudeopus47", "gemini25pro"]
+    models = (["gpt5mini", "gpt54", "claudeopus47", "gemini35flash"]
               if args.all_models else [args.model])
     configs = (["single", "keyword", "dspy", "autogen"]
                if args.all_configs else [args.config])

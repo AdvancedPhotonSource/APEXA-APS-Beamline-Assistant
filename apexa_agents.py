@@ -178,6 +178,27 @@ DEV_URL  = "https://apps-dev.inside.anl.gov/argoapi/api/v1/resource/chat/"
 # Models that require the DEV endpoint (add new beta models here)
 DEV_ONLY_MODELS: set = set()
 
+#: Claude models that **silently drop** `temperature`/`top_p` rather than erroring.
+#: Sending one is not fatal, but it is reported back as if it had been honoured,
+#: so a run looks reproducible at a temperature that was never applied.
+#:
+#: One definition because three call sites had already drifted apart: the
+#: non-streaming payload knew `claudeopus5` belongs here while the streaming
+#: payload and its telemetry still listed only 4.8/4.7, so streamed Opus 5 calls
+#: sent a temperature and logged it.
+_NO_SAMPLING_PREFIXES = ("claudeopus5", "claudeopus48", "claudeopus47")
+
+
+def drops_sampling_params(model: str) -> bool:
+    """True when `model` ignores temperature/top_p (the Opus 5.x / 4.8 / 4.7 family).
+
+    Prefix-matched so a new point release in the family (5.5 after 5) is covered
+    the day Argo ships it, instead of silently falling through to the branch that
+    adds `top_p` and gets it dropped.
+    """
+    m = (model or "").strip().lower().replace("-", "").replace("_", "").replace(".", "")
+    return any(m.startswith(p) for p in _NO_SAMPLING_PREFIXES)
+
 
 def _native_tools_enabled(model: str = "") -> bool:
     """Whether native Argo /chat/ tool calling is active for ``model``.
@@ -304,13 +325,14 @@ class ArgoProvider:
             # silently removed by Argo). 1M context, 128K output; thinking via
             # output_config if ever needed. (Opus 5 param rule not re-listed in the
             # Aug-2026 Argo doc but sits with 4.8/4.7 — same no-sampling family.)
-            if self.model in ("claudeopus5", "claudeopus48", "claudeopus47"):
+            if drops_sampling_params(self.model):
                 payload.pop("temperature", None)
             # Sonnet 5/4.6/4.5, Haiku 4.5: accept AT MOST ONE of temperature/top_p
             # (Argo drops top_p if both sent) — send temperature only, no top_p.
             # (Sonnet 5 param rule not detailed in the Aug-2026 doc; follows the
             # Sonnet sub-family convention — temperature only.)
-            elif self.model in ("claudesonnet5", "claudesonnet46", "claudesonnet45", "claudehaiku45"):
+            elif self.model in ("claudesonnet55", "claudehaiku55", "claudesonnet5",
+                                "claudesonnet46", "claudesonnet45", "claudehaiku45"):
                 pass
             else:
                 # Opus 4.6/4.5/4.1, Sonnet 4/3.7: require temperature + top_p.
@@ -709,8 +731,8 @@ class StreamingAnthropicProvider:
         }
         if system_str:
             payload["system"] = system_str
-        # Opus 4.7/4.8 silently drop temperature; other Claude models accept it.
-        if self.model not in ("claudeopus48", "claudeopus47"):
+        # The Opus 5.x / 4.8 / 4.7 family silently drops temperature; the rest accept it.
+        if not drops_sampling_params(self.model):
             payload["temperature"] = temperature
         if tools and self.structured_tools:
             payload["tools"] = to_anthropic_tools(tools)
@@ -869,9 +891,7 @@ class StreamingAnthropicProvider:
             tpot_ms = ((elapsed - ttft_s) / (output_tokens - 1)) * 1000.0
             gen_tps = (output_tokens - 1) / (elapsed - ttft_s)
         empty = not (content or tool_calls_n)
-        temp_reported = (temperature
-                         if self.model not in ("claudeopus48", "claudeopus47")
-                         else None)
+        temp_reported = None if drops_sampling_params(self.model) else temperature
         if not error:
             record_llm_call(elapsed_s=elapsed,
                             prompt_tok=input_tokens,

@@ -675,3 +675,38 @@ def test_delete_denied_when_callback_raises():
     client.permission_callback = _boom
     out = asyncio.run(client.execute_tool_call("run_command", {"command": "rm -rf /data/x"}))
     assert "not run" in out.lower() or "⛔" in out
+
+
+# ── Claude sampling-parameter families (Argo Oct-2026: 5.5 added, 4.1 retired) ──
+@pytest.mark.parametrize("model,drops", [
+    ("claudeopus55", True), ("claudeopus5", True),
+    ("claudeopus48", True), ("claudeopus47", True),
+    ("claude-opus-5.5", True), ("CLAUDEOPUS5", True),   # resolver spellings
+    ("claudeopus46", False),                            # REQUIRES temp+top_p
+    ("claudeopus45", False), ("claudesonnet55", False),
+    ("claudesonnet5", False), ("claudehaiku55", False),
+    ("gpt55", False), ("gemini35flash", False), ("", False),
+])
+def test_which_models_silently_drop_sampling_params(model, drops):
+    """Three call sites used to hardcode this tuple and had already drifted: the
+    streaming payload still listed only 4.8/4.7, so a streamed Opus 5 call sent a
+    temperature that was dropped and then reported as if honoured."""
+    from apexa_agents import drops_sampling_params
+    assert drops_sampling_params(model) is drops
+
+
+def test_retired_claude_models_are_not_offered():
+    """Argo retired Opus 4.1, Opus 4 and Sonnet 4 — offering one is a guaranteed
+    API error mid-experiment."""
+    import argo_mcp_client as A
+    src = Path(A.__file__).read_text()
+    table = src[src.index('"Anthropic": {'):src.index('"Google": {')]
+    for dead in ("claudeopus41", "claudeopus4\"", "claudesonnet4\""):
+        assert dead not in table, f"{dead} was retired by Argo but is still listed"
+
+
+def test_the_new_55_family_is_offered():
+    import argo_mcp_client as A
+    table = Path(A.__file__).read_text()
+    for live in ("claudeopus55", "claudesonnet55", "claudehaiku55"):
+        assert live in table

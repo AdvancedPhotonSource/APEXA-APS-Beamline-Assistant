@@ -322,7 +322,7 @@ APEXA> model gpt54               # switch to GPT-5.4
 APEXA> model claudesonnet45      # switch to Claude Sonnet 4.5
 ```
 
-**Available:** gpt4o (default, fastest ~0.8s), gpt41, gpt41mini, gpt54, gpt5, claudesonnet45, claudesonnet46, claudeopus46, gemini25pro, gemini25flash
+**Available:** `claudeopus5` (default), `claudeopus55` / `claudesonnet55` / `claudehaiku55` (newest Anthropic), `claudeopus48/47/46/45`, `claudesonnet5/46/45`, `claudehaiku45`, `gpt56sol/terra/luna`, `gpt55`, `gpt54`, `gpt5*`, `gpt41*`, `gpt4o`, `gemini35flash`, `gemini31flashlite`. Type `models` for the live list — it is built from the code, this line is not.
 
 Set default in `.env`:
 ```bash
