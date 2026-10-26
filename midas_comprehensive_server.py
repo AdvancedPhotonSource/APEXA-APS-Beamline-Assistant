@@ -8246,6 +8246,11 @@ def get_knowledge_base():
             if chroma_path.exists():
                 model_name = os.environ.get("APEXA_EMBED_MODEL",
                                             "nomic-ai/nomic-embed-text-v1.5")
+                # Provenance policy. This is the LIVE retrieval path and builds
+                # its own embedder, so guarding only the indexer would leave it
+                # open to whatever APEXA_EMBED_MODEL names.
+                from apexa_model_policy import assert_allowed as _assert_model_ok
+                _assert_model_ok(model_name, role="embedder")
                 st_kwargs = {"trust_remote_code": True}
                 if offline:
                     st_kwargs["local_files_only"] = True

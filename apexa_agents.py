@@ -954,6 +954,11 @@ def select_provider(username: str, model: str):
 
     Non-Claude models under ``streaming`` fall back to Argo /chat/ with a
     one-line stderr note (Anthropic native only speaks Claude)."""
+    # Provenance policy first, before any transport is chosen: every LLM call in
+    # APEXA is built here, so this is the one place the rule cannot be routed
+    # around by setting the model id somewhere else.
+    from apexa_model_policy import assert_allowed
+    assert_allowed(model, role="LLM")
     try:
         from apexa_llm_endpoints import active_endpoint
         _ep = active_endpoint()

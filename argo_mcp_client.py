@@ -2989,6 +2989,11 @@ class APEXAClient:
                     # (base URL + credential), or we'd ask argo-proxy for a model
                     # it has never heard of. select_provider() re-reads the env
                     # per query, so setting it here takes effect on the next turn.
+                    from apexa_model_policy import disallowed_reason as _why_not
+                    _refused = _why_not(model_name)
+                    if _refused:
+                        print(f"  {C.RED}✗{C.RESET} {_refused}")
+                        continue
                     try:
                         from apexa_llm_endpoints import canonical_model_id, preset_for_model
                         _canon = canonical_model_id(model_name)

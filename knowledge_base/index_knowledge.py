@@ -60,6 +60,15 @@ def _apply_offline_hf_env() -> bool:
 
 def _load_embedder():
     """Construct the SentenceTransformer, honoring APEXA offline mode."""
+    # Provenance policy: APEXA_EMBED_MODEL can name any HuggingFace id, so the
+    # check belongs where the model is actually built, not in the prefix table.
+    try:
+        from apexa_model_policy import assert_allowed
+    except ImportError:                       # run as a script from knowledge_base/
+        import sys as _s, os as _o
+        _s.path.insert(0, _o.path.dirname(_o.path.dirname(_o.path.abspath(__file__))))
+        from apexa_model_policy import assert_allowed
+    assert_allowed(EMBED_MODEL, role="embedder")
     offline = _apply_offline_hf_env()
     kwargs = {"trust_remote_code": True}
     if offline:
@@ -71,13 +80,14 @@ def _load_embedder():
         return SentenceTransformer(EMBED_MODEL, **kwargs)
 
 # Per-model task prefixes. Nomic requires explicit task tags; most other models
-# (Nemotron, BGE-M3, E5 in symmetric mode) don't. When in doubt, add an entry here.
+# (Nemotron, E5 in symmetric mode) don't. When in doubt, add an entry here.
+# Chinese-origin embedders (e.g. BAAI's BGE family) are excluded by policy --
+# see apexa_model_policy.py; the BGE-M3 row that used to sit here was removed.
 EMBED_PREFIXES = {
     "nomic-ai/nomic-embed-text-v1.5": ("search_document: ", "search_query: "),
     "nomic-ai/nomic-embed-text-v1":   ("search_document: ", "search_query: "),
     # No prefix for these (default behavior)
     "nvidia/llama-embed-nemotron-8b": ("", ""),
-    "BAAI/bge-m3":                    ("", ""),
 }
 
 
