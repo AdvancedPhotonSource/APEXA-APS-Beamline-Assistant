@@ -97,8 +97,11 @@ class Profile:
 # already paid for), then an institutional gateway, then personal keys, with the
 # local model last — it always works, so anything above it should win.
 BUILTIN_PROFILES: List[Profile] = [
+    Profile("anl", "argo", requires=ANL,
+            notes="Beamline default. Argo's native OpenAI endpoint — no sidecar."),
     Profile("anl-service", "argo-proxy", requires=ANL,
-            notes="Beamline default. Argo via the local sidecar, shared ANL identity."),
+            notes="Argo via the local argo-proxy sidecar. Kept for hosts already "
+                  "running one; the `anl` profile needs no sidecar."),
     Profile("alcf", "alcf-minerva", model="inkling-bf16", requires=ALCF,
             llm_mode="proxy",
             notes="ALCF Inference Service, per-user Globus identity. On-prem DOE hardware."),

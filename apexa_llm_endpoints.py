@@ -271,6 +271,36 @@ class OpenAIEndpoint:
 
 
 @dataclass
+class ArgoNativeEndpoint(OpenAIEndpoint):
+    """Argo Gateway's own OpenAI-compatible surface. The preferred ANL path.
+
+    Argo serves ``/v1/chat/completions`` directly as of the Oct-2026 update
+    ("OpenAI-compatibility is now native to the Argo Gateway API"), so the
+    argo-proxy sidecar is no longer required to get a structured tool-calling
+    wire. That removes a whole deployment component from the beamline host and,
+    with it, the sidecar's standing hazard: argo-proxy authenticates with a
+    *username* and no secret, so a sidecar bound to anything but 127.0.0.1 is an
+    unauthenticated LLM gateway under one person's identity.
+
+    The credential is the ANL domain username in the api_key slot -- same
+    convention as the proxy, so nothing about identity changes. Argo validates
+    the username and caches that lookup for 24 h.
+
+    Reachable from the ANL internal network or VPN only, which is why this is
+    gated behind the ANL profile requirement rather than being a global default.
+    """
+
+    name: str = "argo"
+    base_url: str = "https://apps.inside.anl.gov/argoapi/v1"
+    tool_calling: bool = True
+    #: Argo documents GET /v1/models as the live list of available LLMs.
+    lists_models: bool = True
+    notes: str = ("Argo Gateway, native OpenAI-compatible endpoint. No sidecar. "
+                  "ANL internal network or VPN required; api_key is your ANL "
+                  "domain username.")
+
+
+@dataclass
 class ArgoProxyEndpoint(OpenAIEndpoint):
     """Local argo-proxy sidecar fronting the Argo Gateway.
 
@@ -511,6 +541,7 @@ class OllamaEndpoint(OpenAIEndpoint):
 
 
 PRESETS: dict[str, type[OpenAIEndpoint]] = {
+    "argo":             ArgoNativeEndpoint,
     "argo-proxy":       ArgoProxyEndpoint,
     "alcf-sophia":      ALCFSophiaEndpoint,
     "alcf-minerva":     ALCFMinervaEndpoint,
@@ -530,7 +561,10 @@ PRESETS: dict[str, type[OpenAIEndpoint]] = {
 #: ``tool_calling`` strikes for alcf-metis.
 SUPPORTED_WIRES = ("openai", "anthropic")
 
-DEFAULT_PRESET = "argo-proxy"
+#: Argo's native OpenAI-compatible endpoint, not the sidecar: one less moving
+#: part on the beamline host, and no 127.0.0.1-binding hazard. argo-proxy stays
+#: registered and selectable for hosts already running it.
+DEFAULT_PRESET = "argo"
 
 
 # ── ALCF candidate models for APEXA ──────────────────────────────────────────

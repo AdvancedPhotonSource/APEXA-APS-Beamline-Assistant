@@ -3012,8 +3012,13 @@ class APEXAClient:
                         # An Argo model — restore the Argo transport if we had
                         # previously switched away to an ALCF cluster.
                         if (os.environ.get("APEXA_LLM_PRESET") or "").startswith("alcf"):
-                            os.environ["APEXA_LLM_PRESET"] = "argo-proxy"
-                            print(f"  {C.DIM}(back to argo-proxy transport){C.RESET}")
+                            # Back to the DEFAULT Argo transport, not a hardcoded
+                            # one: this used to force "argo-proxy", so a single ALCF
+                            # round-trip silently moved a host onto the sidecar
+                            # even when it had none running.
+                            from apexa_llm_endpoints import DEFAULT_PRESET as _dp
+                            os.environ["APEXA_LLM_PRESET"] = _dp
+                            print(f"  {C.DIM}(back to {_dp} transport){C.RESET}")
                         self.selected_model = model_name
                         self.environment = "DEV" if model_name in DEV_ONLY_MODELS else "PROD"
                         print(f"  {C.GREEN}✓{C.RESET} Switched to: {C.BOLD}{C.CYAN}{model_name}{C.RESET}")

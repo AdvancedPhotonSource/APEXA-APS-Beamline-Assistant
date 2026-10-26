@@ -48,10 +48,14 @@ def test_saved_choice_beats_auto(monkeypatch):
 
 
 def test_auto_is_the_fallback(monkeypatch):
+    """Auto-selection lands on `anl` — Argo's native OpenAI endpoint — not on
+    `anl-service`, which needs an argo-proxy sidecar running. A host with no
+    sidecar used to auto-select a profile that could not connect."""
     _all_reachable(monkeypatch)
     monkeypatch.setenv("ANL_USERNAME", "someone")
     prof, how = P.resolve_active()
-    assert how == "auto" and prof.name == "anl-service"
+    assert how == "auto" and prof.name == "anl"
+    assert prof.preset == "argo"
 
 
 def test_unknown_env_profile_is_refused_not_guessed(monkeypatch):

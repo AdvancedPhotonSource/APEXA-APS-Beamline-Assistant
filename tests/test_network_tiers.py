@@ -305,3 +305,36 @@ def test_the_allowlist_is_still_applied_before_running_locally(monkeypatch):
     fn = getattr(S.run_remote_command, "fn", S.run_remote_command)
     out = json.loads(asyncio.run(fn(command="definitely_not_a_real_binary --x")))
     assert "error" in out and "not allowed" in out["error"].lower()
+
+
+# ── Argo's native OpenAI-compatible endpoint (Oct-2026) ──────────────────────
+def test_argo_native_is_the_default_preset():
+    """The sidecar is no longer required: Argo serves /v1/chat/completions
+    itself, so the default should not depend on a separate process."""
+    import apexa_llm_endpoints as E
+    assert E.DEFAULT_PRESET == "argo"
+    ep = E.PRESETS["argo"]()
+    assert ep.base_url == "https://apps.inside.anl.gov/argoapi/v1"
+    assert ep.wire == "openai" and ep.tool_calling is True
+
+
+def test_the_sidecar_preset_still_exists():
+    """copland runs argo-proxy today; removing the preset would strand it."""
+    import apexa_llm_endpoints as E
+    assert "argo-proxy" in E.PRESETS
+    assert E.PRESETS["argo-proxy"]().base_url.startswith("http://127.0.0.1")
+
+
+def test_argo_native_takes_the_anl_username_not_a_secret():
+    import apexa_llm_endpoints as E
+    ep = E.PRESETS["argo"]()
+    assert ep.uses_keyring is False and not ep.env_key
+    assert ep.resolve_key("s20hedm") == "s20hedm"
+
+
+def test_the_native_profile_is_preferred_over_the_sidecar_profile():
+    import apexa_profiles as P
+    names = [p.name for p in P.BUILTIN_PROFILES]
+    assert "anl" in names and "anl-service" in names
+    assert names.index("anl") < names.index("anl-service")
+    assert dict((p.name, p.preset) for p in P.BUILTIN_PROFILES)["anl"] == "argo"
