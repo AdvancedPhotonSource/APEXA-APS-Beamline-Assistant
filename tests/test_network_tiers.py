@@ -338,3 +338,17 @@ def test_the_native_profile_is_preferred_over_the_sidecar_profile():
     assert "anl" in names and "anl-service" in names
     assert names.index("anl") < names.index("anl-service")
     assert dict((p.name, p.preset) for p in P.BUILTIN_PROFILES)["anl"] == "argo"
+
+
+def test_the_anl_profile_uses_the_native_endpoint_on_a_clean_host(monkeypatch):
+    """Regression: without llm_mode on the profile, a host whose .env did not
+    already set APEXA_LLM_MODE=proxy got ArgoProvider -- the legacy /chat/ path
+    this profile exists to replace -- with nothing in the banner to say so."""
+    for k in ("APEXA_LLM_MODE", "APEXA_LLM_BASE_URL", "APEXA_LLM_PRESET",
+              "APEXA_PROFILE", "APEXA_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("ANL_USERNAME", "someone")
+    import apexa_profiles as P, apexa_agents as A
+    P.apply({p.name: p for p in P.BUILTIN_PROFILES}["anl"])
+    prov = A.select_provider("someone", "gpt55")
+    assert type(prov).__name__ == "OpenAICompatProvider"

@@ -97,7 +97,11 @@ class Profile:
 # already paid for), then an institutional gateway, then personal keys, with the
 # local model last — it always works, so anything above it should win.
 BUILTIN_PROFILES: List[Profile] = [
-    Profile("anl", "argo", requires=ANL,
+    # llm_mode="proxy" is what makes this profile use the endpoint at all:
+    # select_provider() only builds OpenAICompatProvider in proxy mode, and the
+    # global default is still "argo". Without it, a host whose .env does not
+    # already say proxy silently got the legacy /chat/ provider instead.
+    Profile("anl", "argo", requires=ANL, llm_mode="proxy",
             notes="Beamline default. Argo's native OpenAI endpoint — no sidecar."),
     Profile("anl-service", "argo-proxy", requires=ANL,
             notes="Argo via the local argo-proxy sidecar. Kept for hosts already "
