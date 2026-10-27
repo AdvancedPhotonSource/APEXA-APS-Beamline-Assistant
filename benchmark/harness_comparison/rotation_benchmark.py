@@ -37,7 +37,8 @@ from typing import Dict, List, Optional, Tuple
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO)); sys.path.insert(0, str(HERE))
-from run_comparison import HARNESSES          # keep the hard-won adapter knowledge
+from run_comparison import (HARNESSES, placeholders,   # hard-won adapter knowledge
+                            write_opencode_config, ensure_pi_provider)
 
 
 # ── arms ──────────────────────────────────────────────────────────────────────
@@ -241,10 +242,20 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         prompt = PROMPT.format(fname=exposure.name,
                                manual_note=MANUAL_NOTE if arm.manuals else "")
         env = dict(os.environ)
+        # Each harness configured here, per run -- not left to whatever is on
+        # the machine. The opencode config sits OUTSIDE the staged workspace so
+        # the leak check never sees a credential-bearing file it did not stage.
+        oc = ""
+        if arm.harness == "opencode":
+            oc = str(write_opencode_config(
+                Path(tempfile.mkdtemp(prefix="oc_")) / "opencode.json",
+                base_url, api_key, model))
+        elif arm.harness == "pi" and not dry:
+            ensure_pi_provider(base_url, api_key, model)
+        ph = placeholders(base_url=base_url, api_key=api_key, model=model,
+                          prompt=prompt, opencode_config=oc)
         for k, v in h.env.items():
-            env[k] = (v.replace("{base_url}", base_url)
-                       .replace("{base_url_root}", base_url.rsplit("/v1", 1)[0])
-                       .replace("{api_key}", api_key))
+            env[k] = v.format(**ph)
         if arm.harness == "apexa" and not arm.enforcement:
             env["APEXA_STAGE_GUARDRAILS"] = "0"       # no capsule / skill injection
             env["APEXA_ASSUME_SCAN_METADATA"] = "1"   # no confirmation gates
@@ -258,8 +269,7 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             env.setdefault("ANL_USERNAME", api_key)
             env["ARGO_MODEL"] = model
         else:
-            argv = [a.replace("{prompt}", prompt).replace("{model}", model)
-                    for a in h.argv]
+            argv = [a.format(**ph) for a in h.argv]
         if dry:
             r.outcome, r.detail = "dry-run", " ".join(argv[:3])
             return r
@@ -338,7 +348,10 @@ def main() -> int:
     ap.add_argument("--base-url", default=os.environ.get("APEXA_LLM_BASE_URL",
                     "https://apps.inside.anl.gov/argoapi/v1"))
     ap.add_argument("--api-key", default=os.environ.get("ANL_USERNAME", "apexa"))
-    ap.add_argument("--model", default="gpt56sol")
+    # Must be a Claude model: Claude Code speaks only the Anthropic wire, so a GPT
+    # default (as this used to be) would make that arm fail or silently swap model.
+    # claudeopus5 is APEXA's production default, which is what arm A1 represents.
+    ap.add_argument("--model", default="claudeopus5")
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()

@@ -65,21 +65,36 @@ class Harness:
 HARNESSES: Dict[str, Harness] = {
     "claude-code": Harness(
         name="claude-code", binary="claude",
-        argv=["claude", "-p", "{prompt}"],
-        env={"ANTHROPIC_BASE_URL": "{base_url_root}", "ANTHROPIC_API_KEY": "{api_key}"},
+        # --model was missing, so this arm ran whatever Claude Code defaults to and
+        # the "model held fixed" premise was false. Claude Code also routes some
+        # background work (session titles, summaries) to a separate small model;
+        # pinning every tier to the same id keeps that from leaking a second model
+        # into the arm. It wants the dashed id (claude-opus-5), which Argo accepts.
+        argv=["claude", "-p", "--model", "{model_anthropic}", "{prompt}"],
+        env={"ANTHROPIC_BASE_URL": "{base_url_root}", "ANTHROPIC_API_KEY": "{api_key}",
+             "ANTHROPIC_SMALL_FAST_MODEL": "{model_anthropic}",
+             "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{model_anthropic}",
+             "ANTHROPIC_DEFAULT_SONNET_MODEL": "{model_anthropic}",
+             "ANTHROPIC_DEFAULT_OPUS_MODEL": "{model_anthropic}",
+             "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "{max_tokens}"},
         supports_mcp=True,
         note="npm i -g @anthropic-ai/claude-code"),
     "opencode": Harness(
         name="opencode", binary="opencode",
-        argv=["opencode", "run", "{prompt}"],
-        env={"OPENAI_BASE_URL": "{base_url}", "OPENAI_API_KEY": "{api_key}"},
+        # OpenCode ignores OPENAI_BASE_URL for this purpose and had no Argo provider,
+        # so without -m and a provider config this arm never reached Argo at all.
+        # The runner writes a per-run config (write_opencode_config) and points
+        # OPENCODE_CONFIG at it, leaving the user's global config untouched.
+        argv=["opencode", "run", "-m", "argo/{model}", "{prompt}"],
+        env={"OPENCODE_CONFIG": "{opencode_config}"},
         supports_mcp=True,
         note="npm i -g opencode-ai"),
     "pi": Harness(
         name="pi", binary="pi",
         # pi does NOT read OPENAI_BASE_URL -- with it set, pi still went to
         # api.openai.com and 401'd on an ANL username. Custom endpoints are
-        # declared in ~/.pi/agent/models.json; see setup_pi_provider().
+        # declared in ~/.pi/agent/models.json; ensure_pi_provider() writes the
+        # `argo` entry (the function this comment used to name never existed).
         argv=["pi", "-p", "--provider", "argo", "--model", "{model}", "{prompt}"],
         env={},
         supports_mcp=False,
@@ -258,6 +273,85 @@ _SETUP_ERR = ("not on PATH", "import failed", "ModuleNotFoundError",
               "No module named", "command not found")
 
 
+#: One output budget for every arm. APEXA sends 16,000; Pi was configured for
+#: 64,000 and Claude Code defaults higher still -- an output-budget confound in a
+#: comparison that claims to hold everything but the harness fixed. It is also
+#: below the 21,333-token point at which Argo's Claude path refuses non-streaming
+#: calls, so no arm fails for a transport reason it does not share.
+MAX_TOKENS = 16000
+
+
+def anthropic_model_id(model: str) -> str:
+    """claudeopus5 -> claude-opus-5, claudesonnet55 -> claude-sonnet-5-5.
+
+    Claude Code only knows the dashed form (the compact id tripped its
+    title-generation call with "unrecognized_model"); Argo accepts both and
+    reports the dashed one back, so this is the canonical spelling.
+    """
+    import re as _re
+    m = _re.fullmatch(r"claude(opus|sonnet|haiku)(\d)(\d?)", (model or "").lower())
+    if not m:
+        return model
+    tier, major, minor = m.groups()
+    return f"claude-{tier}-{major}" + (f"-{minor}" if minor else "")
+
+
+def write_opencode_config(path: Path, base_url: str, api_key: str, model: str,
+                          max_tokens: int = MAX_TOKENS) -> Path:
+    """A per-run OpenCode config with an `argo` provider for exactly one model."""
+    cfg = {"$schema": "https://opencode.ai/config.json",
+           "provider": {"argo": {
+               "npm": "@ai-sdk/openai-compatible", "name": "Argo",
+               "options": {"baseURL": base_url, "apiKey": api_key},
+               "models": {model: {"name": f"{model} (Argo)",
+                                  "limit": {"context": 200000, "output": max_tokens}}}}}}
+    path.write_text(json.dumps(cfg, indent=2))
+    return path
+
+
+def ensure_pi_provider(base_url: str, api_key: str, model: str,
+                       max_tokens: int = MAX_TOKENS) -> Path:
+    """Make ~/.pi/agent/models.json carry an `argo` provider for `model`.
+
+    Pi has no per-run config override, so this merges into the user's file:
+    only the `argo` provider entry is touched, and the original is copied to
+    models.json.bak the first time.
+    """
+    import shutil as _sh
+    path = Path.home() / ".pi" / "agent" / "models.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            data = {}
+        bak = path.with_suffix(".json.bak")
+        if not bak.exists():
+            _sh.copy2(path, bak)
+    prov = data.setdefault("providers", {}).setdefault("argo", {})
+    prov.update({"baseUrl": base_url, "api": "openai-completions", "apiKey": api_key})
+    prov.setdefault("compat", {"supportsDeveloperRole": False,
+                               "supportsReasoningEffort": False})
+    models = [m for m in prov.get("models", []) if m.get("id") != model]
+    models.append({"id": model, "name": f"{model} (Argo)",
+                   "contextWindow": 200000, "maxTokens": max_tokens})
+    prov["models"] = models
+    path.write_text(json.dumps(data, indent=2))
+    return path
+
+
+def placeholders(*, base_url: str, api_key: str, model: str, prompt: str = "",
+                 opencode_config: str = "") -> dict:
+    """Every value an adapter's argv/env may reference."""
+    return {"base_url": base_url,
+            "base_url_root": base_url[:-3] if base_url.endswith("/v1") else base_url,
+            "api_key": api_key, "model": model,
+            "model_anthropic": anthropic_model_id(model),
+            "max_tokens": str(MAX_TOKENS), "prompt": prompt,
+            "opencode_config": opencode_config}
+
+
 def is_setup_error(detail: str) -> bool:
     return any(m.lower() in (detail or "").lower() for m in _SETUP_ERR)
 
@@ -287,10 +381,17 @@ def run_harness(h: Harness, prompt: str, workdir: Path, base_url: str,
     if not h.binary or not shutil.which(h.binary):
         return "", f"{h.binary!r} not on PATH ({h.note})"
     env = dict(os.environ)
-    root = base_url[:-3] if base_url.endswith("/v1") else base_url
+    oc = ""
+    if h.name == "opencode":
+        oc = str(write_opencode_config(Path(workdir) / ".opencode.json",
+                                       base_url, api_key, model))
+    elif h.name == "pi":
+        ensure_pi_provider(base_url, api_key, model)
+    ph = placeholders(base_url=base_url, api_key=api_key, model=model,
+                      prompt=prompt, opencode_config=oc)
     for k, v in h.env.items():
-        env[k] = v.format(base_url=base_url, base_url_root=root, api_key=api_key)
-    argv = [a.format(prompt=prompt, model=model) for a in h.argv]
+        env[k] = v.format(**ph)
+    argv = [a.format(**ph) for a in h.argv]
     try:
         p = subprocess.run(argv, capture_output=True, text=True,
                            timeout=timeout, cwd=str(workdir), env=env)

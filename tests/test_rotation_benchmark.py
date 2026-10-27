@@ -232,3 +232,82 @@ def test_the_three_contrasts_are_each_single_variable():
 
 def test_only_our_arms_claim_enforcement():
     assert [a.id for a in rb.ARMS.values() if a.enforcement] == ["A1"]
+
+
+# ── the model is held fixed across arms (the comparison's premise) ───────────
+import run_comparison as RC
+
+
+@pytest.mark.parametrize("compact,dashed", [
+    ("claudeopus5", "claude-opus-5"), ("claudeopus55", "claude-opus-5-5"),
+    ("claudesonnet55", "claude-sonnet-5-5"), ("claudeopus48", "claude-opus-4-8"),
+    ("claudehaiku45", "claude-haiku-4-5"), ("gpt56sol", "gpt56sol"),
+])
+def test_anthropic_model_id(compact, dashed):
+    assert RC.anthropic_model_id(compact) == dashed
+
+
+def _built(name, model="claudeopus5"):
+    h = RC.HARNESSES[name]
+    ph = RC.placeholders(base_url="https://apps.inside.anl.gov/argoapi/v1",
+                         api_key="u", model=model, prompt="P", opencode_config="/x/oc.json")
+    return [a.format(**ph) for a in h.argv], {k: v.format(**ph) for k, v in h.env.items()}
+
+
+def test_every_external_harness_is_told_the_model():
+    """Claude Code and OpenCode used to get no model flag at all, so two arms ran
+    whatever their CLI defaulted to and 'model held fixed' was false."""
+    for name in ("claude-code", "opencode", "pi"):
+        argv, _ = _built(name)
+        assert any("opus-5" in a or "claudeopus5" in a for a in argv), f"{name}: {argv}"
+
+
+def test_claude_code_gets_no_second_model():
+    """Claude Code routes background work to a separate small model unless every
+    tier is pinned -- that would put two models in one arm."""
+    argv, env = _built("claude-code")
+    assert argv[argv.index("--model") + 1] == "claude-opus-5"
+    for k in ("ANTHROPIC_SMALL_FAST_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+              "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL"):
+        assert env[k] == "claude-opus-5"
+    assert env["ANTHROPIC_BASE_URL"] == "https://apps.inside.anl.gov/argoapi"
+
+
+def test_every_arm_shares_one_output_budget():
+    """Pi was configured for 64k against APEXA's 16k: a confound, and above the
+    21,333-token point where Argo's Claude path refuses non-streaming calls."""
+    from apexa_provider_openai import DEFAULT_MAX_TOKENS
+    assert RC.MAX_TOKENS == DEFAULT_MAX_TOKENS < 21334
+    _, env = _built("claude-code")
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == str(DEFAULT_MAX_TOKENS)
+
+
+def test_opencode_config_routes_to_argo_with_the_fixed_model(tmp_path):
+    p = RC.write_opencode_config(tmp_path / "oc.json", "https://a/v1", "u", "claudeopus5")
+    cfg = json.loads(p.read_text())["provider"]["argo"]
+    assert cfg["options"]["baseURL"] == "https://a/v1"
+    assert list(cfg["models"]) == ["claudeopus5"]
+    assert cfg["models"]["claudeopus5"]["limit"]["output"] == RC.MAX_TOKENS
+    argv, env = _built("opencode")
+    assert "argo/claudeopus5" in argv and env["OPENCODE_CONFIG"] == "/x/oc.json"
+
+
+def test_pi_provider_merge_touches_only_argo_and_backs_up(tmp_path, monkeypatch):
+    monkeypatch.setattr(RC.Path, "home", classmethod(lambda cls: tmp_path))
+    f = tmp_path / ".pi" / "agent" / "models.json"
+    f.parent.mkdir(parents=True)
+    f.write_text(json.dumps({"providers": {
+        "other": {"baseUrl": "x"},
+        "argo": {"models": [{"id": "claudeopus5", "maxTokens": 64000}]}}}))
+    RC.ensure_pi_provider("https://a/v1", "u", "claudeopus5")
+    d = json.loads(f.read_text())
+    assert d["providers"]["other"] == {"baseUrl": "x"}
+    m = [x for x in d["providers"]["argo"]["models"] if x["id"] == "claudeopus5"]
+    assert len(m) == 1 and m[0]["maxTokens"] == RC.MAX_TOKENS
+    assert (f.parent / "models.json.bak").exists()
+
+
+def test_the_default_model_is_one_every_harness_can_speak():
+    import inspect
+    src = inspect.getsource(rb.main)
+    assert 'default="claudeopus5"' in src
