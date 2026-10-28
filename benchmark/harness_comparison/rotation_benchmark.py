@@ -374,6 +374,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
           formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ground-truth", type=Path, required=True)
+    ap.add_argument("--value-col", default="tz",
+                    help="column holding tz in the ground-truth CSV "
+                         "(tz_deg in APEXA's rotation_series_calibration_summary.csv)")
     ap.add_argument("--data-root", type=Path, required=True)
     ap.add_argument("--glob", default="*.h5")
     ap.add_argument("--manuals", type=Path, default=REPO/"knowledge_base"/"capsules")
@@ -394,7 +397,7 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
-    truth = load_truth(a.ground_truth)
+    truth = load_truth(a.ground_truth, value_col=a.value_col)
     slope = statistics.median([v["slope"] for v in truth.values()])
     print(f"ground truth: {len(truth)} exposures, leave-one-out LMedS, "
           f"median slope {slope:.4f} deg/scan")
