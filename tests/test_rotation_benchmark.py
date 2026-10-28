@@ -7,7 +7,7 @@ while measuring the wrong thing.
 """
 from __future__ import annotations
 
-import json, sys, time
+import json, os, sys, time
 from pathlib import Path
 
 import pytest
@@ -349,3 +349,58 @@ def test_load_truth_scores_the_real_structure_correctly(tmp_path):
     for x, y in zip(xs, ys):
         err = abs(truth[x]["predicted_tz"] - y)
         assert (err > 0.10) == (x in bad), f"scan {x}: err {err:.3f}"
+
+
+# ── staging raw exposures without endangering the original or the disk ───────
+def test_the_staged_input_is_an_independent_file(tmp_path):
+    """Writing to the workspace copy must never reach the original raw data."""
+    src = tmp_path / "raw_000269.vrx.h5"; src.write_bytes(b"original")
+    ws = tmp_path / "ws"
+    rb.stage(src, None, ws)
+    (ws / src.name).write_bytes(b"agent overwrote this")
+    assert src.read_bytes() == b"original"
+    assert not (ws / src.name).is_symlink()
+
+
+def test_staging_refuses_rather_than_filling_the_disk(tmp_path, monkeypatch):
+    import subprocess as sp, shutil as sh
+    src = tmp_path / "raw.h5"; src.write_bytes(b"x" * 1000)
+    def no_clone(*a, **k): raise sp.CalledProcessError(1, "cp")
+    monkeypatch.setattr(sp, "run", no_clone)
+    monkeypatch.setattr(sh, "disk_usage", lambda p: sh._ntuple_diskusage(10**9, 10**9 - 1500, 1500))
+    with pytest.raises(SystemExit, match="REFUSING TO RUN"):
+        rb.stage(src, None, tmp_path / "ws")
+
+
+# ── the agents cannot read the answers off the disk ──────────────────────────
+def test_external_arms_are_denied_the_answers_and_the_repo(tmp_path):
+    gt = tmp_path / "analysis" / "summary.csv"; gt.parent.mkdir(); gt.write_text("x")
+    deny = rb.deny_paths(rb.ARMS["A3"], gt)
+    assert os.path.realpath(gt.parent) in deny
+    assert os.path.realpath(rb.REPO) in deny            # no reason to read APEXA's code
+
+
+def test_the_apexa_arm_keeps_its_code_but_not_the_answer_material(tmp_path):
+    gt = tmp_path / "summary.csv"; gt.write_text("x")
+    deny = rb.deny_paths(rb.ARMS["A1"], gt)
+    assert os.path.realpath(rb.REPO) not in deny        # it has to run
+    for rel in ("manuscripts", "tests", "benchmark"):
+        p = os.path.realpath(rb.REPO / rel)
+        if os.path.exists(p):
+            assert p in deny, rel
+
+
+def test_no_sandbox_means_no_run(monkeypatch):
+    """Without the kernel denial the answers on this disk are readable."""
+    monkeypatch.setattr(rb, "SANDBOX", None)
+    with pytest.raises(SystemExit, match="sandbox-exec not available"):
+        rb.sandboxed(["true"], ["/nonexistent"])
+
+
+@pytest.mark.skipif(not rb.SANDBOX, reason="macOS sandbox-exec required")
+def test_the_sandbox_really_blocks_a_read(tmp_path):
+    secret = tmp_path / "answers" / "summary.csv"; secret.parent.mkdir(); secret.write_text("tz,-3.5178")
+    import subprocess
+    p = subprocess.run(rb.sandboxed(["cat", str(secret)], [os.path.realpath(secret.parent)]),
+                       capture_output=True, text=True)
+    assert p.returncode != 0 and "-3.5178" not in p.stdout

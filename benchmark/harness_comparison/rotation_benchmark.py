@@ -150,9 +150,38 @@ def load_truth(csv_path: Path, value_col="tz", index_col="scan",
 LEAK = re.compile(r"(refined_MIDAS_params|paramstest|APEXA_calibration|_summary\.csv|"
                   r"_report\.md|rotation_series)", re.I)
 
+def _place_input(src: Path, dst: Path) -> str:
+    """Put the exposure in the workspace without risking the original or the disk.
+
+    Raw exposures are ~325 MB each (2880^2 x 21 frames); a plain copy per run,
+    kept afterwards, came to ~12 GB for a 6x6 sweep on a laptop with 12 GB free.
+
+    * APFS clone first (`cp -c`): an independent file that costs no space until
+      written to -- the agent cannot touch the original.
+    * Otherwise a real copy, but only with headroom to spare.
+    * Never a symlink or hard link: agents open HDF5 files in write mode, and
+      either would let one modify the original raw data.
+    """
+    import subprocess as _sp
+    try:
+        _sp.run(["cp", "-c", str(src), str(dst)], check=True, capture_output=True)
+        return "clone"
+    except Exception:
+        pass
+    need = src.stat().st_size
+    free = shutil.disk_usage(dst.parent).free
+    if free < 3 * need:
+        raise SystemExit(
+            f"REFUSING TO RUN: copying {src.name} ({need/2**20:.0f} MiB) would leave "
+            f"{(free-need)/2**30:.1f} GiB free, and APFS cloning is unavailable here. "
+            f"Free disk space, or keep the data on the same APFS volume as $TMPDIR.")
+    shutil.copy2(src, dst)
+    return "copy"
+
+
 def stage(exposure: Path, manuals: Optional[Path], dest: Path) -> List[str]:
     dest.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(exposure, dest / exposure.name)
+    _place_input(exposure, dest / exposure.name)
     staged = [exposure.name]
     if manuals and manuals.exists():
         shutil.copytree(manuals, dest / "manuals", dirs_exist_ok=True)
@@ -255,21 +284,78 @@ def score(r: Run, tol: float) -> str:
     return "false_alarm" if ok else "honest_failure"
 
 
+# Every arm gets exactly what the operator told APEXA in the ai_tune session
+# (operator messages 9, 24, 30, 31, 40 of sessions/ai_tune.json) -- and nothing
+# APEXA worked out for itself. Deliberately withheld: the 10 deg tilt tolerance
+# (APEXA's own fix, and the answer to scans 269/276), that the embedded dark is
+# zero (an arm should check), and that the exposures form a ~1 deg rotation
+# series (it would leak the structure the reference is built from). APEXA got
+# these facts one at a time, after failures; here every arm, A1 included, gets
+# them up front, so the comparison measures the harness, not who was told what.
 PROMPT = """You have one X-ray powder-diffraction calibration exposure in this
 directory: {fname}
 
 Calibrate the detector geometry from it. Report the refined sample-to-detector
-distance, the beam centre, and both detector tilts (ty and tz) in degrees, and state
-clearly whether you consider the calibration acceptable.
+distance, the beam centre, and both detector tilts (ty and tz) in degrees, and
+state clearly whether you consider the calibration acceptable.
+
+Operator notes (confirmed by the beamline -- use them):
+- X-ray energy is 63.314 keV. The "63keV" in the filename is nominal, not exact.
+- Detector pixel size is 150 um. There is no binning; "100x100" in the filename
+  is the beam size, not a binning factor.
+- The image transform is ImTransOpt = 2.
+- The file holds 21 frames in exchange/data. Skip the first frame, average the
+  remaining 20, and calibrate on that average -- not frame by frame.
 
 {manual_note}Do not guess any value you can measure or read from the data."""
 MANUAL_NOTE = ("Technique documentation is available under ./manuals -- read what "
                "you need from it.\n\n")
 
 
+# ── no reading the answers off the disk ────────────────────────────────────
+# The answers now live on the same machine as the agents: the summary CSV, the
+# paper, APEXA's session transcripts. A clean workspace does not stop an agent
+# with a shell from running `find ~ -name 'refined_MIDAS_params*'` -- and a
+# leaked answer is exactly what voided the previous comparison. So every arm
+# runs under sandbox-exec with reads of those locations denied by the kernel.
+SANDBOX = shutil.which("sandbox-exec")
+
+
+def _real(p) -> str:
+    return os.path.realpath(os.path.expanduser(str(p)))
+
+
+def deny_paths(arm: "Arm", ground_truth: Path, extra=()) -> List[str]:
+    home = Path.home()
+    deny = {_real(ground_truth.parent), _real(home / "Data"),
+            _real(home / "Library" / "CloudStorage"),      # Box, Drive, OneDrive
+            _real(home / ".apexa" / "sessions")}
+    deny |= {_real(x) for x in extra}
+    if arm.harness == "apexa":
+        # APEXA's process needs its own code; not the material that records the answers.
+        for rel in ("manuscripts", "tests", "benchmark", "CLAUDE.md", "figures"):
+            deny.add(_real(REPO / rel))
+    else:
+        deny.add(_real(REPO))                              # an external harness has no use for it
+    return sorted(d for d in deny if os.path.exists(d))
+
+
+def sandboxed(argv: List[str], deny: List[str]) -> List[str]:
+    if not SANDBOX:
+        raise SystemExit("REFUSING TO RUN: sandbox-exec not available; the answers on "
+                         "this disk would be readable by the agents under test.")
+    rules = " ".join(f'(subpath "{d}")' for d in deny)
+    profile = f"(version 1)(allow default)(deny file-read* file-write* {rules})"
+    return [SANDBOX, "-p", profile] + argv
+
+
+_DENIED = re.compile(r"(Operation not permitted|Permission denied)", re.I)
+
+
 def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             manuals: Optional[Path], base_url: str, api_key: str, model: str,
-            tol: float, timeout: int, outdir: Path, dry: bool) -> Run:
+            tol: float, timeout: int, outdir: Path, dry: bool,
+            ground_truth: Path = Path("."), extra_deny=()) -> Run:
     h = HARNESSES[arm.harness]
     r = Run(arm=arm.id, harness=arm.harness, scan=scan, trial=trial, model=model,
             manuals=arm.manuals, enforcement=arm.enforcement,
@@ -306,10 +392,15 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             env.setdefault("APEXA_LLM_BASE_URL", base_url)
             env.setdefault("ANL_USERNAME", api_key)
             env["ARGO_MODEL"] = model
+            # its own session store, so it neither reads past transcripts (denied
+            # anyway) nor fails trying to write where reads are blocked
+            env["APEXA_SESSION_DIR"] = str(Path(tempfile.mkdtemp(prefix="apexa_sess_")))
         else:
             argv = [a.format(**ph) for a in h.argv]
+        _deny = deny_paths(arm, ground_truth, extra_deny)
+        argv = sandboxed(argv, _deny)
         if dry:
-            r.outcome, r.detail = "dry-run", " ".join(argv[:3])
+            r.outcome, r.detail = "dry-run", f"sandboxed, {len(_deny)} denied paths"
             return r
         t0 = time.time()
         try:
@@ -328,13 +419,21 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         if r.reported_tz is not None and r.predicted_tz is not None:
             r.abs_error_deg = abs(r.reported_tz - r.predicted_tz)
         r.stdout_tail = out[-1200:]
+        # Did the agent go looking for the answers? Not a scoring input -- the
+        # kernel already stopped it -- but worth knowing, and worth reporting.
+        r.detail = "; ".join(sorted({d for d in _deny if d in out and _DENIED.search(out)}))
         r.outcome = score(r, tol)
         return r
     finally:
         keep = outdir / "workspaces" / f"{arm.id}_{scan}_{trial}"
         keep.parent.mkdir(parents=True, exist_ok=True)
         try:
-            shutil.copytree(ws, keep, dirs_exist_ok=True)
+            # Keep what the agent PRODUCED, not the input we handed it: a kept
+            # copy of every ~325 MB raw exposure is what would fill the disk.
+            _inp = exposure.name
+            shutil.copytree(ws, keep, dirs_exist_ok=True,
+                            ignore=lambda d, names: [n for n in names
+                                                     if Path(d) == ws and n == _inp])
         except Exception:
             pass
         shutil.rmtree(ws, ignore_errors=True)
@@ -394,6 +493,10 @@ def main() -> int:
     # claudeopus5 is APEXA's production default, which is what arm A1 represents.
     ap.add_argument("--model", default="claudeopus5")
     ap.add_argument("--timeout", type=int, default=1800)
+    ap.add_argument("--deny", nargs="*", default=[], type=Path,
+                    help="extra paths the agents must not read (answers kept elsewhere)")
+    ap.add_argument("--outdir", type=Path, default=None,
+                    help="where results go (default: benchmark/harness_comparison/runs)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
@@ -412,7 +515,10 @@ def main() -> int:
         raise SystemExit("no exposures matched both the data glob and the ground truth")
     print(f"exposures {len(scans)} | arms {a.arms} | trials {a.trials} | tol {a.tol_deg} deg")
 
-    outdir = HERE/"runs"/f"rotation_{time.strftime('%Y%m%d_%H%M%S')}"
+    # Results can live with the data (e.g. the Box folder) rather than in the
+    # repo. Written by this process, after each sandboxed run -- the agents
+    # themselves are denied reads AND writes there.
+    outdir = (a.outdir or HERE/"runs")/f"rotation_{time.strftime('%Y%m%d_%H%M%S')}"
     outdir.mkdir(parents=True, exist_ok=True)
     (outdir/"config.json").write_text(json.dumps(vars(a), indent=2, default=str))
     runs: List[Run] = []
@@ -421,7 +527,8 @@ def main() -> int:
             for t in range(a.trials):
                 r = run_one(ARMS[arm_id], files[scan], scan, t, truth, a.manuals,
                             a.base_url, a.api_key, a.model, a.tol_deg, a.timeout,
-                            outdir, a.dry_run)
+                            outdir, a.dry_run, ground_truth=a.ground_truth,
+                            extra_deny=a.deny)
                 runs.append(r)
                 with open(outdir/"runs.jsonl", "a") as fh:
                     fh.write(json.dumps(asdict(r)) + "\n")
