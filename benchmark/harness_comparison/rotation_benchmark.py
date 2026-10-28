@@ -77,9 +77,47 @@ def theil_sen(xs: List[float], ys: List[float]) -> Tuple[float, float]:
     return statistics.median([y - b*x for x, y in zip(xs, ys)]), b
 
 
+def robust_line(xs: List[float], ys: List[float]) -> Tuple[float, float]:
+    """Least median of squares, then least squares on its inliers.
+
+    This replaced Theil-Sen as the reference after it failed on the real series.
+    Theil-Sen breaks down at ~29% outliers; the CeO2 group has 6-8 bad
+    exposures out of 21, past that point, so the false basins dragged its slope
+    to ~0.83 deg/scan and it scored 13 correct calibrations as wrong by up to
+    1.4 deg. LMedS breaks down at 50% (Rousseeuw 1984), recovers 0.9991
+    deg/scan -- the commanded ~1 deg step -- and puts every accepted calibration
+    within 0.005 deg of the line. Exhaustive over pairs: n is ~20, so 190 lines.
+    """
+    import itertools
+    best = None
+    for i, j in itertools.combinations(range(len(xs)), 2):
+        if xs[i] == xs[j]:
+            continue
+        b = (ys[j] - ys[i]) / (xs[j] - xs[i])
+        a = ys[i] - b * xs[i]
+        med = statistics.median((y - (a + b * x)) ** 2 for x, y in zip(xs, ys))
+        if best is None or med < best[0]:
+            best = (med, a, b)
+    if best is None:
+        raise ValueError("need >= 2 distinct x")
+    med, a, b = best
+    # Rousseeuw's finite-sample scale; refit on points within 2.5 sigma of it.
+    sigma = 1.4826 * (1 + 5 / max(len(xs) - 2, 1)) * med ** 0.5
+    inl = [(x, y) for x, y in zip(xs, ys) if abs(y - (a + b * x)) <= 2.5 * max(sigma, 1e-9)]
+    if len(inl) >= 3:
+        mx = statistics.fmean(x for x, _ in inl)
+        my = statistics.fmean(y for _, y in inl)
+        den = sum((x - mx) ** 2 for x, _ in inl)
+        if den:
+            b = sum((x - mx) * (y - my) for x, y in inl) / den
+            a = my - b * mx
+    return a, b
+
+
 def load_truth(csv_path: Path, value_col="tz", index_col="scan",
                group_col="calibrant") -> Dict[int, Dict]:
-    """Leave-one-out prediction per exposure, fitted WITHIN calibrant group.
+    """Leave-one-out prediction per exposure, fitted WITHIN calibrant group,
+    with robust_line (LMedS) -- see its docstring for why not Theil-Sen.
 
     CeO2 and LaB6 were swept separately, so they are two lines; pooling them offsets
     every prediction by the gap between the runs.
@@ -102,7 +140,7 @@ def load_truth(csv_path: Path, value_col="tz", index_col="scan",
             others = [r for r in grp if r["scan"] != held["scan"]]
             if len(others) < 2:
                 continue
-            a, b = theil_sen([r["scan"] for r in others], [r["tz"] for r in others])
+            a, b = robust_line([r["scan"] for r in others], [r["tz"] for r in others])
             out[held["scan"]] = {"group": g, "predicted_tz": a + b*held["scan"],
                                  "slope": b, "n_fit": len(others)}
     return out
@@ -358,7 +396,7 @@ def main() -> int:
 
     truth = load_truth(a.ground_truth)
     slope = statistics.median([v["slope"] for v in truth.values()])
-    print(f"ground truth: {len(truth)} exposures, leave-one-out Theil-Sen, "
+    print(f"ground truth: {len(truth)} exposures, leave-one-out LMedS, "
           f"median slope {slope:.4f} deg/scan")
 
     files: Dict[int, Path] = {}

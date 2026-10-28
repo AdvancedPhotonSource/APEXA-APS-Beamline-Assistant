@@ -199,7 +199,8 @@ RAILED = {
     "convergence_metrics": {
         "stage4_strain_uE_test": 162.0, "strain_gate_ue": 100.0,
         "at_bounds": [{"parameter": "tz", "value": -3.0, "bounds": [-3.0, 3.0]},
-                      {"parameter": "a_2", "value": 180.0, "bounds": [-180.0, 180.0]}]},
+                      # real names and bounds from the 20-ID manifests
+                      {"parameter": "iso_R4", "value": -0.01, "bounds": [-0.01, 0.01]}]},
 }
 CLEAN = {
     "tool": "midas_auto_calibrate", "status": "success",
@@ -348,3 +349,34 @@ def test_the_tier_gate_fails_closed_if_it_cannot_answer(monkeypatch):
     monkeypatch.setattr(net, "has_web", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     r = L.WebLogbookSource("https://example.org/doc").read()
     assert not r.ok and "refusing to reach the network" in r.error
+
+
+# ── a phase at +-180 deg is the seam of an angle, not a bound ────────────────
+def test_a_phase_at_180_is_not_railed():
+    """On the real 20-ID series this distinction moved the headline from 66% of
+    accepted calibrations 'railed' to 31%: 12 of 23 had nothing on a bound but a
+    harmonic phase at +-180, which is one point on a circle."""
+    assert not R._railed({"parameter": "phi4", "value": -179.99999, "bounds": [-180.0, 180.0]})
+    assert not R._railed({"parameter": "phi1", "value": 180.0, "bounds": [-180.0, 180.0]})
+    assert R._railed({"parameter": "iso_R4", "value": -0.01, "bounds": [-0.01, 0.01]})
+
+
+def test_a_phase_only_run_renders_pass_not_look():
+    m = {"tool": "midas_auto_calibrate", "status": "success",
+         "convergence_metrics": {"stage4_strain_uE_test": 5.5, "at_bounds": [
+             {"parameter": "phi1", "value": 180.0, "bounds": [-180.0, 180.0]},
+             {"parameter": "phi5", "value": -179.9999, "bounds": [-180.0, 180.0]}]}}
+    spec = R.build_report(m, with_plates=False)
+    assert spec.verdict == "pass"
+    assert not any("refine_distortion" in a.instruction for a in spec.actions)
+
+
+def test_the_distortion_lever_fires_on_real_manifest_names():
+    """The pattern used to expect p\\d+/a_\\d+, so on a real calibration -- whose
+    terms are iso_R4, a1, ... -- the distortion advice never appeared."""
+    for name, bounds, v in (("iso_R6", [-0.01, 0.01], 0.01), ("a1", [0.0, 0.5], 0.5)):
+        m = {"tool": "midas_auto_calibrate", "status": "success",
+             "convergence_metrics": {"stage4_strain_uE_test": 5.0, "at_bounds": [
+                 {"parameter": name, "value": v, "bounds": bounds}]}}
+        acts = R.build_report(m, with_plates=False).actions
+        assert any("refine_distortion" in a.instruction for a in acts), name

@@ -625,6 +625,7 @@ def main(argv=None):
     # bound.pileup, and it is the difference between "converged" and "ran out of
     # room" -- a distinction the strain number alone does not make.
     at_bounds = []
+    phases_at_seam = []
     try:
         _unp = res.stage2.unpacked
         for _nm, _par in (getattr(spec, "parameters", {}) or {}).items():
@@ -636,6 +637,16 @@ def main(argv=None):
             if _v is None or _hi <= _lo:
                 continue
             _span = _hi - _lo
+            # A harmonic PHASE spans a full turn, so +-180 deg is one point -- the
+            # seam of an angle, not a wall. Counting it as railed inflated the
+            # 20-ID rotation-series statistic from 31% to 66% of accepted
+            # calibrations (12 of 23 "railed" ones had nothing on a bound but a
+            # phase at +-180), and sent operators to the distortion remedy for
+            # it. Reported separately, never as a bound.
+            if _span >= 359.999:
+                if abs(abs(_v) - 180.0) <= 0.01 * _span:
+                    phases_at_seam.append({"parameter": _nm, "value": _v})
+                continue
             if abs(_v - _lo) <= 0.01 * _span or abs(_v - _hi) <= 0.01 * _span:
                 at_bounds.append({"parameter": _nm, "value": _v,
                                   "bounds": [_lo, _hi]})
@@ -707,6 +718,11 @@ def main(argv=None):
         "seed": seed_info,
         "lsd": lsd_info,
         "at_bounds": at_bounds,
+        # Informational: phases at the +-180 deg seam. NOT bounds. A phase is
+        # only meaningful when its amplitude is non-zero, so one sitting at the
+        # seam usually means its harmonic is unsupported -- the model-reduction
+        # question (rule 11), asked honestly instead of via a fake rail.
+        "phases_at_seam": phases_at_seam,
         "refine_distortion": _rd,
         "tol_tilts_deg": tilt_tol,
         "scope_gate": scope,

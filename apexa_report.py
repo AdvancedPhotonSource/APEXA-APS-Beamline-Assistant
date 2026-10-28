@@ -147,6 +147,11 @@ def _railed(b: Dict[str, Any], frac_tol: float = 0.01) -> bool:
     lo, hi, v = _f(lo), _f(hi), _f(b.get("value"))
     if lo is None or hi is None or v is None or hi <= lo:
         return False
+    # A full-turn angle (a harmonic phase bounded [-180, 180]) has no wall:
+    # +-180 is the same point. Manifests written before the runner learned this
+    # still list such phases in at_bounds, so filter here too.
+    if hi - lo >= 359.999:
+        return False
     frac = (v - lo) / (hi - lo)
     return frac <= frac_tol or frac >= 1.0 - frac_tol
 
@@ -360,7 +365,11 @@ def _calibration_findings(m: Dict[str, Any]) -> Tuple[List[Finding], List[Action
     if at_bounds:
         names = [str(b.get("parameter", "?")) for b in at_bounds]
         tilts = [n for n in names if n in ("tx", "ty", "tz")]
-        dist = [n for n in names if re.fullmatch(r"(p\d+|a_\d+|phi_\d+)", n or "")]
+        # Real manifests name the distortion block iso_R2/4/6 (radial) and a1..a6
+        # (harmonic amplitudes). This used to match p\d+|a_\d+|phi_\d+ only, so on
+        # an actual calibration the distortion lever never fired. Phases are left
+        # out: at +-180 they are the seam of an angle, and _railed drops them.
+        dist = [n for n in names if re.fullmatch(r"(iso_R\d+|a_?\d+|p\d+)", n or "")]
         lsd = [n for n in names if n.lower() in ("lsd", "lsd_um")]
         if verdict == "pass":
             verdict, note = "look", (

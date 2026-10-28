@@ -137,13 +137,13 @@ def main() -> int:
 
     if a.report:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
-        from rotation_benchmark import theil_sen
+        from rotation_benchmark import robust_line
         for grp in sorted({r["calibrant"] for r in uniq}):
             sub = [r for r in uniq if r["calibrant"] == grp]
             if len(sub) < 3:
                 continue
             xs = [r["scan"] for r in sub]; ys = [r["tz"] for r in sub]
-            a0, b0 = theil_sen(xs, ys)
+            a0, b0 = robust_line(xs, ys)
             res = sorted(abs(y - (a0 + b0*x)) for x, y in zip(xs, ys))
             med = statistics.median(res)
             # a robust sigma: the MAD-equivalent, so the 8 outliers do not inflate it

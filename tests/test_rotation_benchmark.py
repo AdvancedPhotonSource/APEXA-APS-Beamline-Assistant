@@ -311,3 +311,41 @@ def test_the_default_model_is_one_every_harness_can_speak():
     import inspect
     src = inspect.getsource(rb.main)
     assert 'default="claudeopus5"' in src
+
+
+# ── the reference line must survive the real outlier fraction ────────────────
+def _real_like_series():
+    """The CeO2 group's actual structure: 21 scans at ~0.999 deg/scan, of which 6
+    are false basins (off by 6-28 deg) and 2 are rails at +-3 deg -- 8/21 = 38%,
+    past Theil-Sen's ~29% breakdown."""
+    xs = [s for s in range(261, 283) if s != 273]
+    ys = [-14.0 + 0.999 * (x - 261) for x in xs]
+    bad = {261: -4.576, 262: 17.309, 263: -2.729, 264: -1.899,
+           269: -3.000, 276: 3.000, 281: -15.826, 282: -0.921}
+    return xs, [bad.get(x, y) for x, y in zip(xs, ys)], bad
+
+
+def test_theil_sen_breaks_down_on_the_real_outlier_fraction():
+    """Pinned so nobody 'simplifies' back to it: this is the failure that would
+    have scored correct calibrations as accepted-wrong."""
+    xs, ys, bad = _real_like_series()
+    _, b = rb.theil_sen([x for x in xs], ys)
+    assert abs(b - 0.999) > 0.05
+
+
+def test_robust_line_recovers_the_commanded_step():
+    xs, ys, bad = _real_like_series()
+    a, b = rb.robust_line(xs, ys)
+    assert b == pytest.approx(0.999, abs=1e-6)
+    good = [(x, y) for x, y in zip(xs, ys) if x not in bad]
+    assert max(abs(y - (a + b * x)) for x, y in good) < 1e-6
+
+
+def test_load_truth_scores_the_real_structure_correctly(tmp_path):
+    xs, ys, bad = _real_like_series()
+    p = tmp_path / "gt.csv"
+    p.write_text("scan,tz,calibrant\n" + "\n".join(f"{x},{y},CeO2" for x, y in zip(xs, ys)))
+    truth = rb.load_truth(p)
+    for x, y in zip(xs, ys):
+        err = abs(truth[x]["predicted_tz"] - y)
+        assert (err > 0.10) == (x in bad), f"scan {x}: err {err:.3f}"

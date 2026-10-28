@@ -7764,7 +7764,11 @@ async def midas_calibrate_series(
             "ty_deg": cp.get("ty_deg"), "tz_deg": cp.get("tz_deg"),
             "heldout_uE": cm.get("stage4_strain_uE_test"),
             "gate_passed": gate.get("passed"),
-            "at_bounds": len(rec.get("at_bounds") or []) or None,
+            # Full-turn phases (+-180 is one point) are not bounds; older
+            # manifests list them, so filter rather than trust the list length.
+            "at_bounds": len([b for b in (rec.get("at_bounds") or [])
+                              if not (isinstance(b, dict) and len(b.get("bounds") or []) == 2
+                                      and (b["bounds"][1] - b["bounds"][0]) >= 359.999)]) or None,
             "param_file": rec.get("refined_param_file"),
             "manifest": rec.get("manifest"),
             "error": rec.get("error"),
