@@ -361,6 +361,10 @@ class ArgoProvider:
             payload.pop("temperature", None)
             payload["max_completion_tokens"] = 16000
         elif self.model.startswith("gpt"):
+            # GPT-6 / 6.1 (gpt6luna, gpt6sol, gpt61sol, gpt6astra) land here and
+            # were checked live through this exact payload: temperature is
+            # accepted (no gpt55-style forcing to 1), as are top_p and
+            # max_completion_tokens.
             # gpt4o, gpt41*, and the GPT-5 family (gpt5/gpt51/gpt52/gpt54 +
             # mini/nano) all accept temperature + top_p + max_completion_tokens
             # and reject max_tokens. (Note: gpt54 now ACCEPTS temperature — the

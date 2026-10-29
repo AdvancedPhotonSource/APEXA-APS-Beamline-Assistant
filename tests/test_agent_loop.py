@@ -710,3 +710,19 @@ def test_the_new_55_family_is_offered():
     table = Path(A.__file__).read_text()
     for live in ("claudeopus55", "claudesonnet55", "claudehaiku55"):
         assert live in table
+
+
+# ── GPT-6 family (Argo, Oct-2026) ────────────────────────────────────────────
+@pytest.mark.parametrize("model", ["gpt6luna", "gpt6sol", "gpt61sol", "gpt6astra"])
+def test_gpt6_is_offered_and_gets_the_payload_measured_live(model):
+    """Ids verified against Argo's /v1/models; this payload was sent live and
+    accepted. Unlike gpt55/gpt56*, temperature must NOT be forced to 1."""
+    import argo_mcp_client as A
+    assert f'"{model}":' in Path(A.__file__).read_text()
+    from apexa_agents import ArgoProvider
+    p = ArgoProvider("someone", model)
+    pl = p._build_payload([{"role": "user", "content": "x"}], 0.3)
+    assert pl["temperature"] == 0.3
+    assert "max_completion_tokens" in pl and "max_tokens" not in pl
+    from apexa_model_policy import disallowed_reason
+    assert disallowed_reason(model) is None

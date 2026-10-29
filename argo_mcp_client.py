@@ -1545,6 +1545,15 @@ class APEXAClient:
                 "gpt56sol":    "GPT-5.6 Sol (1.05M ctx, 128K out) — NEW; frontier GPT-5.6",
                 "gpt56terra":  "GPT-5.6 Terra (1.05M ctx, 128K out) — NEW; mini tier (intelligence/cost balance)",
                 "gpt56luna":   "GPT-5.6 Luna (1.05M ctx, 128K out) — NEW; nano tier (cost-sensitive, high-volume)",
+                # GPT-6 family (Argo, Oct-2026). Ids and multi-turn tool calling
+                # verified live on both endpoints (Gate 0: all four PASS). Context /
+                # output limits are not yet published by Argo, so none are claimed.
+                # Azure set a LOWER base rate limit on these than on prior models:
+                # expect slower responses while lab usage ramps up.
+                "gpt61sol":    "GPT-6.1 Sol — NEWEST; $2.20 in / $11 out per 1M (below gpt56terra); lower Azure rate limit",
+                "gpt6sol":     "GPT-6 Sol — lower Azure rate limit for now",
+                "gpt6luna":    "GPT-6 Luna — cheapest: $0.11 in / $0.55 out per 1M; lower Azure rate limit",
+                "gpt6astra":   "GPT-6 Astra — most expensive on Argo: $10 in / $50 out per 1M",
             },
             "Anthropic": {
                 "claudeopus55":  "Claude Opus 5.5 (1M ctx, 128K out) — NEWEST Opus; no sampling params",
