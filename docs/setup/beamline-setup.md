@@ -1,211 +1,53 @@
-# APEXA Beamline Setup Instructions
+# Beamline host setup
 
-## Current Issue on S1IDUSER Beamline
+**Reviewed:** 2026-10-15
 
-APEXA's auto-calibration feature is not working because the MIDAS installation at `/home/beams/S1IDUSER/.MIDAS` does not contain the `AutoCalibrateZarr.py` script.
+Use a validated APEXA checkout and configure the engines available on the target
+host. Older versions of this page described a specific S1IDUSER installation
+and treated `AutoCalibrateZarr.py` as a universal calibration requirement. The
+current MIDAS adapter supports additional routes; follow the environment checks
+below instead of assuming one filesystem layout.
 
-## Diagnostic Information
+## Install and configure APEXA
 
-When the MCP server starts, you should see one of these messages in the logs:
-
-**✓ Working installation:**
-```
-Found MIDAS installation at: /home/beams/S1IDUSER/.MIDAS
-✓ AutoCalibrateZarr.py found at /home/beams/S1IDUSER/.MIDAS/utils/AutoCalibrateZarr.py
-```
-
-**✗ Missing AutoCalibrateZarr.py:**
-```
-Found MIDAS installation at: /home/beams/S1IDUSER/.MIDAS
-⚠ AutoCalibrateZarr.py NOT found at /home/beams/S1IDUSER/.MIDAS/utils/AutoCalibrateZarr.py
-  Auto-calibration will not work until MIDAS is properly installed
-```
-
-## Required MIDAS Structure
-
-Your MIDAS installation should have this structure:
-
-```
-/home/beams/S1IDUSER/.MIDAS/
-├── utils/
-│   ├── AutoCalibrateZarr.py          ← REQUIRED for auto-calibration
-│   ├── deprecated_AutoCalibrate.py
-│   └── ... other Python scripts
-├── FF_HEDM/
-│   ├── bin/
-│   │   ├── Integrator               ← REQUIRED for 2D→1D integration
-│   │   └── CalibrantOMP             ← Used by AutoCalibrateZarr.py
-│   └── v7/
-├── NF_HEDM/
-└── build/
-```
-
-## Solutions
-
-### Option 1: Update Existing MIDAS Installation (Recommended)
-
-If `/home/beams/S1IDUSER/.MIDAS` is an older MIDAS version, update it:
+From the checkout root:
 
 ```bash
-cd /home/beams/S1IDUSER/.MIDAS
-git pull origin main  # or master
-git status  # Check if AutoCalibrateZarr.py is now present
+uv sync --locked
+./setup_user.sh
 ```
 
-Verify the script exists:
-```bash
-ls -la /home/beams/S1IDUSER/.MIDAS/utils/AutoCalibrateZarr.py
-```
+Review `.env` and `servers.config`. Preserve the validated code revision and
+dependency lockfile on a beamline host; do not pull unreviewed code or update
+scientific environments during an acquisition.
 
-### Option 2: Install Fresh MIDAS to Different Location
+## Configure engines and hardware
 
-If the existing `.MIDAS` is not a git repository or is heavily modified:
+- **MIDAS:** Follow [MIDAS setup](../MIDAS_SETUP.md). Set
+  `APEXA_MIDAS_BIN` for a MIDAS pip environment. Set `MIDAS_PATH` only when a
+  workflow needs the native repository or a legacy C/Zarr path. Use
+  `validate_midas_installation` to inspect the routes detected by APEXA.
+- **Agentic-GSAS-II:** Configure `APEXA_GSASII_PYTHON` and
+  `APEXA_AGENTIC_GSAS2` when the defaults do not point to the installed
+  interpreter and checkout.
+- **Tomography:** Configure `APEXA_TOMO_PYTHON` for an environment that imports
+  `tomopy` and `dxchange`. See [TomoPy setup](../TOMO_SETUP.md).
+- **EPICS motors:** Install `caget` and `caput`, verify IOC connectivity, and
+  review motor limits and site procedures before enabling motion tools.
 
-```bash
-# Install to ~/opt/MIDAS
-cd /home/beams/S1IDUSER
-mkdir -p opt
-cd opt
-git clone https://github.com/marinerhemant/MIDAS.git
-cd MIDAS
-# Follow build instructions in README.md
-```
+MAUD is supported only as an optional MIDAS backend for the documented caked
+archive path. pyFAI is an optional Python package, but the default configuration
+does not register a pyFAI executor. See the
+[diffraction software survey](../diffraction-software-survey.md) for other
+external-tool boundaries.
 
-Then set environment variable in your APEXA startup script:
-```bash
-export MIDAS_PATH=/home/beams/S1IDUSER/opt/MIDAS
-```
+## Verify and launch
 
-### Option 3: Use MIDAS_PATH Environment Variable
+Start APEXA with `./start_beamline_assistant.sh` or
+`./start_web_viewer.sh`. Read startup warnings and each tool result as a
+separate readiness signal; a registered tool or successful HTTP connection does
+not prove that its engine, data path, or hardware is ready.
 
-If MIDAS is installed elsewhere on the beamline system:
-
-```bash
-# Find existing MIDAS installations
-find /home/beams -name "AutoCalibrateZarr.py" 2>/dev/null
-
-# Set MIDAS_PATH to the directory containing utils/
-export MIDAS_PATH=/path/to/MIDAS
-```
-
-Add this to your shell profile or APEXA startup script.
-
-## Verification Steps
-
-After installing/updating MIDAS:
-
-1. **Verify AutoCalibrateZarr.py exists:**
-   ```bash
-   ls -la /home/beams/S1IDUSER/.MIDAS/utils/AutoCalibrateZarr.py
-   ```
-
-2. **Check MIDAS Python dependencies:**
-   ```bash
-   python -c "import zarr, diplib, numpy, scipy; print('All dependencies OK')"
-   ```
-
-   If this fails, install MIDAS conda environment:
-   ```bash
-   cd /home/beams/S1IDUSER/.MIDAS
-   conda env create -f environment.yml
-   conda activate midas
-   ```
-
-3. **Restart APEXA MCP server** to pick up the new MIDAS installation
-
-4. **Test auto-calibration:**
-   ```bash
-   # In APEXA
-   autocalibrate the CeO2.tif file with energy=61.332keV, pixel_size=172
-   ```
-
-5. **Check server logs** for diagnostic output:
-   - Should show: `✓ AutoCalibrateZarr.py found at ...`
-   - Should NOT show: `⚠ AutoCalibrateZarr.py NOT found`
-
-## What APEXA Will Do Once MIDAS is Properly Installed
-
-When you ask APEXA to auto-calibrate a CeO2 image, it will:
-
-1. Create a MIDAS parameters file with initial guesses
-2. Run `/home/beams/S1IDUSER/.MIDAS/utils/AutoCalibrateZarr.py`
-3. AutoCalibrateZarr.py calls `CalibrantOMP` executable for refinement
-4. Parse `refined_MIDAS_params.txt` to extract:
-   - Beam center (BC_X, BC_Y)
-   - Sample-to-detector distance (Lsd)
-   - Detector tilt angles (tx, ty, tz)
-   - Distortion parameters (p0, p1, p2, p3)
-5. Return calibrated parameters for use in data reduction
-
-## Troubleshooting
-
-### Error: "AutoCalibrateZarr.py not found"
-
-The error message will show:
-- Which MIDAS_ROOT was detected
-- Whether utils/ directory exists
-- What Python files are in utils/
-- Alternative scripts if found
-
-Follow the suggestions in the error message.
-
-### Error: "ModuleNotFoundError: No module named 'zarr'"
-
-AutoCalibrateZarr.py requires MIDAS Python dependencies:
-- zarr
-- diplib
-- numpy
-- scipy
-- matplotlib
-- pandas
-- plotly
-- h5py
-- numba
-
-Install using MIDAS conda environment:
-```bash
-cd /home/beams/S1IDUSER/.MIDAS
-conda env create -f environment.yml
-conda activate midas
-```
-
-### APEXA Still Using pyFAI Instead of MIDAS
-
-This means `midas_auto_calibrate` returned an error. Check:
-1. MCP server logs for diagnostic output
-2. Verify AutoCalibrateZarr.py exists
-3. Verify MIDAS Python dependencies are installed
-4. Restart MCP server after fixing MIDAS installation
-
-## Optional: MIDAS Python Packages
-
-APEXA can validate parameter files and compute stress/strain from grain data if two optional MIDAS packages are installed in the `midas_env` conda environment:
-
-```bash
-conda activate midas_env
-pip install -e $MIDAS_PATH/packages/midas_params    # parameter file validation
-pip install -e $MIDAS_PATH/packages/midas_stress     # stress/strain analysis
-```
-
-**What they enable:**
-- `validate_parameter_file` — catch param file errors before burning compute
-- `diagnose_parameter_file` — AI-assisted diagnosis with fix suggestions
-- `inspect_dataset_file` — auto-extract parameters from raw data files
-- `enumerate_bragg_rings` — list which Bragg rings fall on the detector
-- `compute_grain_stress` — Hooke's law + equilibrium correction from Grains.csv
-- `get_material_stiffness` — elastic constants lookup (Au, Cu, Al, Fe, Ni, Ti, W, Si, CeO2)
-- `correct_d0_equilibrium` — two-step d0 correction (dominant HEDM systematic error)
-- `analyze_slip_systems` — Schmid factors, Taylor factor, yield proximity
-- `read_grains_summary` — quick statistical summary of a Grains.csv file
-
-Verify installation from APEXA:
-```
-APEXA> check midas installation
-```
-Both packages should appear under "packages" in the output.
-
-## Contact
-
-For issues with:
-- **MIDAS installation**: https://github.com/marinerhemant/MIDAS/issues
-- **APEXA/beamline-assistant**: Your local beamline computing team
+For a persistent Web UI, authentication, and SSH access, see the
+[Web UI deployment guide](../DEPLOYMENT.md). Keep the Web UI on a trusted local
+host unless an authenticated proxy protects both HTTP and WebSocket routes.

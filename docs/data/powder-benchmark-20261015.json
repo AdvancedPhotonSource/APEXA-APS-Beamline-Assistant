@@ -1,0 +1,258 @@
+{
+  "schema_version": "1.0",
+  "synced_date": "2026-10-15",
+  "scope": "Frozen numerical engine benchmark; not an end-to-end APEXA or LLM/VLM benchmark.",
+  "source": {
+    "repository": "https://github.com/pawantr/Agentic-GSAS-II-manuscript",
+    "commit": "741add81047e5d9de97d136f7d2bb7760751ddeb",
+    "path": "data/audits/results_statistics.json",
+    "sha256": "b702c25b191b91203642c755208dfd9c14e82bdbfc0047986fc00d79314e4dc0"
+  },
+  "run_id": "20261014T224410Z",
+  "code_fingerprint": "651d117cbd854308",
+  "overall": {
+    "suites_attempted": 13,
+    "suite_execution": {
+      "completed": 11,
+      "failed": 2
+    },
+    "records": 1676,
+    "exclusive_record_outcomes": {
+      "blocked": 1514,
+      "provisional": 157,
+      "execution_error": 5
+    },
+    "raw_scientific_status": {
+      "blocked": 1515,
+      "provisional": 157,
+      "unavailable": 4
+    },
+    "finite_Rwp": 1669
+  },
+  "suites": [
+    {
+      "suite": "PbSO4_independent",
+      "suite_execution": "completed",
+      "records": 2,
+      "execution_error": 0,
+      "blocked_completed": 1,
+      "provisional": 1,
+      "finite_Rwp": 2,
+      "median_Rwp_pct": 12.585851077795933,
+      "missing_Rwp_completed": 0,
+      "sources": [
+        "tutorials/PbSO4_independent/output/run_summary.json"
+      ]
+    },
+    {
+      "suite": "CWCombined",
+      "suite_execution": "completed",
+      "records": 1,
+      "execution_error": 0,
+      "blocked_completed": 0,
+      "provisional": 1,
+      "finite_Rwp": 1,
+      "median_Rwp_pct": 14.773306031734409,
+      "missing_Rwp_completed": 0,
+      "sources": [
+        "tutorials/CWCombined/output/joint_summary.json"
+      ]
+    },
+    {
+      "suite": "LabData_FAP",
+      "suite_execution": "completed",
+      "records": 1,
+      "execution_error": 0,
+      "blocked_completed": 0,
+      "provisional": 1,
+      "finite_Rwp": 1,
+      "median_Rwp_pct": 17.799540599993396,
+      "missing_Rwp_completed": 0,
+      "sources": [
+        "tutorials/LabData_FAP/output/lab_fap_summary.json"
+      ]
+    },
+    {
+      "suite": "TOF_CW_joint",
+      "suite_execution": "failed",
+      "records": 0,
+      "execution_error": 0,
+      "blocked_completed": 0,
+      "provisional": 0,
+      "finite_Rwp": 0,
+      "median_Rwp_pct": null,
+      "missing_Rwp_completed": 0,
+      "sources": []
+    },
+    {
+      "suite": "LeBail_sucrose",
+      "suite_execution": "completed",
+      "records": 1,
+      "execution_error": 1,
+      "blocked_completed": 0,
+      "provisional": 0,
+      "finite_Rwp": 0,
+      "median_Rwp_pct": null,
+      "missing_Rwp_completed": 0,
+      "sources": [
+        "tutorials/LeBail_sucrose/output/lebail_sucrose_summary.json"
+      ]
+    },
+    {
+      "suite": "ParameterLimits",
+      "suite_execution": "completed",
+      "records": 3,
+      "execution_error": 0,
+      "blocked_completed": 3,
+      "provisional": 0,
+      "finite_Rwp": 3,
+      "median_Rwp_pct": 14.225886872200933,
+      "missing_Rwp_completed": 0,
+      "sources": [
+        "tutorials/ParameterLimits/output/parameter_limits_summary.json"
+      ]
+    },
+    {
+      "suite": "SeqRefine",
+      "suite_execution": "completed",
+      "records": 17,
+      "execution_error": 0,
+      "blocked_completed": 17,
+      "provisional": 0,
+      "finite_Rwp": 17,
+      "median_Rwp_pct": 74.09799951421554,
+      "missing_Rwp_completed": 0,
+      "sources": [
+        "tutorials/SeqRefine/output/run_summary.json"
+      ]
+    },
+    {
+      "suite": "sim_powder",
+      "suite_execution": "completed",
+      "records": 2,
+      "execution_error": 0,
+      "blocked_completed": 2,
+      "provisional": 0,
+      "finite_Rwp": 2,
+      "median_Rwp_pct": 19.703869720839425,
+      "missing_Rwp_completed": 0,
+      "sources": [
+        "benchmark_runs/sim_powder/run_summary.json"
+      ]
+    },
+    {
+      "suite": "Dara_mixtures",
+      "suite_execution": "completed",
+      "records": 20,
+      "execution_error": 0,
+      "blocked_completed": 20,
+      "provisional": 0,
+      "finite_Rwp": 20,
+      "median_Rwp_pct": 20.70952828626116,
+      "missing_Rwp_completed": 0,
+      "sources": [
+        "tutorials/Dara_mixtures/output/dara_summary.json"
+      ]
+    },
+    {
+      "suite": "opXRD",
+      "suite_execution": "failed",
+      "records": 0,
+      "execution_error": 0,
+      "blocked_completed": 0,
+      "provisional": 0,
+      "finite_Rwp": 0,
+      "median_Rwp_pct": null,
+      "missing_Rwp_completed": 0,
+      "sources": []
+    },
+    {
+      "suite": "RRUFF_cod",
+      "suite_execution": "completed",
+      "records": 234,
+      "execution_error": 2,
+      "blocked_completed": 176,
+      "provisional": 56,
+      "finite_Rwp": 232,
+      "median_Rwp_pct": 63.70817378741255,
+      "missing_Rwp_completed": 0,
+      "sources": [
+        "tutorials/RRUFF/output_cod/rruff_summary.json"
+      ]
+    },
+    {
+      "suite": "RRUFF_fixed",
+      "suite_execution": "completed",
+      "records": 234,
+      "execution_error": 2,
+      "blocked_completed": 199,
+      "provisional": 33,
+      "finite_Rwp": 232,
+      "median_Rwp_pct": 57.88040758817263,
+      "missing_Rwp_completed": 0,
+      "sources": [
+        "tutorials/RRUFF/output_cod_fixed/rruff_summary.json"
+      ]
+    },
+    {
+      "suite": "detectors",
+      "suite_execution": "completed",
+      "records": 1161,
+      "execution_error": 0,
+      "blocked_completed": 1096,
+      "provisional": 65,
+      "finite_Rwp": 1159,
+      "median_Rwp_pct": 19.56364440902903,
+      "missing_Rwp_completed": 2,
+      "sources": [
+        "benchmark_runs/ge/refinement_summary.json",
+        "benchmark_runs/pilatus/refinement_summary.json",
+        "benchmark_runs/varex_aero/refinement_summary.json",
+        "benchmark_runs/varex_distortion/refinement_summary.json"
+      ]
+    }
+  ],
+  "DARA": {
+    "mixtures": 20,
+    "phase_estimates": 50,
+    "mixture_sizes": {
+      "2": 10,
+      "3": 10
+    },
+    "status": {
+      "blocked": 20
+    },
+    "pooled_phase_absolute_error_pp": {
+      "n": 50,
+      "min": 0.44071176340860774,
+      "median": 24.973891186116898,
+      "mean": 26.68135011976237,
+      "max": 66.62983106276629,
+      "q25": 13.054607598121645,
+      "q75": 37.219077306880266
+    },
+    "equal_mixture_mean_absolute_error_pp": {
+      "n": 20,
+      "min": 3.5246166453605703,
+      "median": 28.369230301189003,
+      "mean": 27.44222021878024,
+      "max": 52.51393697004267,
+      "q25": 15.586317285837213,
+      "q75": 36.778771485431605
+    },
+    "failed_checks_overlapping": {
+      "convergence": 19,
+      "geometry": 9,
+      "covariance": 3
+    },
+    "sampling_unit": "20 mixture observations; 50 phase estimates are compositionally dependent",
+    "nominal_normalization": "Each filename-derived nominal composition is divided by its sum before comparison.",
+    "scope": "Candidate phases supplied; this suite does not evaluate phase identification."
+  },
+  "scientific_status_interpretation": "Operational implementation checks, not adjudicated ground-truth scientific accuracy. The classifier emits blocked or provisional, never qualified.",
+  "sampling_notes": {
+    "RRUFF": "234 paired IDs; 232 completed pairs; 231 unique prepared inputs; 149 mineral names; Bragg-remapped intensities.",
+    "detectors": "1161 sectors from four acquisitions; sectors are dependent; 279 GE sectors excluded upstream.",
+    "sequential": "17 temperature-series frames blocked; no successor warm-start. A separate two-frame transfer check establishes mechanics only."
+  }
+}

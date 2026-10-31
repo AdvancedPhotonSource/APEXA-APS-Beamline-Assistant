@@ -1,354 +1,94 @@
-# APEXA Beamline Deployment Guide
+# Running APEXA locally
 
-Complete guide for deploying the updated APEXA with robust MIDAS auto-calibration on S1IDUSER beamline.
+**Reviewed:** 2026-10-15
 
----
+This page covers starting the CLI and Web UI from a checkout. For an always-on
+service, use the [Web UI deployment guide](../DEPLOYMENT.md). For SSH, internal
+network, and disconnected layouts, see [deployment modes](../DEPLOYMENT_MODES.md).
 
-## What's New in pawan-modular-v2
+## First launch
 
-Critical fixes and enhancements for MIDAS workflows:
-
-1. ✅ **Fixed auto-calibration blocking** - No longer requires pyFAI in MCP server environment
-2. ✅ **All 15 official parameters** - stopping_strain, mult_factor, eta_bin_size, etc.
-3. ✅ **Convergence metrics** - Reports iterations, final strain, excluded rings
-4. ✅ **Diagnostic output** - Clear startup messages showing MIDAS status
-5. ✅ **Enhanced error messages** - Helpful troubleshooting information
-
-**Key Commits:**
-- [`30c530d`] **Latest:** Comprehensive environment handling for all MIDAS tools
-- [`e404934`] Auto-detect MIDAS Python (conda midas_env)
-- [`28d2db3`] Fix MIDAS path priority (check ~/opt/MIDAS first)
-- [`e47b1ce`] Robust auto-calibration based on official manual
-- [`1b921fb`] Complete MIDAS workflows reference
-
----
-
-## Quick Start
+From the repository root:
 
 ```bash
-# 1. Update code
-cd ~/CAI/git/APS-Beamline-Assistant
-git fetch && git checkout pawan-modular-v2 && git pull
-
-# 2. Restart APEXA (this will restart all servers)
+uv sync --locked
+./setup_user.sh
 ./start_beamline_assistant.sh
 ```
 
-**Expected output:**
-```
-Found MIDAS installation at: /home/beams/S1IDUSER/opt/MIDAS
-✓ AutoCalibrateZarr.py found at /home/beams/S1IDUSER/opt/MIDAS/utils/AutoCalibrateZarr.py
-Using MIDAS conda environment: /home/beams/S1IDUSER/miniconda3/envs/midas_env/bin/python
-✓ MIDAS scientific dependencies available
-```
+The setup script creates `.env` with the selected Argo model and host settings.
+Review `servers.config` before startup: it controls which MCP servers APEXA
+launches. The tool inventory records source registrations; it does not confirm
+that an engine, its data, or beamline hardware is ready.
 
-**Key Features:**
-- **Automatic environment detection** - No manual conda activation needed!
-- **UV + Conda separation** - MCP server runs in UV, MIDAS tools use conda midas_env
-- **Complete path handling** - Python scripts use conda, C++ binaries get proper LD_LIBRARY_PATH
-
----
-
-## Environment Architecture
-
-APEXA uses a **dual-environment strategy** that automatically handles UV and conda:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ UV Environment (beamline-assistant)                         │
-│ - Runs MCP servers (filesystem, executor, midas)            │
-│ - Runs APEXA client                                          │
-│ - No MIDAS Python dependencies needed                       │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              │ Automatically detects & uses
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Conda midas_env                                              │
-│ - Python with zarr, diplib, numpy, scipy, etc.              │
-│ - Used by AutoCalibrateZarr.py and all MIDAS Python scripts │
-│ - Shared libraries for C++ binaries (Integrator, etc.)      │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**How it works:**
-1. `find_midas_python()` - Auto-detects conda midas_env Python
-2. `get_midas_env()` - Sets LD_LIBRARY_PATH for C++ binaries
-3. All MIDAS tools use correct environment automatically
-
-**No manual activation needed!**
-
----
-
-## Detailed Deployment
-
-### Step 1: Verify MIDAS Installation
-
-MIDAS must have `AutoCalibrateZarr.py` for auto-calibration:
+To launch the browser interface:
 
 ```bash
-# Check common locations
-ls -la /home/beams/S1IDUSER/.MIDAS/utils/AutoCalibrateZarr.py
-ls -la /home/beams/S1IDUSER/opt/MIDAS/utils/AutoCalibrateZarr.py
-
-# Required structure
-MIDAS/
-├── utils/AutoCalibrateZarr.py          ← CRITICAL
-├── FF_HEDM/bin/CalibrantOMP            ← Used by AutoCalibrateZarr.py
-└── FF_HEDM/bin/Integrator              ← For 2D→1D integration
+./start_web_viewer.sh
 ```
 
-**If missing**, update or install MIDAS:
+Open <http://localhost:8001>. The launcher builds the React UI when its source is
+newer than `frontend/dist`; it needs `frontend/node_modules` for that build.
+Install frontend dependencies with `cd frontend && npm ci` on a connected setup
+host, or stage a prebuilt `frontend/dist` for an offline host.
 
-```bash
-# Option 1: Update existing
-cd /home/beams/S1IDUSER/.MIDAS && git pull
+## Runtime boundaries
 
-# Option 2: Fresh install
-cd /home/beams/S1IDUSER/opt
-git clone https://github.com/marinerhemant/MIDAS.git
-export MIDAS_PATH=/home/beams/S1IDUSER/opt/MIDAS
-```
+The APEXA Python environment runs the client, web server, and configured MCP
+servers. Scientific engines may run in separate environments:
 
-### Step 2: Install MIDAS Python Dependencies
+| Capability | Configuration | Readiness boundary |
+|---|---|---|
+| MIDAS | `APEXA_MIDAS_BIN`; `MIDAS_PATH` only for native C or legacy paths | See [MIDAS setup](../MIDAS_SETUP.md) and `validate_midas_installation`. |
+| Agentic-GSAS-II | `APEXA_GSASII_PYTHON`, `APEXA_AGENTIC_GSAS2` | Requires the configured GSAS-II interpreter and Agentic-GSAS-II checkout. |
+| TomoPy | `APEXA_TOMO_PYTHON` | Requires an interpreter that imports `tomopy` and `dxchange`; see [tomography setup](../TOMO_SETUP.md). |
+| EPICS motors | `caget` and `caput` on `PATH`, plus reachable IOCs | Registered motor tools do not establish hardware connectivity or motion safety. |
 
-AutoCalibrateZarr.py requires: `zarr`, `diplib`, `numpy`, `scipy`, `matplotlib`, `pandas`, `plotly`, `h5py`, `numba`
+MAUD is an optional, limited backend of MIDAS `run_gsas_refinement` for
+supported caked archives. pyFAI, TOPAS, FullProf, DIOPTAS, and Mantid do not have
+active execution tools in the default configuration. See the
+[diffraction software survey](../diffraction-software-survey.md).
 
-```bash
-# Test dependencies
-python -c "import zarr, diplib, numpy, scipy; print('OK')"
+The Web UI has no application login. Keep it on a trusted local host unless it
+is protected by an authenticated proxy that covers both HTTP and WebSocket
+traffic; see the [deployment guide](../DEPLOYMENT.md).
 
-# If missing, install
-cd /home/beams/S1IDUSER/opt/MIDAS
-conda env create -f environment.yml
-conda activate midas
+## Updating a running checkout
 
-# Or with pip
-pip install zarr diplib numpy scipy matplotlib pandas plotly h5py numba scikit-image fabio
-```
+Stop the top-level CLI or Web UI process with Ctrl+C, then launch it again from
+the intended checkout. A running Python process keeps its loaded routes and
+server registry even after files change. The Web UI launcher also checks whether
+the frontend needs rebuilding.
 
-### Step 3: Update APEXA Code
-
-```bash
-cd /home/beams/S1IDUSER/beamline-assistant-dev
-git fetch origin
-git checkout pawan-modular-v2
-git pull origin pawan-modular-v2
-
-# Verify commits
-git log --oneline -5
-# Should show: 1b921fb, e47b1ce, ac60af6, f3caf16
-```
-
-### Step 4: Restart MCP Server
-
-```bash
-# Kill old server
-ps aux | grep midas_comprehensive_server
-pkill -f midas_comprehensive_server
-
-# Start new server
-cd /home/beams/S1IDUSER/beamline-assistant-dev
-uv run python midas_comprehensive_server.py &
-
-# Check logs for diagnostic output
-tail -f mcp_server.log
-```
-
-**Expected output:**
-```
-Found MIDAS installation at: /home/beams/S1IDUSER/opt/MIDAS
-✓ AutoCalibrateZarr.py found at /home/beams/S1IDUSER/opt/MIDAS/utils/AutoCalibrateZarr.py
-✓ MIDAS scientific dependencies available
-```
-
-**Warning sign:**
-```
-⚠ AutoCalibrateZarr.py NOT found at ...
-```
-
-### Step 5: Restart APEXA Client
-
-```bash
-pkill -f argo_mcp_client
-cd /home/beams/S1IDUSER/beamline-assistant-dev
-uv run python argo_mcp_client.py
-```
-
----
-
-## Verification Tests
-
-### Test 1: Auto-Calibrate CeO2
-
-In APEXA:
-```
-autocalibrate the CeO2_650mm_61p332keV_2DFocused_0p1s_att200_004018.tif file in /home/beams/S1IDUSER/CAI/git/demo_data with energy=61.332keV, pixel_size=172 microns
-```
-
-**Expected:**
-```
-✓ Auto-calibration completed successfully!
-
-Refined Parameters:
-  Beam Center: (1040.23, 1030.45) pixels
-  Distance (Lsd): 650.12 mm
-  Tilts: tx=0.000123, ty=-0.000045, tz=0.000089 rad
-
-Convergence:
-  Iterations: 5
-  Final Mean Strain: 0.000038
-  Target Strain: 0.000040
-  Status: CONVERGED ✓
-
-Output Files:
-  • refined_MIDAS_params.txt
-  • autocal.log
-```
-
-### Test 2: Integration
-
-```
-integrate the CeO2 image to 1D using refined_MIDAS_params.txt
-```
-
-Should produce `_1d.dat` file.
-
----
+Do not force-kill an MCP child by process name or start a second copy of one by
+hand. The top-level APEXA process manages those child servers.
 
 ## Troubleshooting
 
-### Issue: APEXA Using pyFAI Instead of MIDAS
+### `/api/sessions` or `/api/sessions/import` returns 404
 
-**Symptom:** APEXA tries random shell commands, mentions pyFAI
+The running Web UI process may have loaded an older route table. Stop it, run
+`./start_web_viewer.sh` from the current checkout, and reload the browser.
+See [shared sessions](../SESSIONS.md).
 
-**Cause:** MCP server not restarted with new code
+### A result image is missing
 
-**Fix:**
-```bash
-# Force restart
-pkill -9 -f midas_comprehensive_server
-cd /home/beams/S1IDUSER/beamline-assistant-dev
-git branch  # Verify on pawan-modular-v2
-uv run python midas_comprehensive_server.py &
-```
+The refinement canvas only opens plot paths returned by the engine. If the
+result has no plot path, the UI reports that the image was not included. If a
+returned path fails to load, confirm that the file exists on the APEXA host and
+that the latest Web UI server is running; do not assume a file named
+`hist.png` was generated.
 
-### Issue: "AutoCalibrateZarr.py not found"
+### A tool is unavailable
 
-**Fix:**
-```bash
-# Find MIDAS
-find /home/beams/S1IDUSER -name "AutoCalibrateZarr.py" 2>/dev/null
+Check the tool's structured result and the relevant server logs. Confirm that
+the server is enabled in `servers.config`, then check its interpreter,
+executable, data path, or hardware prerequisites. Restart the top-level APEXA
+process after changing configuration.
 
-# Set MIDAS_PATH if not in standard location
-export MIDAS_PATH=/path/to/MIDAS
-# Add to ~/.bashrc to persist
-```
+### The docs site does not start
 
-### Issue: "ModuleNotFoundError: zarr"
-
-**Fix:**
-```bash
-# Check which Python is used
-head -1 /home/beams/S1IDUSER/opt/MIDAS/utils/AutoCalibrateZarr.py
-
-# Install for that Python
-python3 -m pip install zarr diplib numpy scipy matplotlib pandas plotly h5py numba
-```
-
-### Issue: Calibration NOT CONVERGED
-
-**Solutions:**
-
-1. Relax tolerance:
-   ```
-   autocalibrate with stopping_strain=0.001
-   ```
-
-2. Better initial guess:
-   ```
-   autocalibrate with lsd_guess=650000, bc_x_guess=1024, bc_y_guess=1024
-   ```
-
-3. Image transform:
-   ```
-   autocalibrate with image_transform="2"
-   # "0"=none, "1"=flip LR, "2"=flip UD, "3"=transpose
-   ```
-
-4. Save diagnostics:
-   ```
-   autocalibrate with save_plots_hdf="diag.h5"
-   ```
-
----
-
-## APEXA Command Reference
-
-**Basic:**
-```
-autocalibrate the CeO2.tif file with energy=61.332keV, pixel_size=172
-```
-
-**With options:**
-```
-autocalibrate with lsd_guess=650000, stopping_strain=0.0001, mult_factor=2.5, image_transform="2"
-```
-
-**Full advanced:**
-```
-autocalibrate with lsd_guess=650000, bc_x_guess=1024, bc_y_guess=1024, stopping_strain=0.00004, mult_factor=2.5, first_ring_nr=1, eta_bin_size=5.0, save_plots_hdf="diagnostics.h5", image_transform="2"
-```
-
-**Integration:**
-```
-integrate the sample.tif image using refined_MIDAS_params.txt
-```
-
----
-
-## Parameter File Template
-
-Create `Parameters.txt`:
-
-```txt
-# Material (CeO2 example)
-SpaceGroup 225
-LatticeParameter 5.411 5.411 5.411 90 90 90
-Wavelength 0.2021
-
-# Detector
-px 172.0
-NrPixels 2048 2048
-
-# Initial guesses (will be refined)
-Lsd 650000
-BC 1024 1024
-
-# Processing
-SkipFrame 0
-OmegaStep 0.25
-```
-
----
-
-## Output Files
-
-**Input:**
-- `CeO2_*.tif` - Calibrant image
-- `Parameters.txt` - Initial parameters
-
-**Output:**
-- `refined_MIDAS_params.txt` ⭐ **Main result** (use for integration)
-- `autocal.log` - Iteration history with convergence metrics
-- `calibrant_screen_out.csv` - Raw CalibrantOMP output
-- `*.zarr.zip` - Converted data
-
----
-
-## Version Info
-
-- **Branch:** `pawan-modular-v2`
-- **Latest Commit:** [`1b921fb`]
-- **Date:** 2025-10-23
-- **Based on:** https://github.com/marinerhemant/MIDAS/blob/master/manuals/FF_autocalibrate.md
+The docs-only MkDocs Material package is resolved by `serve_docs.sh` on first
+use. That first run needs access to the configured Python package index or a
+pre-populated uv cache. APEXA runtime dependencies do not include the docs
+theme.

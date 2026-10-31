@@ -1,6 +1,8 @@
+<img src="frontend/public/apexa-mark.svg" width="64" height="64" alt="APEXA photon beam and diffraction mark">
+
 # APEXA - Advanced Photon EXperiment Assistant
 
-AI-powered agentic framework for HEDM data analysis at Argonne National Laboratory's Advanced Photon Source.
+AI-powered agentic framework for synchrotron diffraction analysis, tomography workflows, and instrument control at Argonne National Laboratory's Advanced Photon Source.
 
 ---
 
@@ -12,15 +14,21 @@ AI-powered agentic framework for HEDM data analysis at Argonne National Laborato
 ./start_beamline_assistant.sh    # Start APEXA CLI
 ```
 
-### Gradio UI (Recommended for interactive use)
+### Gradio UI (experimental alternative)
 ```bash
 ./start_gradio_ui.sh             # Opens at http://localhost:7860
 ```
 
-### Web UI (with image viewer)
+### Web UI (recommended interactive workspace)
 ```bash
-./start_web_viewer.sh            # builds the React frontend, opens http://localhost:8001
+./start_web_viewer.sh            # serves the React workspace at http://localhost:8001
 ```
+
+The maintained interactive workspace uses **Chat / Split / Canvas**, with shared
+sessions, explicit workflow approvals and results that open automatically.
+**Classic light** restores the original white, cobalt and cyan palette; the
+header theme button preserves optional dark modes. See the [Canvas guide](docs/CANVAS_WORKSPACE.md)
+for tab reuse, comparison, favorites and the exact rebuild/restart steps.
 
 ### Windows
 
@@ -52,13 +60,13 @@ PowerShell: `.\start_beamline_assistant.ps1` (add `-ExecutionPolicy Bypass` if b
 > (`winget install Kitware.CMake Microsoft.VisualStudio.2022.BuildTools`, pick "Desktop
 > development with C++"), and `set CMAKE_POLICY_VERSION_MINIMUM=3.5` before `uv sync`
 > (the `.bat`/`.ps1` launchers already set this). If you don't need MIDAS HEDM tools on
-> this box, skip the native build entirely with `uv sync` after removing `midas-suite`
-> from `pyproject.toml`, or run MIDAS under WSL2/Linux (below).
+> this box, use the base `uv sync` install without the optional `midas` extra, or run MIDAS
+> under WSL2/Linux (below).
 
 > **Note:** the **motor (EPICS)** server needs `caget`/`caput` (Unix) and **MIDAS** needs a
 > platform build, so native Windows runs the CLI, agent, and core tools; for full HEDM
 > calibration/integration + motor control use **WSL2 (Ubuntu)** or Linux, where the `.sh`
-> scripts run as-is. To launch only the always-available servers on Windows, keep just
+> scripts run as-is. For a core-only setup on Windows, keep just
 > `core:beamline_core_server.py` in `servers.config`.
 
 ---
@@ -70,68 +78,79 @@ User (natural language)
          |
     Argo Gateway (GPT-4o / Claude / Gemini)
          |
-    OrchestratorAgent (apexa_agents.py)
-         |
-    +----------------+----------------+------------------+-------------------+
-    | Calibration    | Analysis       | Knowledge        | Visualization     |
-    | Agent          | Agent          | Agent            | Agent             |
-    +-------+--------+-------+--------+--------+---------+--------+----------+
-            |                |                 |                  |
-            +----------------+-----------------+      MIDAS viewer scripts
+    OrchestratorAgent (single-loop default)
                              |
                   +----------+----------+
-                  |   core (11 tools)   |
-                  |   midas (55 tools)  |
+                  |   core (13 tools)   |
+                  |   midas (60 tools)  |
                   |   motor (13 tools)  |
-                  |   gsas2 (5 tools)   |
+                  |   gsas2 (26 tools)  |
+                  |   tomo (2 tools)    |
                   +---------------------+
 ```
 
-### Specialist Agents
+### Legacy Specialist Routes
+Set `APEXA_AGENT_MODE=legacy` to use these keyword-routed agents. The default
+`single` mode uses one persistent reasoning loop with the full configured tool set.
+
 | Agent | Routes when |
 |---|---|
 | CalibrationAgent | calibrate, CeO2, beam center, Lsd, detector distance |
 | AnalysisAgent | integrate, HEDM, grain, GSAS-II, refine, workflow (default) |
 | KnowledgeAgent | explain, what is, literature, best practice |
 | VisualizationAgent | plot, visualize, lineout, caked, heatmap, show |
+| MotorAgent | motor, move, position, EPICS commands |
 
 ### MCP Servers (`servers.config`)
 | Server | File | Tools |
 |---|---|---|
-| core | `beamline_core_server.py` | 11 tools: file ops, document reading, local + remote (SSH) shell commands, X-ray calculations |
-| midas | `midas_comprehensive_server.py` | 55 tools: FF/NF/PF-HEDM, calibration, single + **series/batch** integration, GSAS-II refinement, CIF fetcher, visualization, validation, stress, **data-driven workflow recommendation**, and the **8 new v0.1.0 capability packages** (PDF/G(r), defect analysis, grain-ODF, DFXM/XAF/2D forward models, pf-ODF, pink-beam) |
+| core | `beamline_core_server.py` | 13 tools: file ops, document reading, local + remote (SSH) shell commands, X-ray calculations |
+| midas | `midas_comprehensive_server.py` | 60 tools: FF/NF/PF-HEDM, calibration, integration, TIFF background combining, powder refinement, series contours and peak trajectories, visualization, validation, stress, reports and capability adapters |
 | motor | `epics_motor_server.py` | 13 tools: EPICS motor control (read/move/jog/limits) |
-| gsas2 | `gsas2_server.py` | 5 tools: autonomous Rietveld refinement of any powder pattern, COD structure retrieval with M₂₀ ranking, in-situ series (submit/poll), per-result trust verdict |
+| gsas2 | `gsas2_server.py` | 26 tools: tutorial workbench, native operations, pattern/batch refinement, policy optimization, candidate search, evidence, versioned sessions and bounded improvement loops |
+| tomo | `tomo_server.py` | 2 tools: tomography stack pre-flight and TomoPy reconstruction, when a compatible native environment is configured |
+
+These are source-declared tool counts from the active `servers.config`; they do not
+mean each optional engine or external dependency is installed and ready.
 
 ### Agent Skills (`.agents/skills/`)
-Canonical MIDAS workflow reference — correct v11 flags, scripts, output files:
+Workflow skills describe supported procedures and boundaries; engine readiness is host-specific:
 - `midas-validate` — parameter-file / dataset validation (run first)
 - `midas-calibrate` — the canonical four-stage recipe (`calibration_engine="auto"`), with the native / pip-console / legacy engines as fallbacks
 - `midas-integrate` — single (`midas_integrate_2d_to_1d`), **series** (`midas_integrate_series`, many files, one call, per-frame darks), and GPU-streaming integration
 - `midas-hedm` / `midas-ff-hedm` — FF/NF/PF-HEDM full pipeline
 - `midas-gsasii` — GSAS-II refinement, live analysis pipeline, CIF fetcher
-- `gsas2-agentic` — autonomous Rietveld on **any** powder pattern (not MIDAS caked output): the agent picks its own parameter order, can retrieve its own starting structure, and returns a trust verdict
+- `gsas2-agentic` — agentic powder refinement with independent, sequential, joint and search jobs; results distinguish execution from scientific qualification
+- `tomo-reconstruct` — TomoPy stack pre-flight and reconstruction; requires a configured native tomography environment
 - `midas-visualize` — MIDAS viewer scripts for lineouts, caked, grains, 3D spots/PF
 - `midas-mask` — build a MIDAS `MaskFile` (uint8 TIFF, 1 = masked) from dead/hot pixels, sentinels, module gaps
 - `midas-ffpipeline` — **deprecated**; use `midas-ff-hedm`
 
 ### Which GSAS-II path to use
-Two tools wrap GSAS-II and neither supersedes the other — pick by where the
-data came from:
+Two powder paths serve different data/workflow needs:
 
-| | `midas:run_gsas_refinement` | `gsas2:refine_pattern` |
+| | `midas:run_gsas_refinement` | `gsas2:powder_refine_submit` |
 |---|---|---|
-| Input | MIDAS caked `.zarr.zip` | any powder pattern (`.xye`, `.fxye`, GSAS native) |
+| Input | MIDAS caked `.zarr.zip` / `.MIDAS.zip`; `.xy`/`.xye` use its GSAS-II path | powder patterns supported by the configured GSAS-II interpreter |
 | Starting model | you supply CIFs | supply CIFs, **or** retrieve them from COD |
-| Strategy | fixed recipe | derivative-driven; chooses its own parameter order |
-| Returns | R<sub>wp</sub>, cell | + phase fractions, trust verdict, decision trace |
-| Scope | one pattern | one pattern, or a sequential in-situ series |
+| Strategy | staged MIDAS refinement; optional MAUD backend for caked archives | independent, sequential, joint or bounded phase-search jobs |
+| Returns | fit summary and cell; optional MAUD cross-validation | phase fractions, qualification, evidence and decision trace |
+| Scope | one observation per call | single patterns, batches and sequential/live series |
 
-The `gsas2` server needs the GSAS-II conda env and the Agentic-GSAS-II
+The optional MAUD path needs MAUD, MILK and a JDK; the `gsas2` server needs the GSAS-II conda env and the Agentic-GSAS-II
 repository; set `APEXA_GSASII_PYTHON` and `APEXA_AGENTIC_GSAS2` if they are not
 at their defaults. It runs refinements in a subprocess, so a GSAS-II abort does
 not take the agent down, and pins BLAS threads to 1 per job — an unpinned
 refinement opens a thread pool per worker and will swamp a beamline host.
+
+See the [powder refinement guide](docs/powder-refinement.md) and
+[current demo](DEMO_gsas2_agentic.md) for batch/live submission, evidence and
+shadow trials. The current engine emits blocked or provisional scientific
+statuses; completion alone does not qualify a result. The guide includes the
+manuscript's versioned benchmark scope and architecture figure.
+
+The [GSAS-II canvas workbench](docs/gsas2-workbench.md) covers tutorial discovery,
+native operations, policy sweeps and versioned refinement continuation.
 
 ### Compute dispatch (`docs/COMPUTE_DISPATCH.md`)
 APEXA tiers work to **local CPU / local GPU / remote GPU endpoint** by task size and
@@ -284,12 +303,22 @@ to `MIDAS_PATH` — a clone, required only by the legacy C++ / AutoCalibrateZarr
 
 ## Documentation
 
+- **[Canvas workspace](docs/CANVAS_WORKSPACE.md)** — Tabs, comparison, Classic light, and how to load updates
+- **[Repository layout](docs/REPOSITORY_LAYOUT.md)** — Source locations and preserved local outputs
+
 - **[USER_MANUAL.md](USER_MANUAL.md)** — Complete guide with examples
 - **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** — Command cheat sheet
 - **[WEB_UI_GUIDE.md](WEB_UI_GUIDE.md)** — Browser-based interface
 - **[GRADIO_UI_GUIDE.md](GRADIO_UI_GUIDE.md)** — Gradio chat interface
+- **[Diffraction software survey](docs/diffraction-software-survey.md)** — Native engines, optional paths, and external-tool boundaries
+- **[Shared sessions](docs/SESSIONS.md)** — Resume conversations and canvas state between the Web UI and CLI
+- **[Tomography setup](docs/TOMO_SETUP.md)** — Configure the optional native TomoPy runtime
+- **[Active tool inventory](docs/analysis-tool-inventory.json)** — Source registrations in `servers.config`; not a runtime-readiness report
+- **[Phase-transformation dynamics workflow](docs/phase-transformation-dynamics.md)** — Integrate and inspect ordered diffraction series, map scan axes, track features and review phase refinements
 - **[docs/development/architecture.md](docs/development/architecture.md)** — Developer architecture
 - **[.agents/skills/](.agents/skills/)** — MIDAS workflow reference (Agent Skills)
+
+To browse the searchable documentation site, run `./serve_docs.sh`.
 
 ---
 

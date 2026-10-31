@@ -2,21 +2,25 @@
 
 ## Overview
 
-The Beamline Assistant uses a modular architecture where analysis tools are provided by independent MCP (Model Context Protocol) servers. This guide explains how to add new analysis tools like GSAS-II, MAUD, PyFAI, DIOPTAS, etc.
+APEXA loads active MCP servers from `servers.config`. This guide explains the
+server interface and how to add an adapter. The root-level files named there are
+the active integrations; `servers/` contains examples and optional check servers,
+not a list of everything APEXA currently runs. For diffraction-tool status, see
+[`../diffraction-software-survey.md`](../diffraction-software-survey.md).
 
 ## Architecture
 
 ```
-Beamline Assistant
-├── argo_mcp_client.py (AI client)
-├── servers.config (server configuration)
-└── servers/
-    ├── midas_comprehensive_server.py (MIDAS - HEDM)
-    ├── gsas2_server.py (GSAS-II - Rietveld)
-    ├── maud_server.py (MAUD - Texture)
-    ├── pyfai_server.py (PyFAI - Integration)
-    ├── filesystem_server.py (File operations)
-    └── command_executor_server.py (Commands)
+APEXA root-level active servers (from servers.config)
+├── beamline_core_server.py
+├── midas_comprehensive_server.py
+├── gsas2_server.py
+├── tomo_server.py
+└── epics_motor_server.py
+
+servers/ (examples/optional checks; not all enabled)
+├── gsas2_server.py
+└── maud_server.py  # installation check only; disabled unless added to servers.config
 ```
 
 ## Quick Start
@@ -322,7 +326,7 @@ This keeps stdout clean for MCP protocol.
 
 ### Example 1: GSAS-II Server
 
-See [servers/gsas2_server.py](servers/gsas2_server.py) for a complete example with:
+See [servers/gsas2_server.py](../../servers/gsas2_server.py) for a legacy server example with:
 - Installation detection
 - Multiple tools
 - Proper error handling
@@ -330,11 +334,13 @@ See [servers/gsas2_server.py](servers/gsas2_server.py) for a complete example wi
 
 ### Example 2: MAUD Server
 
-See [servers/maud_server.py](servers/maud_server.py) for texture analysis example.
+See [servers/maud_server.py](../../servers/maud_server.py) for an optional MAUD
+installation check. Refinement uses the limited MIDAS `run_gsas_refinement`
+backend; this check server does not run MAUD refinements.
 
 ### Example 3: MIDAS Server
 
-See [midas_comprehensive_server.py](midas_comprehensive_server.py) for a full-featured server with:
+See [midas_comprehensive_server.py](../../midas_comprehensive_server.py) for the active MIDAS server with:
 - 20+ tools
 - Complex workflows
 - Python API integration
@@ -654,9 +660,9 @@ Or use `default=str` in format_result.
 
 - [FastMCP Documentation](https://github.com/jlowin/fastmcp)
 - [Model Context Protocol Spec](https://modelcontextprotocol.io/)
-- [MIDAS Server Example](midas_comprehensive_server.py)
-- [GSAS-II Server Template](servers/gsas2_server.py)
-- [MAUD Server Template](servers/maud_server.py)
+- [MIDAS Server](../../midas_comprehensive_server.py)
+- [Legacy GSAS-II Server Example](../../servers/gsas2_server.py)
+- [Optional MAUD Installation Check](../../servers/maud_server.py)
 
 ## Contributing
 

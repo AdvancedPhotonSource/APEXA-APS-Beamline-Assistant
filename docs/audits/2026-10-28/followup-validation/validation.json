@@ -1,0 +1,167 @@
+{
+  "recorded_at": "2026-10-30T12:16:49.578071-05:00",
+  "platform": "macOS-15.8.1-arm64-arm-64bit-Mach-O",
+  "versions": {
+    "python": "Python 3.13.7",
+    "node": "v25.8.2",
+    "uv": "uv 0.13.1 (62faed335 2026-10-13 aarch64-apple-darwin)"
+  },
+  "base_commit": "da288b29d1101a43a184670cd957affb288d9c34",
+  "scope": "Local source validation in an already dirty working tree; no deployment, numerical reference qualification, model benchmarking or hardware operation.",
+  "python": {
+    "command": "APEXA_NETWORK=data APEXA_OFFLINE=1 APEXA_TRACE_DB=/tmp/apexa-final-20261030/traces.sqlite3 APEXA_RESOURCE_DB=/tmp/apexa-final-20261030/resources.sqlite3 APEXA_RUN_DIR=/tmp/apexa-final-20261030/runs APEXA_WORKFLOW_DIR=/tmp/apexa-final-20261030/workflows .venv/bin/python -m pytest tests/ -q -r s",
+    "passed": 963,
+    "skipped": 1,
+    "warnings": 3,
+    "duration_seconds": 26.8,
+    "exit_code": 0,
+    "skip_reason": "midas_calibrate_v2 is not installed",
+    "log": "pytest.txt"
+  },
+  "frontend": {
+    "working_directory": "frontend",
+    "tests": {
+      "command": "node --test tests/*.test.mjs",
+      "passed": 67,
+      "failed": 0,
+      "exit_code": 0,
+      "log": "frontend-tests.txt"
+    },
+    "typescript": {
+      "command": "./node_modules/.bin/tsc -b --noEmit",
+      "exit_code": 0,
+      "log": "typescript.txt"
+    },
+    "eslint": {
+      "command": "./node_modules/.bin/eslint .",
+      "exit_code": 0,
+      "log": "eslint.txt"
+    },
+    "build": {
+      "command": "./node_modules/.bin/vite build --outDir /tmp/apexa-fixes-20261028/frontend-workflow-build --emptyOutDir",
+      "exit_code": 0,
+      "log": "vite.txt",
+      "production_dist_updated": false
+    },
+    "browser": {
+      "command": "APEXA_PLAYWRIGHT_MODULE=/tmp/apexa-fixes-20261028/browser-tools/node_modules/playwright/index.mjs APEXA_CHROME='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' node tests/browser-workflows.mjs",
+      "fixture_server": "./node_modules/.bin/vite --host 127.0.0.1 --port 5179 --strictPort",
+      "passed_checks": 10,
+      "exit_code": 0,
+      "chrome": "156.0.8078.74",
+      "playwright": "1.64.1",
+      "log": "browser-workflows.json",
+      "scope": "Synthetic intercepted API responses in real Chrome; no deployed end-to-end latency claim."
+    }
+  },
+  "lockfile": {
+    "command": "uv lock --check --offline",
+    "exit_code": 0,
+    "log": "lockfile.txt"
+  },
+  "whitespace": {
+    "exit_code": 0,
+    "log": "whitespace.txt",
+    "scope": "Tracked diffs in source-sha256.json plus listed untracked files absent from follow-up source baseline.",
+    "new_files_checked": [
+      "apexa_alignment_runtime.py",
+      "apexa_dataset.py",
+      "apexa_jobs.py",
+      "apexa_knowledge_policy.py",
+      "apexa_knowledge_service.py",
+      "apexa_mcp.py",
+      "apexa_observability.py",
+      "apexa_resource_leases.py",
+      "apexa_runtime_api.py",
+      "apexa_workflow_api.py",
+      "apexa_workflow_client.py",
+      "apexa_workflow_graph.py",
+      "apexa_workflow_recipes.py",
+      "docs/ACQUISITION_RUNTIME.md",
+      "docs/ALIGNMENT_RUNTIME.md",
+      "docs/COMPUTE_RESERVATIONS.md",
+      "docs/FRONTEND_PERFORMANCE.md",
+      "docs/OPERATIONS_AND_RETRIEVAL.md",
+      "docs/SCIENTIFIC_WORKFLOWS.md",
+      "docs/WEB_RUNTIME_POLICY.md",
+      "docs/audits/2026-10-28/ADDITIONAL_FIXES.md",
+      "docs/audits/2026-10-28/FIXES.md",
+      "docs/audits/2026-10-28/README.md",
+      "docs/audits/2026-10-28/followup-validation/README.md",
+      "docs/development/quality-gates.md",
+      "frontend/src/api/workflows.ts",
+      "frontend/src/components/workflows/ActiveWorkflows.tsx",
+      "frontend/src/components/workflows/WorkflowRunCard.tsx",
+      "frontend/src/lib/boundedPreview.ts",
+      "frontend/src/lib/browserSessionCache.ts",
+      "frontend/src/lib/workflowSession.ts",
+      "frontend/tests/bounded-preview.test.mjs",
+      "frontend/tests/browser-fixture.html",
+      "frontend/tests/browser-fixture.jsx",
+      "frontend/tests/browser-performance.mjs",
+      "frontend/tests/browser-workflows.mjs",
+      "frontend/tests/file-store.test.mjs",
+      "frontend/tests/workflow-api.test.mjs",
+      "frontend/tests/workflow-fixture.mjs",
+      "frontend/tests/workflow-session.test.mjs",
+      "knowledge_base/lifecycle.py",
+      "scripts/runtime_readiness.py",
+      "tests/test_acquisition_runtime.py",
+      "tests/test_alignment_runtime.py",
+      "tests/test_index_atomicity.py",
+      "tests/test_knowledge_policy.py",
+      "tests/test_knowledge_service.py",
+      "tests/test_observability.py",
+      "tests/test_resource_registry.py",
+      "tests/test_retrieval_lifecycle.py",
+      "tests/test_subprocess_cleanup.py",
+      "tests/test_workflow_graph_runtime.py",
+      "tests/test_workflow_interfaces.py",
+      "tests/test_workflow_recipes.py"
+    ]
+  },
+  "documentation_links": {
+    "documents": [
+      "docs/ACQUISITION_RUNTIME.md",
+      "docs/ALIGNMENT_RUNTIME.md",
+      "docs/COMPUTE_RESERVATIONS.md",
+      "docs/FRONTEND_PERFORMANCE.md",
+      "docs/OPERATIONS_AND_RETRIEVAL.md",
+      "docs/SCIENTIFIC_WORKFLOWS.md",
+      "docs/WEB_RUNTIME_POLICY.md",
+      "docs/LANGGRAPH_FF_HEDM_SPEC.md",
+      "docs/development/quality-gates.md",
+      "docs/audits/2026-10-28/ADDITIONAL_FIXES.md",
+      "docs/audits/2026-10-28/README.md",
+      "docs/audits/2026-10-28/FIXES.md",
+      "docs/audits/2026-10-28/followup-validation/README.md"
+    ],
+    "log": "documentation-links.txt",
+    "checked": 49,
+    "exit_code": 0
+  },
+  "runtime_inventory": {
+    "command": ".venv/bin/python scripts/runtime_readiness.py --output docs/audits/2026-10-28/followup-validation/runtime-inventory.json",
+    "exit_code": 0,
+    "log": "runtime-inventory.json"
+  },
+  "not_validated": [
+    "Hosted Linux CI and Node24 compatibility",
+    "Native MIDAS/GSAS-II/TomoPy numerical reference truth",
+    "GPU speedup or numerical equivalence",
+    "Hardware/interlock commissioning",
+    "Real remote-job cancellation/reconciliation",
+    "Multi-user isolation or concurrent multi-session scientific execution",
+    "Held-out harness comparison or scientific superiority",
+    "Live Nomic embedding equivalence and reindexing",
+    "Deployed end-to-end performance"
+  ],
+  "operational_state": {
+    "service_restarted": false,
+    "production_frontend_replaced": false,
+    "deployment_settings_changed": false,
+    "hardware_actions": false,
+    "remote_scientific_jobs": false,
+    "paid_model_calls": false
+  }
+}

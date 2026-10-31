@@ -1,0 +1,23 @@
+vite v8.0.3 building client environment for production...
+[2Ktransforming...✓ 355 modules transformed.
+rendering chunks...
+computing gzip size...
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/index.html                             0.63 kB │ gzip:     0.35 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/index-BbnT2zh_.css             61.31 kB │ gzip:    11.62 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/vizStore-Df-8Mfao.js            3.98 kB │ gzip:     1.50 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/MotorDashboard-CqjsK5Cn.js      4.37 kB │ gzip:     1.37 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/ChatHistory-C6U2to8V.js         4.43 kB │ gzip:     1.68 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/FileBrowser-d29V_FDL.js         6.24 kB │ gzip:     2.27 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/react-CYzKIDNi.js               8.15 kB │ gzip:     3.15 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/ResultsPanel-nn-0GUz-.js        9.84 kB │ gzip:     3.46 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/ReportView-B7NWRwnj.js         10.21 kB │ gzip:     2.90 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/WorkflowPanel-DEM5zrlm.js      15.60 kB │ gzip:     5.01 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/index-CVKr8U1u.js             617.29 kB │ gzip:   183.13 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-workflow-build/assets/plotly-FOJmNRZ_.js          4,610.63 kB │ gzip: 1,386.82 kB
+
+✓ built in 1.58s
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.

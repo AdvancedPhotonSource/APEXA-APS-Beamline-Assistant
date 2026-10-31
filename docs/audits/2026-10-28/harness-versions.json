@@ -1,0 +1,29 @@
+[
+  {
+    "name": "pi",
+    "executable": "/opt/homebrew/bin/pi",
+    "resolved": "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+    "sha256_executable": "e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774",
+    "returncode": 0,
+    "stdout": "1.2.0",
+    "stderr": ""
+  },
+  {
+    "name": "claude",
+    "executable": "/opt/homebrew/bin/claude",
+    "resolved": "/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
+    "sha256_executable": "6b5ec691195e551b02c41df9f7d723f4ea61eaa03c2df90acefe3736f1aeb620",
+    "returncode": 0,
+    "stdout": "2.1.312 (Claude Code)",
+    "stderr": ""
+  },
+  {
+    "name": "opencode",
+    "executable": "/opt/homebrew/bin/opencode",
+    "resolved": "/opt/homebrew/lib/node_modules/opencode-ai/bin/opencode.exe",
+    "sha256_executable": "f7c45939a895e5a9febf141ab16307418bc41da31879aa0b2e65223190ca1c1a",
+    "returncode": 0,
+    "stdout": "1.18.23",
+    "stderr": ""
+  }
+]

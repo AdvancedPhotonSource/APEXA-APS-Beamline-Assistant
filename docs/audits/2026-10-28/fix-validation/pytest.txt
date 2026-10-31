@@ -1,0 +1,25 @@
+........................................................................ [  9%]
+....................s................................................... [ 19%]
+........................................................................ [ 28%]
+........................................................................ [ 38%]
+........................................................................ [ 48%]
+........................................................................ [ 57%]
+........................................................................ [ 67%]
+........................................................................ [ 77%]
+........................................................................ [ 86%]
+........................................................................ [ 96%]
+...........................                                              [100%]
+=============================== warnings summary ===============================
+tests/test_model_policy.py::test_the_indexer_refuses_a_blocked_embedder
+  /Users/b324240/Git/beamline-assistant-dev/.venv/lib/python3.13/site-packages/PyPDF2/__init__.py:21: DeprecationWarning: PyPDF2 is deprecated. Please move to the pypdf library instead.
+    warnings.warn(
+
+tests/test_tomo_execution_contract.py::test_phase_retrieval_operates_on_transmission_before_log
+tests/test_tomo_execution_contract.py::test_unselected_center_sweep_is_provisional
+  /Users/b324240/Git/beamline-assistant-dev/.venv/lib/python3.13/site-packages/tifffile/tifffile.py:1536: DeprecationWarning: <tifffile.TiffWriter.write> data with shape (3, 3, 3) and dtype 'float32' are stored as RGB with contiguous samples. Future versions will store such data as MINISBLACK in separate pages by default, unless the 'photometric' parameter is specified.
+    return tif.write(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_calibration_engine.py:220: could not import 'midas_calibrate_v2': No module named 'midas_calibrate_v2'
+746 passed, 1 skipped, 3 warnings in 22.06s

@@ -1,6 +1,6 @@
 {
-  "review_date": "2026-10-14",
-  "scope": "Source registration inventory; does not establish executor availability or scientific validation",
+  "review_date": "2026-10-15",
+  "scope": "Active servers in servers.config and their @mcp.tool definitions; does not establish executor availability or scientific validation",
   "servers": {
     "beamline_core_server.py": [
       "open_science_view",
@@ -38,8 +38,10 @@
       "get_midas_workflow_status",
       "midas_integrate_2d_to_1d",
       "midas_integrate_series",
+      "combine_detector_backgrounds",
       "compare_integrated_series",
       "midas_auto_calibrate",
+      "midas_calibrate_series",
       "midas_batch_integrate",
       "query_hedm_knowledge",
       "get_bibtex",
@@ -47,6 +49,7 @@
       "get_typical_hedm_parameters",
       "estimate_parameters_from_image",
       "plot_lineout_series_contour",
+      "track_diffraction_peak_series",
       "run_midas_viewer",
       "generate_run_report",
       "generate_ff_reconstruction_report",
@@ -82,7 +85,31 @@
       "plan_refinement",
       "assess_refinement",
       "refine_series_submit",
-      "refinement_status"
+      "refinement_status",
+      "powder_refine_submit",
+      "powder_job_control",
+      "powder_report",
+      "powder_trial",
+      "powder_evidence",
+      "powder_advise",
+      "powder_session_create",
+      "powder_session_status",
+      "powder_session_evidence",
+      "powder_adopt",
+      "powder_improve",
+      "powder_session_control",
+      "gsas2_tutorials",
+      "gsas2_capabilities",
+      "gsas2_workflow_submit",
+      "gsas2_workflow_status",
+      "gsas2_workflow_cancel",
+      "powder_strategy_sweep_submit",
+      "powder_compare",
+      "powder_live_ingest"
+    ],
+    "tomo_server.py": [
+      "survey_tomo_stack",
+      "run_tomo_reconstruction"
     ],
     "epics_motor_server.py": [
       "get_motor_position",
@@ -99,5 +126,6 @@
       "list_motors",
       "home_motor"
     ]
-  }
+  },
+  "gsas2_review_date": "2026-10-21"
 }

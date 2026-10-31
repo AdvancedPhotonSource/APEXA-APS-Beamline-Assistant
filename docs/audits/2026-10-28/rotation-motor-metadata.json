@@ -1,0 +1,1172 @@
+[
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000261.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.931556783536305,
+      "max": 9.063524517276191,
+      "first": -10.931556783536305,
+      "last": 9.063524517276191
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": 169.0,
+      "max": 169.0,
+      "first": 169.0,
+      "last": 169.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 190.0,
+      "max": 190.0,
+      "first": 190.0,
+      "last": 190.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000262.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.919462652438744,
+      "max": 9.063523246950988,
+      "first": -10.919462652438744,
+      "last": 9.063523246950988
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000263.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.925487169715167,
+      "max": 7.068447662601445,
+      "first": -10.925487169715167,
+      "last": 7.068447662601445
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000264.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -11.01549733231679,
+      "max": 9.066430386178629,
+      "first": -11.01549733231679,
+      "last": 9.066430386178629
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000265.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.922519054877768,
+      "max": 9.06947789634123,
+      "first": -10.922519054877768,
+      "last": 9.06947789634123
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000266.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.922519054877768,
+      "max": 9.057484120934728,
+      "first": -10.922519054877768,
+      "last": 9.057484120934728
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000267.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.92548462906476,
+      "max": 9.072499999999767,
+      "first": -10.92548462906476,
+      "last": 9.072499999999767
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000268.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.925485899389964,
+      "max": 9.057486661585134,
+      "first": -10.925485899389964,
+      "last": 9.057486661585134
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000269.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.928524517276141,
+      "max": 9.063527057926597,
+      "first": -10.928524517276141,
+      "last": 9.063527057926597
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000270.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.925483358739557,
+      "max": 9.066432926829036,
+      "first": -10.925483358739557,
+      "last": 9.066432926829036
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000271.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.925485899389964,
+      "max": 9.060541793698954,
+      "first": -10.925485899389964,
+      "last": 9.060541793698954
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000272.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.925485264227362,
+      "max": 7.056474212398193,
+      "first": -10.925485264227362,
+      "last": 7.056474212398193
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000273.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.919462652438744,
+      "max": 9.01854738312985,
+      "first": -10.919462652438744,
+      "last": 9.01854738312985
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000274.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.92252032520297,
+      "max": 9.075498602642043,
+      "first": -10.92252032520297,
+      "last": 9.075498602642043
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000275.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.925487169715167,
+      "max": 9.069478531503833,
+      "first": -10.925487169715167,
+      "last": 9.069478531503833
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000276.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.925483993902159,
+      "max": 9.078548653455051,
+      "first": -10.925483993902159,
+      "last": 9.078548653455051
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000277.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -11.132567962398088,
+      "max": 9.057484120934728,
+      "first": -11.132567962398088,
+      "last": 9.057484120934728
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000278.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -11.999047891259854,
+      "max": 8.853525152438797,
+      "first": -11.999047891259854,
+      "last": 8.853525152438797
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000279.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.94648882113793,
+      "max": 7.191485010162417,
+      "first": -10.94648882113793,
+      "last": 7.191485010162417
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000280.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.925485899389964,
+      "max": 9.057484120934728,
+      "first": -10.925485899389964,
+      "last": 9.057484120934728
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000281.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.925485264227362,
+      "max": 9.06643102134123,
+      "first": -10.925485264227362,
+      "last": 9.06643102134123
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000282.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.922520960365572,
+      "max": 9.066433561991637,
+      "first": -10.922520960365572,
+      "last": 9.066433561991637
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000283.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.919463922763947,
+      "max": 8.940538617885949,
+      "first": -10.919463922763947,
+      "last": 8.940538617885949
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000284.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.919463287601346,
+      "max": 9.06053988821115,
+      "first": -10.919463287601346,
+      "last": 9.06053988821115
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000285.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.973579141259881,
+      "max": 7.935501778455081,
+      "first": -10.973579141259881,
+      "last": 7.935501778455081
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000286.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.92548462906476,
+      "max": 9.078548653455051,
+      "first": -10.92548462906476,
+      "last": 9.078548653455051
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000287.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.934545223576954,
+      "max": 9.066432926829036,
+      "first": -10.934545223576954,
+      "last": 9.066432926829036
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000288.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -11.348535315040358,
+      "max": 9.084513465446921,
+      "first": -11.348535315040358,
+      "last": 9.084513465446921
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000289.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.919465828251752,
+      "max": 9.063521976625784,
+      "first": -10.919465828251752,
+      "last": 9.063521976625784
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  },
+  {
+    "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000290.vrx.h5",
+    "WM/AeroX": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "WM/AeroXDail": {
+      "min": 0.31020000000000003,
+      "max": 0.31020000000000003,
+      "first": 0.31020000000000003,
+      "last": 0.31020000000000003
+    },
+    "measurement/instrument/SMS/aero": {
+      "min": -10.925482723576955,
+      "max": 9.063527693089199,
+      "first": -10.925482723576955,
+      "last": 9.063527693089199
+    },
+    "measurement/process/scan_parameters/start": {
+      "min": -11.0,
+      "max": -11.0,
+      "first": -11.0,
+      "last": -11.0
+    },
+    "measurement/process/scan_parameters/end": {
+      "min": 10.0,
+      "max": 10.0,
+      "first": 10.0,
+      "last": 10.0
+    },
+    "measurement/instrument/Detector/detY": {
+      "min": 900.0000000000034,
+      "max": 900.0000000000034,
+      "first": 900.0000000000034,
+      "last": 900.0000000000034
+    }
+  }
+]

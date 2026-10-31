@@ -1,5 +1,13 @@
 # APEXA product and end-to-end audit
 
+## Implementation update — 2026-10-15
+
+Since this audit, APEXA has added a powder-refinement canvas and registered a
+TomoPy-backed tomography server. The tomography tools have a real execution path
+when `APEXA_TOMO_PYTHON` is configured, but registration does not establish
+facility commissioning. The remaining technique gaps below still need their own
+ingestion, reduction and analysis adapters.
+
 Reviewed 2026-10-14 against the current working tree in
 `~/Git/beamline-assistant-dev`, with the earlier MIDAS implementation review in
 [WEBUI_REVIEW.md](WEBUI_REVIEW.md). This is a software and product audit, not APS
@@ -159,7 +167,8 @@ change the inputs of a later reconstruction or refinement.
 | Grain stress / slip | Reference d0, stiffness and units, crystal/sample/load frames, strain convention, grain masks, loading axis | Stress tensors, resolved shear/Schmid quantities where supported, quality filters, propagated uncertainty and reference checks |
 | Texture / defects | Symmetry, orientation convention, grain weights, angular/grid resolution; q-space voxel data, grain/reference identity for defect analysis | Numerical executor outputs and quality limits; verify staged capability modules before presenting Run |
 | DFXM / coherent 2D / pink beam | Technique-specific data and instrument models, plus actual adapter readiness | Current APEXA wrappers have simulation/input-only/deferred boundaries. Put these in an explicitly labelled advanced/experimental area |
-| Other beamline methods | Explicit method identification and installed ingestion/reduction/analysis adapter | Add tomography, CDI/ptychography, SAXS, XAS/XAFS or other techniques only after verifying their real execution paths. MIDAS `XAF` here means cross-axis faceted HEDM, not X-ray absorption analysis |
+| Tomography | TomoPy stack pre-flight and reconstruction adapter with a configured native environment | Registered through `tomo_server.py`; beamline-specific data, geometry and reference validation still require commissioning |
+| Other beamline methods | Explicit method identification and installed ingestion/reduction/analysis adapter | CDI/ptychography, SAXS, XAS/XAFS and other methods still need verified execution paths. MIDAS `XAF` here means cross-axis faceted HEDM, not X-ray absorption analysis |
 
 There should be a beamline profile for each commissioned instrument at APS.
 Profiles must supply measured units, detector orientation and conventions,

@@ -2,7 +2,7 @@
 
 ## Overview
 
-APEXA uses a **multi-agent orchestration** architecture (Phase 2) where natural language queries are routed to specialist agents that call tools on MCP servers.
+APEXA's default `APEXA_AGENT_MODE=single` uses one persistent reasoning loop with the full configured tool set. `APEXA_AGENT_MODE=legacy` enables the older keyword-routed specialist agents. Both modes execute registered MCP tools through `argo_mcp_client.py`.
 
 ## System Diagram
 
@@ -13,24 +13,19 @@ User (CLI / Gradio / Web UI)
     (GPT-4o, Claude, Gemini)
          |
     OrchestratorAgent
-    (keyword-score routing)
+    (single loop by default)
          |
-    +----------------+----------+-----------+----------------+
-    | Calibration    | Analysis | Knowledge | Visualization  |
-    | Agent (0.3)    | Agent    | Agent     | Agent (0.3)    |
-    |                | (0.5)    | (0.6)     |                |
-    +-------+--------+----+-----+-----+-----+-------+--------+
-            |              |           |             |
-            +--------------+-----------+    MIDAS viewer scripts
-                           |                (launched via run_command)
-                +----------+----------+
-                |   core server       |
-                |   (9 tools)         |
-                +---------------------+
-                |   midas server      |
-                |   (37 tools)        |
-                +---------------------+
+    MCP tool registry
+         |
+    +----------+----------+----------+----------+----------+
+    | core     | midas    | gsas2    | tomo     | motor    |
+    | 13 tools | 60 tools | 13 tools | 2 tools  | 13 tools |
+    +----------+----------+----------+----------+----------+
 ```
+
+Counts reflect `@mcp.tool` definitions in the active `servers.config` on
+2026-10-15. They do not establish that optional engine dependencies or hardware
+are installed and ready.
 
 ## Entry Points
 
@@ -49,7 +44,10 @@ All three call `run_query()` as the single entry point.
 | `apexa_agents.py` | Agent definitions, ArgoProvider, AgentRunner, OrchestratorAgent |
 | `argo_mcp_client.py` | MCP client, tool registry, CLI session loop |
 | `beamline_core_server.py` | Core MCP server: file ops, shell commands, X-ray calculations |
-| `midas_comprehensive_server.py` | MIDAS MCP server: 38 tools for HEDM workflows, validation, stress analysis, PyTorch v11 pipeline |
+| `midas_comprehensive_server.py` | MIDAS MCP server: HEDM, calibration, integration, powder, validation and materials-analysis tools |
+| `gsas2_server.py` | Agentic-GSAS-II powder refinement jobs, reports and evidence tools |
+| `tomo_server.py` | TomoPy stack inspection and reconstruction tools; needs a configured native environment |
+| `epics_motor_server.py` | EPICS motor control tools; needs Channel Access utilities and a reachable IOC |
 | `apexa_lib.py` | Reusable primitives for debug/test/analysis scripts: robust image/dark loading (`load_image` picks the detector dataset `/exchange/data`, never 1-D metadata), MIDAS param read/write + `compare_geometry`, lineout & outcome-manifest readers. Import this instead of hand-rolling I/O. |
 | `servers.config` | Server configuration (`name:script_path` pairs) |
 | `.agents/skills/` | Agent Skills: canonical MIDAS workflow reference |
@@ -60,11 +58,10 @@ All three call `run_query()` as the single entry point.
 Single class for all Argo Gateway HTTP calls. Handles PROD vs DEV endpoint selection based on model name.
 
 ### AgentRunner
-Dual-mode tool calling:
-1. **Text-based parsing** (primary) -- model outputs `TOOL_CALL: name` / `ARGUMENTS: {json}`, regex extracts and executes
-2. **Native API tool_calls** (fallback, rarely used)
-
-Text-based mode is primary because the Argo Gateway returns `{"response": "text"}` -- it strips native tool_calls from model responses.
+Normalizes provider responses and supports native structured `tool_calls` as
+well as the textual `TOOL_CALL:` / `ARGUMENTS:` fallback. The response format
+depends on the configured provider/model and gateway behavior; do not assume the
+gateway always strips native calls.
 
 **Execution-integrity guards** (both agent modes) stop the model from reporting work it did not do:
 - *Anti-confabulation* -- a final answer containing broken tool-call syntax (no parsed call) is forced to retry, then fails honestly rather than confabulating results.
@@ -73,47 +70,53 @@ Text-based mode is primary because the Argo Gateway returns `{"response": "text"
 - *Verify-before-report* -- integration/calibration tools return only outputs found on disk and write an `APEXA_*.json` manifest; an exit-0 with no lineout is reported `incomplete`, never a fabricated path.
 
 ### OrchestratorAgent
-Keyword-score routing to specialist agents:
-
-| Agent | Keywords | Temperature |
-|---|---|---|
-| CalibrationAgent | calibrat, ceo2, beam center, lsd, validate param, diagnose | 0.3 |
-| AnalysisAgent | integrat, hedm, grain, gsas, stress, von mises, schmid, d0 (default fallback) | 0.5 |
-| KnowledgeAgent | explain, what is, literature, best practice | 0.6 |
-| VisualizationAgent | plot, visualiz, view, show, lineout, caked, heatmap | 0.3 |
-| MotorAgent | motor, move, position, caget, caput, epics | 0.2 |
+The default single mode keeps one full-fidelity transcript and lets the model
+select from the configured tool registry. Set `APEXA_AGENT_MODE=legacy` to use
+the older keyword-score routes for calibration, analysis, knowledge,
+visualization and motor tasks.
 
 ### _TOOL_PREAMBLE
-System prompt injected into every agent call. Instructs the model to use `TOOL_CALL:` / `ARGUMENTS:` text format. Without this, the model generates text instead of calling tools.
+Text-protocol instructions used when the provider needs the `TOOL_CALL:` /
+`ARGUMENTS:` fallback. Native structured tool calls are also supported.
 
 ## MCP Servers
 
-### Core Server (`beamline_core_server.py`) -- 9 tools
-`list_directory`, `read_file`, `write_file`, `get_file_info`, `run_command`,
-`check_environment`, `xray_calculate`, `validate_beamline_parameters`, `list_common_calibrants`
+The active server list and tool schemas come from `servers.config` and each
+server's `@mcp.tool` definitions. The current source inventory is summarized in
+[`analysis-tool-inventory.json`](../analysis-tool-inventory.json). In brief:
 
-### MIDAS Server (`midas_comprehensive_server.py`) -- 38 tools
+| Server | Scope | Readiness boundary |
+|---|---|---|
+| `core` | Files, environment, commands and X-ray calculations | Remote commands depend on configured SSH access and permitted hosts |
+| `midas` | HEDM, detector calibration/integration and materials analysis | MIDAS build, data formats and optional packages vary by host |
+| `gsas2` | Agentic powder refinement, job control, reports and evidence | Needs the configured GSAS-II interpreter and Agentic-GSAS-II checkout |
+| `tomo` | Tomography pre-flight and reconstruction | Needs `APEXA_TOMO_PYTHON` with TomoPy and dxchange |
+| `motor` | EPICS motor read/write/control | Needs Channel Access utilities, IOC connectivity and safety configuration |
 
-**Workflows:** `midas_auto_calibrate` (supports `seed_from_params=` — seed BC/Lsd
-from a trusted neighbour's params for robust low-SNR calibration),
-`midas_integrate_2d_to_1d`, `midas_integrate_series` (integrate MANY separate
-files in ONE call, per-file verified + one manifest — use instead of looping the
-single-file tool), `midas_batch_integrate`,
-`run_gsas_refinement`, `run_live_analysis`, `fetch_cif_from_mp`,
-`run_ff_hedm_full_workflow`, `run_nf_hedm_reconstruction`, `run_pf_hedm_workflow`,
-`run_ff_calibration`, `match_grains`, `calculate_misorientation`,
-`run_forward_simulation`, `extract_grain_centroids`, `convert_nf_to_dream3d`,
-`overlay_ff_nf_results`, `batch_convert_ge_to_tiff`,
-`create_midas_parameter_file`, `validate_midas_installation`, `get_midas_workflow_status`,
-`run_midas_viewer`,
-`query_hedm_knowledge`, `get_material_properties`, `get_typical_hedm_parameters`,
-`estimate_parameters_from_image`
+The optional MAUD backend is reached through MIDAS `run_gsas_refinement`; it is
+not a separate active MCP server. MAUD is limited to the supported MIDAS caked
+archive path and requires its installation, MILK and a JDK. See the diffraction
+survey and [TOMO_SETUP.md](../TOMO_SETUP.md) for details.
 
-**Parameter validation (midas-params):** `validate_parameter_file`, `diagnose_parameter_file`,
-`inspect_dataset_file`, `enumerate_bragg_rings`
+## Powder engine boundary
 
-**Stress analysis (midas-stress):** `compute_grain_stress`, `get_material_stiffness`,
-`correct_d0_equilibrium`, `analyze_slip_systems`, `read_grains_summary`
+`apexa_powder.py` calls the independently installed Agentic-GSAS-II engine in its
+GSAS-II interpreter. The platform supplies model access, presents durable jobs
+and renders evidence. The engine owns observation identity, numerical state,
+configured checks and isolated trial decisions. This lets APEXA share a workspace
+across techniques while retaining a separately usable scientific engine.
+
+`apexa_powder_contract.py` normalizes outcomes for the status/report tools;
+`frontend/src/lib/refinement.ts` applies the same presentation rules in the UI.
+Execution failures are separate from completed blocked/provisional results.
+Numerical charts use completed results with finite values, preserve histogram
+scope for joint fractions, and do not connect unrelated observations.
+
+Image advice retains transmitted-panel provenance and rejects citations to unseen
+panels. A shadow trial remains a separate candidate even when accepted. The
+[workflow guide](../powder-refinement.md) documents the exact current acceptance
+policy and the benchmark boundaries. Model aliases and interface availability do
+not establish reproducibility or end-to-end scientific benefit.
 
 ## Tool Registry
 
@@ -134,13 +137,12 @@ Canonical MIDAS workflow reference files (agentskills.io format):
 | `midas-hedm` | FF/NF/PF-HEDM pipeline, GPU flags, resume/checkpoint |
 | `midas-gsasii` | GSAS-II refinement, live analysis pipeline, CIF fetcher |
 | `midas-visualize` | MIDAS viewer scripts table, when to use each |
+| `gsas2-agentic` | Agentic powder refinement and scientific interpretation limits |
+| `tomo-reconstruct` | Tomography pre-flight and reconstruction with a native TomoPy environment |
 
 ## Server Configuration (`servers.config`)
 
-```bash
-core:beamline_core_server.py
-midas:midas_comprehensive_server.py
-```
+The current file enables `core`, `midas`, `motor`, `gsas2` and `tomo`.
 
 The startup script reads this file, validates server existence, and passes them to `argo_mcp_client.py`.
 
@@ -170,17 +172,10 @@ Run `validate_midas_installation` in APEXA to check if both packages are detecte
 
 ## Argo API
 
-- **PROD:** `https://apps.inside.anl.gov/argoapi/api/v1/resource/chat/` (all models, March 2026)
-- **DEV:** `https://apps-dev.inside.anl.gov/argoapi/api/v1/resource/chat/` (future beta models)
-- `DEV_ONLY_MODELS` set in `apexa_agents.py` -- currently empty, add beta model names here
-- Response: `{"response": "text"}` -- no native tool_calls support
-- Do NOT pass `tools` in API payload
-- Model-specific params: o-series/GPT-5 use `max_completion_tokens` (no temperature); Haiku 4.5/Sonnet 4.5/4.6 reject both temperature+top_p
-
-### Available Models (all on PROD)
-- **OpenAI:** gpt4o (default, fastest ~0.8s), gpt4olatest, gpt41/mini/nano, gpto3mini, gpto4mini, gpt5/mini/nano, gpt51, gpt52, gpt54
-- **Anthropic:** claudeopus47/46/45/41/4, claudesonnet46/45/4/37, claudehaiku45
-- **Google:** gemini25pro, gemini25flash
+Provider URLs, model aliases, request limits and response normalization are
+defined in `apexa_agents.py`. Model availability and native tool-call support are
+gateway-side settings that can change independently of this repository; check
+the configured gateway/catalog before treating a model as available.
 
 ## CLI Features
 

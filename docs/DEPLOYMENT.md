@@ -39,7 +39,7 @@ on reboot and won't auto-restart. Documented last as a fallback.
 cd /path/to/APEXA-APS-Beamline-Assistant
 # Check out the release commit validated for this beamline before installing.
 uv sync --locked         # install the release's dependency versions
-./setup_user.sh          # writes .env (ANL_USERNAME, ARGO_MODEL, MIDAS_PATH)
+./setup_user.sh          # writes .env (ANL_USERNAME, ARGO_MODEL, APEXA_MIDAS_BIN, optional MIDAS_PATH)
 test -f frontend/dist/index.html && echo "frontend OK"   # prebuilt, shipped
 ```
 

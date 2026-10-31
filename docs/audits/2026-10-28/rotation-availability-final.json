@@ -1,0 +1,224 @@
+{
+  "observed_at": "2026-10-28T15:48:12.457555+00:00",
+  "root": "/Users/b324240/Box/01-Research/01-APEXA/ai_tune_rot_series/data/rot_series",
+  "file_count": 43,
+  "total_bytes": 14988968724,
+  "note": "Directory/stat observation only; contents not fully read or fingerprinted. Earlier observations found 6 then 30 files while directory contents changed.",
+  "files": [
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000261.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789354056000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000262.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355020000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000263.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355070000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000264.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355119000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000265.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355172000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000266.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355221000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000267.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355271000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000268.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355320000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000269.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355369000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000270.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355418000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000271.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355468000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000272.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355517000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000273.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355566000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000274.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355615000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000275.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355664000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000276.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355714000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000277.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355763000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000278.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355813000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000279.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355864000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000280.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355913000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000281.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789355962000000000
+    },
+    {
+      "file": "Ceria_63keV_900mm_100x100_att0_1p0s_000282.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356012000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000283.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356301000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000284.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356357000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000285.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356405000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000286.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356455000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000287.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356504000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000288.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356553000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000289.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356602000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000290.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356652000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000291.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356701000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000292.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356750000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000293.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356799000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000294.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356849000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000295.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356898000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000296.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356947000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000297.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789356996000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000298.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789357047000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000299.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789357096000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000300.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789357147000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000301.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789357196000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000302.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789357245000000000
+    },
+    {
+      "file": "Lab6_63keV_900mm_100x100_att0_1p0s_000303.vrx.h5",
+      "bytes": 348580668,
+      "mtime_ns": 1789357294000000000
+    }
+  ]
+}

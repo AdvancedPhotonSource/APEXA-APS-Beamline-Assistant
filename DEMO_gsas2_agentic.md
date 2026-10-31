@@ -1,178 +1,107 @@
-# Live demo: autonomous Rietveld refinement from APEXA
+# Agentic powder refinement in APEXA
 
-Driving `gsas2_server.py` in a screen share. Everything below is
-copy-paste into the APEXA chat, in order. Total runtime ~4 min of
-compute; budget 15 min with talking.
+Current workflow, synchronized with the 15 October 2026 manuscript audit.
+See [the integration guide](docs/powder-refinement.md) for configuration, scientific
+status definitions, trial policy and the frozen benchmark snapshot.
 
-The sample is PbSO4 from the GSAS-II tutorial suite — chosen because
-the audience already knows it, so nothing has to be explained about the
-material and attention stays on what the agent decides.
+## 1. Submit a durable tutorial job
 
-**`fmthint: "GSAS"` is mandatory.** `.XRA` is a GSAS legacy format; without
-the hint it goes to the text reader and dies on `could not convert
-string 'CPD' to float64`.
+In APEXA, request:
 
----
+> Submit the PbSO4 X-ray tutorial as an independent powder job. Resolve the
+> configured Agentic-GSAS-II checkout and use
+> `tutorials/PbSO4_independent/PBSO4.XRA`, `INST_XRY.PRM` and `PbSO4.cif`.
+> Set the native reader to GSAS, axis to two_theta, units to degree, limits to
+> [12, 150], and max_steps to 12. Preserve the supplied instrument calibration;
+> do not infer geometry or claim calibration is validated. Return the job IDs.
 
-## Act 1 — refine one pattern, and read the decision trace
+The equivalent bridge submission, from the APEXA repository with its Python
+interpreter, is:
 
-Paste into APEXA:
+```python
+import json
+import os
+from pathlib import Path
+from apexa_powder import submit
 
-```
-Refine this powder pattern and show me the full decision trace.
-
-data_file:    /Users/b324240/Git/Agentic-GSAS-II/tutorials/PbSO4_independent/PBSO4.XRA
-cif_files:    ["/Users/b324240/Git/Agentic-GSAS-II/tutorials/PbSO4_independent/PbSO4.cif"]
-instprm_file: /Users/b324240/Git/Agentic-GSAS-II/tutorials/PbSO4_independent/INST_XRY.PRM
-output_dir:   /tmp/apexa_demo/pbso4
-fmthint:      GSAS
-two_theta_limits: [12.0, 150.0]
-max_steps:    12
-return_trace: true
-```
-
-`max_steps: 12` keeps it near three minutes and stops before the tail,
-where the driver re-picks the instrument group to no effect. Drop the cap
-to 100 if you want the full 19 steps and have the time.
-
-### What appears, and what to say about it
-
-Expect `Rwp` around 11%, `GOF` about 2.3, stopping on `idle`.
-
-| Step | Category | What to point out |
-|---|---|---|
-| 1 | `hstrain` | Reaches the lattice through hydrostatic strain. `ComputeWorstFit` never offers the cell terms A0–A5, so strain is the only route — worth saying out loud to the primitive's author. |
-| 2 | `instprm` | **Ranked `:0:Zero`, refined `U, V, W`.** The trace prints both. Zero stays fixed at 0 with no esd. |
-| 5 | `sample_disp` | `Transparency`, 27.7% → 14.4%. The single largest gain in the run, and a sample effect rather than an instrument one. |
-| 10 | `mustrain` | Physical broadening, not the phenomenological `X`/`Y`. |
-
-The `instrument_policy` block in the response is the part to dwell on:
-
-```json
-"instrument_policy": {
-  "refined":  ["U", "V", "W"],
-  "withheld": {
-    "Zero": "Toby §12.2: the zero correction does not properly apply ...",
-    "X":    "prefer crystallite size and microstrain ...",
-    "Y":    "...",
-    "Z":    "...non-zero on no instrument he is aware of",
-    "SH/L": "...negligible for area-detector data"
-  }
-}
+repo = Path(os.environ.get("APEXA_AGENTIC_GSAS2", Path.home() / "Git/Agentic-GSAS-II")).expanduser()
+python = Path(os.environ.get("APEXA_GSASII_PYTHON", Path.home() / "miniconda3/envs/GSASII/bin/python")).expanduser()
+store = Path(os.environ.get("APEXA_GSAS2_JOBS", Path.home() / ".apexa/gsas2_jobs")).expanduser() / "engine"
+data = repo / "tutorials/PbSO4_independent"
+request = [{
+    "data_path": str(data / "PBSO4.XRA"),
+    "instrument_path": str(data / "INST_XRY.PRM"),
+    "cif_paths": [str(data / "PbSO4.cif")],
+    "format": "GSAS", "axis": "two_theta", "units": "degree",
+    "source": "GSAS-II PbSO4 tutorial", "sample_id": "PbSO4-demo",
+    "limits": [12.0, 150.0],
+}]
+print(json.dumps(submit(python, repo, store, request,
+                       mode="independent", workers=1, policy={"max_steps": 12}), indent=2))
 ```
 
-The tool reports what it declined to refine **and cites the reason**. A
-refinement that silently omits a parameter cannot be distinguished from
-one that never considered it.
+This launches real refinement work. Record the returned IDs. No fixed runtime,
+residual, convergence outcome or cell value is promised by the demonstration.
 
-### The cell is not in the summary
+## 2. Poll and inspect
 
-Say this before anyone asks. The summary reports the phase's
-*unstrained* cell — the input value, whether or not anything moved. The
-refined cell lives in the strain-folded listing line:
+Ask APEXA to poll the returned batch ID (or an individual engine ID from the
+Python example) with `refinement_status`, then generate `powder_report` after
+execution. The job is durable; the conversational session need not remain open.
 
-```
-grep 'resulting cell parameters' /tmp/apexa_demo/pbso4/hist.lst
-```
+Show:
 
-Expect `a=8.48 b=5.398 c=6.95991(11)`. Only `c` carries an esd, because
-`D33` was the strain term picked — `a` and `b` were never moved. The
-parenthesised uncertainty is how you tell an axis that was refined from
-one that was merely reported.
+- Execution state separately from `scientific_status` and `evidence_coverage`.
+- Rwp together with observed/calculated profiles, weighted residuals and reflections.
+- Covariance and solver convergence. A scheduler stop does not prove convergence.
+- Reference cells alongside `effective_cells` after HStrain and their conditional
+  uncertainty scope. Missing/fixed uncertainties are unavailable, not zero error.
+- The actual decision trace. Configured candidate parameters are not proof that
+  those terms were refined.
 
----
+A blocked result is a useful demonstration of a configured failure, not a
+validated phase or composition. The current engine has no `qualified` output path.
 
-## Act 2 — retrieve a structure without being given one
+## 3. Generate evidence and optionally request advice
 
-This is the part that is hard to do by hand. Fast, no refinement.
+Use the completed result's `gpx_path` and its returned observation identity for
+`powder_evidence`, with a fresh output directory. Open the resulting global and
+peak-window panels before choosing a proposal.
 
-```
-Propose candidate structures for this pattern from the COD.
-I am not giving you a starting CIF.
+With an image-capable endpoint configured, call `powder_advise` on the generated
+`evidence.json`. The default evaluates up to three proposals as shadow trials.
+Without such an endpoint, inspect the panels and supply a typed proposal to
+`powder_trial` only when the evidence supports a specific action.
 
-data_file:    /Users/b324240/Git/Agentic-GSAS-II/tutorials/PbSO4_independent/PBSO4.XRA
-instprm_file: /Users/b324240/Git/Agentic-GSAS-II/tutorials/PbSO4_independent/INST_XRY.PRM
-fmthint:      GSAS
-text:         anglesite
-top_n:        5
-```
+Explain each trial's accepted/rejected decision, covariance/convergence evidence,
+Rwp change and combined window loss. Acceptance does not require every cited
+window to improve. A shadow candidate never silently replaces the baseline.
+The `uiso` action name refers to release of the existing atomic displacement
+parameters and does not guarantee isotropic motion.
 
-Expect the top three to be COD 9000652, 9015524 and 9004484, all
-`P b n m`, M20 between 9.9 and 12.5 — the right space group for
-anglesite, reached from the pattern and a mineral name.
+## 4. Extend to mixtures, batches and acquisition
 
-Each candidate is ranked by de Wolff M20 computed against peaks found in
-the pattern itself, with no reference cell involved. The point: M20
-predicts which retrieved structures are the wrong phase *before* any
-refinement is run, so a bad candidate can be flagged rather than fitted.
+- Add candidate CIFs to an observation for multiphase refinement.
+- Submit independent laboratory/synchrotron observations with their own instrument
+  files and metadata. Select individual jobs in the canvas; the batch headline
+  counts all jobs rather than displaying the first fit as a group result.
+- Use sequential mode for ordered frames with compatible state transfer. Inspect
+  `warm_start` for actual transfer or cold-start reasons.
+- Use joint mode only for matching sample, conditions and phase identity.
+- Use `powder_live_ingest` with completed-frame markers. Poll `jobs.fast` and
+  `jobs.full` independently; do not claim sustained throughput from this demo.
 
-M20 in the low teens here is worth mentioning honestly rather than
-glossing — on the 240-pattern mineral benchmark that band still carries
-real risk, and the recommendation in that case is to widen the search,
-not to refine with more confidence.
+For retrieval, `propose_structures` can rank COD candidates when network access
+is available. M20 is a heuristic, not a probability of correctness.
 
----
+## Evidence limits to state during the demonstration
 
-## Act 3 (optional) — ask what it thinks of a finished refinement
+The audited numerical run contains 1,676 records: 1,514 completed blocked,
+157 provisional and five execution errors. The 20 supplied-phase DARA mixtures
+are all blocked (pooled median absolute composition error 24.97 percentage
+points); the 17-frame temperature series is all blocked; the joint CW/TOF suite
+timed out. Separate small workflow examples establish transfer and isolated-trial
+mechanics. Neither those checks nor this walkthrough establishes quantitative
+accuracy, benefit from image advice or reliable live acquisition performance.
 
-```
-Assess the refinement in /tmp/apexa_demo/pbso4
-```
-
-Returns the trust verdict: every reason the result should be inspected,
-separately from the residual. Good place to close, because the argument
-of the whole project is that a good residual is not the same as a
-correct answer.
-
----
-
-## If APEXA is unavailable
-
-The same run, directly, with no MCP layer:
-
-```bash
-cd /Users/b324240/Git/Agentic-GSAS-II
-/Users/b324240/miniconda3/envs/GSASII/bin/python - <<'PY'
-import sys; sys.path.insert(0, '.')
-sys.path.insert(0, '/Users/b324240/miniconda3/envs/GSASII/GSAS-II')
-from dataclasses import replace
-from agentic_gsas2 import AgentConfig
-from agentic_gsas2.orchestrator import refine_one
-cfg = AgentConfig()
-cfg = replace(cfg, worstfit=replace(cfg.worstfit, max_steps=12))
-D = 'tutorials/PbSO4_independent'
-s = refine_one(data_path=f'{D}/PBSO4.XRA', cif_paths=[f'{D}/PbSO4.cif'],
-               output_dir='/tmp/apexa_demo/pbso4',
-               instprm_path=f'{D}/INST_XRY.PRM', config=cfg,
-               limits=(12.0, 150.0), fmthint='GSAS')
-print('Rwp %.3f%%  GOF %.3f  stop %s' % (s['Rwp'], s['GOF'], s['stop_reason']))
-for i, h in enumerate(s.get('history') or [], 1):
-    did = ', '.join(h.get('refined') or [])
-    note = '   ranked %s' % h['param'] if h.get('ranked_only') else ''
-    print('%2d  %-12s %-22s Rwp %7.3f -> %7.3f%s'
-          % (i, h['category'], did[:22],
-             h['Rwp_before'] or 0, h['Rwp_after'] or 0, note))
-PY
-```
-
-There is also a notebook covering the same ground, which survives being
-re-run cell by cell if the conversation goes that way:
-`Agentic-GSAS-II/tutorials-demo/notebooks/01_quickstart.ipynb`.
-
----
-
-## Two things to be straight about if asked
-
-**Time-of-flight is currently broken.** The joint TOF+CW benchmark
-diverged and was killed. A TOF instrument file has no `U`, `V`, `W` at
-all — its profile is `sig-0/1/2`, `alpha`, `beta-*` — and narrowing the
-instrument set to the Caglioti terms left the TOF bank with nothing
-refinable. The rule is fixed in `experiment.py`; the joint path still
-needs a per-histogram context, since one context cannot describe a TOF
-bank and a CW bank at once.
-
-**Sequential refinement does not follow thermal expansion.** Across 17
-temperatures only `D33` is ever picked for the CuCr2O4 phase and `D11`
-never is, so `a` has no route and returns its input value exactly, while
-`c` moves without tracking temperature. Rwp climbs from 24% to 70%,
-which is the run telling you it has failed.
+Source: [versioned audit snapshot](docs/data/powder-benchmark-20261015.json).

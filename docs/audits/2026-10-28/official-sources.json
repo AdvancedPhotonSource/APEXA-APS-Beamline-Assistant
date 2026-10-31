@@ -1,0 +1,132 @@
+{
+  "review_date": "2026-10-28",
+  "note": "Official documentation capabilities are not independent performance validation. Hashes refer to local captured text/source, not the entire web response unless noted. Initial failed fetch records were superseded by successful canonical URL/source fetches.",
+  "sources": [
+    {
+      "url": "https://cvpr.thecvf.com/Conferences/2027/CallForPapers",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/cvpr2027.txt",
+      "sha256": "ba2c5913d3843ce32bac1f26bcb951e22a929838e7d7f457d6e5d9a2fd08b868",
+      "bytes": 6951,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://docs.nvidia.com/nemo/agent-toolkit/latest/index.html",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/nvidia-nat.txt",
+      "sha256": "edacb96aba62191dcbd769f02f02b38ae2cbc0ceb0833073279c550cc2371ddf",
+      "bytes": 37577,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://docs.nvidia.com/nemo/agent-toolkit/latest/improve-workflows/profiler.html",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/nvidia-profiler.txt",
+      "sha256": "29fabfa3258cd204d3353c26eda0ae31d18b5172092a63468b1d59b5b0945d67",
+      "bytes": 67398,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://docs.nvidia.com/nemo/agent-toolkit/latest/run-workflows/observe/observe.html",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/nvidia-observe.txt",
+      "sha256": "cff549286ee734c22b2a90aa6f0f9cd82f931f99d888e1f45191852dcac376f5",
+      "bytes": 78509,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://adk.dev/evaluate/",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/google-evals.txt",
+      "sha256": "3a2f4f438cd6597a81a74182ff097d3fd1e5f2184ecf96c5abc8117878379eb0",
+      "bytes": 32187,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://adk.dev/runtime/resume/",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/google-resume.txt",
+      "sha256": "ba7b90b3b920b68a565240c2b322e582d1cac4323edaa44e4067ee1d314e399c",
+      "bytes": 13819,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://docs.langchain.com/oss/python/langgraph/persistence",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/langgraph-durable.txt",
+      "sha256": "8e7d4f9f9e20ebe067b2d1a38aaa4a216168d381f400401e7b90d05a90c7421b",
+      "bytes": 328696,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://docs.langchain.com/oss/python/langgraph/interrupts",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/langgraph-interrupts.txt",
+      "sha256": "a1488a6e2d6e2660af2591e44699c03df6e92b4bb887253e4f06f138dceb66a0",
+      "bytes": 752845,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://code.claude.com/docs/en/agent-sdk/overview",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/anthropic-sdk.txt",
+      "sha256": "4a50e18d117cb6e4379f636fb81df8f4aa4f50c1ccb5d1c3120fe1fc23318d95",
+      "bytes": 6986,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/guides/agents",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/openai-running.txt",
+      "sha256": "a9f67d44af37fc155f230217e77599ea1f872fa9e31dd6b93b7b905921d3bca3",
+      "bytes": 15864,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://pi.dev",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/pi.txt",
+      "sha256": "b4b5f5847bfaa844994c0e90825412324ff37a71303b2451fd4025f6cb8c094c",
+      "bytes": 6880,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/web/src/content/docs/mcp-servers.mdx",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/opencode-mcp.mdx",
+      "sha256": "cd7651cdcd7f485926a6756869bfb34bbc415fcd75398b36481a943594236cfc",
+      "bytes": 14802,
+      "capture_kind": "source"
+    },
+    {
+      "url": "https://blueskyproject.io/bluesky-queueserver/re_manager_api.html",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/bluesky-api.txt",
+      "sha256": "e13ca5a86f81fd61e836fc770e7ab0ce81c64cc82b73ddcff1023d0762cc4c81",
+      "bytes": 80352,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://xopt.xopt.org/",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/xopt.txt",
+      "sha256": "4478f9b1fe5d18cf3c3f23da2b18e8d6408874925e94be41229c060eefade361",
+      "bytes": 8667,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://github.com/tomopy/tomopy/blob/master/source/tomopy/prep/phase.py",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/tomopy-phase.py",
+      "sha256": "a7aa40d54116745f5a35e1f85e674691eb8d862082ac86965cc4718151530e40",
+      "bytes": 8593,
+      "capture_kind": "source"
+    },
+    {
+      "url": "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md",
+      "local_capture": "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/docs/mcp.md",
+      "sha256": "23b9cca35d1340e8adce6bed8b495da0ebb58931179a937db87d610a1b40b9bf",
+      "bytes": 19870,
+      "capture_kind": "installed Pi 1.2.0 documentation; public URL provided for discovery"
+    },
+    {
+      "url": "https://docs.nvidia.com/nemo/agent-toolkit/latest/resources/migration-guide.html#nemo-agent-toolkit-deprecation",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/nvidia-migration.txt",
+      "sha256": "3f72c7e51aa42fedfd37bc28e4fb6779a09407be4d6572297678ab07f1670775",
+      "bytes": 58023,
+      "capture_kind": "extracted text"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/NVIDIA/NeMo-Fabric/main/adapters/README.md",
+      "local_capture": "/tmp/apexa-audit-20261028/sources/nvidia-fabric-adapters.md",
+      "sha256": "80f04b085f412c9a87426fb4b195f6e5e9224d5286077ac571717b78c5464380",
+      "bytes": 31001,
+      "capture_kind": "source"
+    }
+  ]
+}

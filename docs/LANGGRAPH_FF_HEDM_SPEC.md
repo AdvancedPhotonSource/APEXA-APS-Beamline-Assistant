@@ -1,5 +1,7 @@
 # LangGraph FF-HEDM Workflow Graph — Design Spec
 
+> Historical FF-only design. The current shared runtime is documented in [SCIENTIFIC_WORKFLOWS.md](SCIENTIFIC_WORKFLOWS.md). Ordinary chat no longer resumes legacy FF gates; existing checkpoints are preserved for inspected migration.
+
 **Status:** proposal for review (no code written yet)
 **Author:** design draft for Pawan Tripathi
 **Scope:** Tier-1 harness change — replace the open-ended agent loop for FF-HEDM

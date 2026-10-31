@@ -1,23 +1,31 @@
 # Installing GitHub CLI (gh)
 
-## On macOS (Homebrew)
+GitHub CLI is optional. Install it with the package manager for your workstation.
+
+## macOS
 
 ```bash
 brew install gh
 ```
 
-## After Installation
+## Windows
 
-```bash
-# Authenticate with GitHub
-gh auth login
-
-# Create PR from command line
-cd /Users/b324240/Git/beamline-assistant-dev
-gh pr create --title "Modular Architecture v2.0 - Complete Platform Redesign" \
-  --body "Complete redesign with modular architecture, 20+ MIDAS tools, and comprehensive documentation." \
-  --base main \
-  --head pawan-modular-v2
+```powershell
+winget install --id GitHub.cli -e
 ```
 
-This makes creating PRs much easier!
+## Linux
+
+Use the GitHub CLI installation instructions for your distribution:
+<https://github.com/cli/cli/blob/trunk/docs/install_linux.md>
+
+## Authenticate and create a pull request
+
+```bash
+gh auth login
+cd /path/to/APS-Beamline-Assistant
+gh pr create --base main --head <your-branch>
+```
+
+Replace `<your-branch>` with the branch containing your changes. Review the
+generated title and description before submitting.

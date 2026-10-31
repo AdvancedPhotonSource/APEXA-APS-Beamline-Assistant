@@ -1,0 +1,16 @@
+{
+  "observed_at": "2026-10-28T15:51:33.684767+00:00",
+  "note": "Changes observed after captured hashes; no application source was edited by this audit. Findings apply to captured versions.",
+  "changed_files": [
+    {
+      "path": "benchmark/harness_comparison/rotation_benchmark.py",
+      "captured_sha256": "cf1f8c5c90a6fa70f967d10d72c656e6e11cd7136bbaddc62a69c2e2197bc499",
+      "current_sha256": "b8a79c03c1cc7ccd0855a55008d1b035b0abbf6b44e2206501b460b4b5ce7550"
+    },
+    {
+      "path": "tests/test_rotation_benchmark.py",
+      "captured_sha256": "ba62c6bc1f6d445ddd5df0c5604f04e49289f230ec90e9403aa223ef1e583797",
+      "current_sha256": "645e07b3636bd7b4ef34bc49dbc58022ccc36bc9aa196ea07aec82bc277c1c15"
+    }
+  ]
+}

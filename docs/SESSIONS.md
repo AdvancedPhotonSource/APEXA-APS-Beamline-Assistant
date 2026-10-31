@@ -57,6 +57,15 @@ idempotently. Existing authoritative model memory is preserved. Old transcripts
 cannot recover tool outputs that were never recorded. Keep a backup before
 rolling back to an older APEXA version, which does not understand the new schema.
 
+If Chats reports `Not Found` for `/api/sessions` or `/api/sessions/import`, the
+web server may still be running code from before the session API was added. The
+WebUI keeps chat and browser-local history available, and labels the session
+panel as browser-local. Restart with `./start_web_viewer.sh` from the current
+checkout, then choose **Retry after restart** in Chats. Static frontend files
+can update on disk while an already running Python process continues serving its
+older route table. Browser-local sessions are not shared with the CLI until the
+current server's session API is available and the browser has reconnected.
+
 Snapshots are written atomically. Per-session process locks serialize turns;
 workspace revisions reject conflicting writes from another window. Record and
 workspace limits are 64 MB and 20 MB respectively; oversized writes leave the
@@ -90,9 +99,12 @@ a guarantee of resuming arbitrary external computation from its last instruction
 
 ## Verification
 
-Latest checks: **393 Python tests passed, 1 skipped; 38 frontend tests passed**.
-TypeScript, the production build and scoped ESLint passed. Vite still reports
-large main/Plotly chunks; bundle size remains a performance follow-up.
+The 16 October session fallback and refinement-canvas follow-up passed the
+TypeScript and production frontend build. No test suite was run for that
+follow-up. The most recent full test run recorded earlier in this review was
+**393 Python tests passed, 1 skipped; 38 frontend tests passed**; scoped ESLint
+also passed then. Vite still reports large main/Plotly chunks; bundle size
+remains a performance follow-up.
 
 Isolated tests exercise legacy migration, CLI/Web model-memory round trips,
 interrupted result recovery, cross-process locks, stale-save rejection, API

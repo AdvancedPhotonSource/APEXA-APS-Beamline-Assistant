@@ -1,0 +1,44 @@
+{
+  "logical_cpus": 10,
+  "physical_cpus": 10,
+  "total_ram_gb": 32.0,
+  "available_ram_gb": 6.4,
+  "process_groups": {
+    "web_server.py": {
+      "processes": 1,
+      "rss_mb": 23.1,
+      "threads": 6
+    },
+    "beamline_core_server.py": {
+      "processes": 1,
+      "rss_mb": 0.8,
+      "threads": 3
+    },
+    "midas_comprehensive_server.py": {
+      "processes": 1,
+      "rss_mb": 0.8,
+      "threads": 3
+    },
+    "epics_motor_server.py": {
+      "processes": 1,
+      "rss_mb": 0.8,
+      "threads": 3
+    },
+    "apexa_alignment_server.py": {
+      "processes": 1,
+      "rss_mb": 0.8,
+      "threads": 3
+    },
+    "gsas2_server.py": {
+      "processes": 1,
+      "rss_mb": 0.8,
+      "threads": 3
+    },
+    "tomo_server.py": {
+      "processes": 1,
+      "rss_mb": 0.8,
+      "threads": 3
+    }
+  },
+  "note": "Point-in-time RSS sums can double-count shared pages. No CPU utilization sampled; multiple frontends may be intentional."
+}

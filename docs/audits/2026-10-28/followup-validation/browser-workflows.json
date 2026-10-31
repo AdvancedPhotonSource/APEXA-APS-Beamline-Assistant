@@ -1,0 +1,16 @@
+{
+  "browser": "156.0.8078.74",
+  "passed": [
+    "explicit revision/gate/request approval",
+    "decision note resets per gate",
+    "provisional scientific verdict preserved",
+    "job evidence link",
+    "409 refresh without replay",
+    "reject-only gate",
+    "cancellation remains unresolved",
+    "session switch ignores delayed read",
+    "chat tool result refresh",
+    "API failure disables stale decisions"
+  ],
+  "posts": 3
+}

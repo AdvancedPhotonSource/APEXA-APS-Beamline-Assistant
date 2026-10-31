@@ -1,0 +1,82 @@
+{
+  "recorded_at": "2026-10-28T13:34:49.124844-05:00",
+  "platform": "macOS-15.8.1-arm64-arm-64bit-Mach-O",
+  "versions": {
+    "python": "Python 3.13.7",
+    "node": "v25.8.2",
+    "uv": "uv 0.13.1 (62faed335 2026-10-13 aarch64-apple-darwin)"
+  },
+  "base_commit": "55b9141300582bc60a6b076a4289d5040f992f96",
+  "scope": "Local source validation in an already dirty working tree; no deployment or hardware/scientific-engine qualification.",
+  "python": {
+    "command": "APEXA_NETWORK=data APEXA_OFFLINE=1 .venv/bin/python -m pytest tests/ -q -r s",
+    "passed": 746,
+    "skipped": 1,
+    "warnings": 3,
+    "duration_seconds": 22.06,
+    "exit_code": 0,
+    "skip_reason": "midas_calibrate_v2 is not installed",
+    "log": "pytest.txt"
+  },
+  "frontend": {
+    "working_directory": "frontend",
+    "tests": {
+      "command": "node --test tests/*.test.mjs",
+      "passed": 48,
+      "failed": 0,
+      "exit_code": 0,
+      "log": "frontend-tests.txt"
+    },
+    "typescript": {
+      "reproduction_command": "./node_modules/.bin/tsc -b --noEmit",
+      "exit_code": 0,
+      "log": "typescript.txt"
+    },
+    "eslint": {
+      "reproduction_command": "./node_modules/.bin/eslint .",
+      "exit_code": 0,
+      "log": "eslint.txt"
+    },
+    "build": {
+      "reproduction_command": "./node_modules/.bin/vite build --outDir /tmp/apexa-fixes-20261028/frontend-build-final --emptyOutDir",
+      "exit_code": 0,
+      "log": "vite.txt",
+      "production_dist_updated": false
+    }
+  },
+  "lockfile": {
+    "command": [
+      "uv",
+      "lock",
+      "--check",
+      "--offline"
+    ],
+    "exit_code": 0,
+    "log": "lockfile.txt"
+  },
+  "whitespace": {
+    "exit_code": 0,
+    "scope": "Files listed in source-sha256.json",
+    "log": "whitespace.txt"
+  },
+  "documentation_links": {
+    "checked": 18,
+    "log": "documentation-links.txt"
+  },
+  "not_validated": [
+    "Hosted Linux CI",
+    "Browser p95 latency or multi-user load",
+    "Native MIDAS/GSAS-II/TomoPy numerical truth",
+    "Real GPU speedup or numerical equivalence",
+    "Hardware/interlock commissioning",
+    "Remote job cancellation or restart reconciliation",
+    "Held-out harness comparison or scientific superiority"
+  ],
+  "operational_state": {
+    "service_restarted": false,
+    "hardware_actions": false,
+    "remote_beamline_jobs": false,
+    "model_benchmark_runs": false,
+    "deployment_settings_changed": false
+  }
+}

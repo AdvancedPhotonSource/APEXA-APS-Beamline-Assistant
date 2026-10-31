@@ -17,4 +17,6 @@ echo ""
 echo "Press Ctrl+C to stop the server."
 echo ""
 
-uv run mkdocs serve
+# Keep documentation dependencies out of APEXA's runtime environment. uv resolves
+# the docs-only MkDocs Material package on first use and reuses its cache later.
+uv tool run --with mkdocs-material mkdocs serve

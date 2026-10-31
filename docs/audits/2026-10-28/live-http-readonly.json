@@ -1,0 +1,41 @@
+[
+  {
+    "path": "/api/status",
+    "elapsed_s": 0.0521,
+    "http_status": 200,
+    "bytes": 353,
+    "content_encoding": null,
+    "connected_servers": [
+      "core",
+      "midas",
+      "motor",
+      "alignment",
+      "gsas2",
+      "tomo"
+    ],
+    "mcp_client_connected": true
+  },
+  {
+    "path": "/",
+    "elapsed_s": 0.0264,
+    "http_status": 200,
+    "bytes": 631,
+    "content_encoding": null
+  },
+  {
+    "path": "/api/status",
+    "elapsed_s": 0.0015,
+    "http_status": 200,
+    "bytes": 353,
+    "content_encoding": null,
+    "connected_servers": [
+      "core",
+      "midas",
+      "motor",
+      "alignment",
+      "gsas2",
+      "tomo"
+    ],
+    "mcp_client_connected": true
+  }
+]

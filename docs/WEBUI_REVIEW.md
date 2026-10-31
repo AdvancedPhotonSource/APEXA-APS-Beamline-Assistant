@@ -1,7 +1,70 @@
 # Web UI and beamline workflow review — 2026-10-14
 
+## Canvas follow-up — 2026-10-30
+
+The [Canvas workspace guide](CANVAS_WORKSPACE.md) describes the completed tab
+behavior: automatic opening of new visuals, stable file/result identities,
+repeat-delivery suppression, preserved comparison selection, History favorites,
+keyboard navigation and session-safe delayed loads. Classic light and the shared
+APEXA SVG mark are included. See the dated [follow-up report](audits/2026-10-30/CANVAS_FOLLOWUP.md)
+for current verification; older findings below remain historical.
+
+## 2026-10-15 implementation follow-up
+
+The active source configuration declares five MCP servers and 101 tool
+definitions (13 core, 60 MIDAS, 13 GSAS-II, 2 tomography, 13 motor). A powder
+refinement canvas now renders job state, fit metrics, decision history and
+engine-returned plot files. Tomography has a registered TomoPy adapter, but its
+native dependencies and facility workflow still need host-specific qualification.
+See [analysis-tool-inventory.json](analysis-tool-inventory.json) and
+[TOMO_SETUP.md](TOMO_SETUP.md).
+
 For the subsequent first-launch audit, navigation/options inventory and unresolved
 endpoint findings, see [PRODUCT_AUDIT.md](PRODUCT_AUDIT.md).
+
+## Phase-series analysis follow-up — 2026-10-15
+
+- The MIDAS server adds `track_diffraction_peak_series` alongside
+  `plot_lineout_series_contour`. Both return Plotly payloads that the result
+  parser adds to the native Canvas; peak tracking also has a compact result card.
+- The contour accepts explicit scan-axis values or a CSV mapping so frame order
+  can be shown against verified time or position. Interpolation leaves measured
+  range gaps blank rather than extending endpoint intensities.
+- Sequential GSAS-II submission accepts ordered scan-axis values and units. The
+  refinement Canvas plots modeled phase fractions against that axis when present,
+  and falls back to job index when absent.
+- `combine_detector_backgrounds` can mean/median combine selected same-shape TIFF
+  frames and records source paths, image shape, output dtype and a SHA-256 digest.
+  The result card states that matching acquisition conditions and correction
+  suitability remain a scientific review step.
+- The [phase-dynamics guide](phase-transformation-dynamics.md) documents the TIFF
+  pilot, dark/background review, contour, peak tracking, sequential refinement and
+  scientific limits. The inspected Pilatus data remains unprocessed because its
+  `/gdata` path is not available from this workstation; no runtime or scientific
+  validation is claimed here.
+
+The inventory covers 101 registered tools (13 core, 60 MIDAS, 13 GSAS-II,
+2 tomography, 13 motor). Registration is not executor readiness.
+
+For this follow-up, the TypeScript/production build passed. No test suite was run.
+Vite reports a 562 kB entry chunk and the existing lazy Plotly chunk at 4.61 MB;
+the entry chunk-size warning remains visible.
+
+## UI reliability follow-up — 2026-10-16
+
+- The refinement Canvas and result card recognize `refine_series_submit`, so
+  sequential-series submissions reach the same job, residual, phase-trend and
+  fit-evidence view as direct powder job submissions. `assess_refinement` also
+  opens that view when it returns refinement evidence.
+- If an older backend returns 404 for the session collection/import routes, the
+  UI now keeps chat usable with browser-local history, labels that mode, and
+  offers a retry after restarting from the current checkout. Session requests
+  also handle non-JSON proxy error pages without replacing the useful message
+  with a JSON parsing exception. See [SESSIONS.md](SESSIONS.md).
+- TypeScript and the production frontend build passed on 2026-10-16. Vite still
+  reports the 562 kB entry bundle and 4.61 MB lazy Plotly bundle. No test suite
+  was run for these changes; live browser rendering and the stale-server recovery
+  path were not exercised here.
 
 ## Compact workspace and report opening follow-up
 
@@ -86,8 +149,8 @@ passed. Live browser rendering and target-host SSH remain unverified.
   still use full-resolution corrected data. Raw files are untouched.
 - File browsing and contrast changes discard superseded responses. Stable chat
   messages and plots are memoized. Status polling has a timeout and cannot overlap.
-- Sidebar tools and the structured report renderer load on demand. The entry
-  bundle is 499 kB (150 kB gzip); shared initial chunks add about 29 kB raw.
+- Sidebar tools and the structured report renderer load on demand. The latest
+  entry bundle is 562 kB (168 kB gzip); the lazy Plotly chunk is 4.61 MB raw.
 - Startup uses staged frontend dependencies, fails on build errors, and no longer
   runs `npm install`. The HTML entry page is revalidated; FastAPI uses lifespan.
 
@@ -109,8 +172,8 @@ first-plot cost; no browser performance claim is made.
 
 ## Technique coverage traced in APEXA
 
-The source inventory covers 89 registered tools (13 core, 57 MIDAS, 6 GSAS-II,
-13 motor). Registration is not executor readiness. The table describes the
+The current source inventory covers 101 registered tools (13 core, 60 MIDAS,
+13 GSAS-II, 2 tomography, 13 motor). Registration is not executor readiness. The table describes the
 implemented adapters and their boundaries, not scientific commissioning.
 
 | Target | Actual adapter / executor | Findings and user-facing boundary |
@@ -119,7 +182,7 @@ implemented adapters and their boundaries, not scientific commissioning.
 | FF-HEDM | `run_ff_hedm_full_workflow` → `midas-pipeline run --scan-mode ff`; `run_ff_pipeline` → module CLI | Existing fresh-grain checks; typed SSH dispatch for the full workflow. Report file now reaches canvas. Reconcile remote jobs before retry. |
 | NF-HEDM | `run_nf_hedm_reconstruction` → `midas-nf-pipeline`; NF preprocess/refinement tools | Count only changed output maps. Old voxels plus a fresh unrelated CSV no longer imply success. Cache identity includes solver/precision options. SSH qualification is separate from FF. |
 | PF-HEDM | `run_pf_hedm_workflow` → `midas-pipeline --scan-mode pf` | Exit zero alone is no longer success; require fresh nonempty grain output. PF geometry and scan associations need reference validation. |
-| Powder/Rietveld refinement | MIDAS caked refinement; `agentic_gsas2.refine_one` for ordinary patterns | Preserve trust verdicts. Series distinguishes partial/error/complete, writes progress atomically, and records startup failure. Warm-start is not implemented by this adapter; lattice-trend limitation is disclosed. |
+| Powder/Rietveld refinement | MIDAS caked refinement; Agentic-GSAS-II for ordinary patterns and durable batches | Refinement canvas shows jobs, Rwp, phase trends, decision trace and returned plot/evidence images. Fit images are rendered only from paths returned by the engine. Preserve scientific qualification and uncertainty limits. |
 | PDF / total scattering | `midas_pdf.i_of_q_to_Gr` | Real-data adapter and G(r) canvas plot. Measured wavelength required. Largest peak is labelled strongest, not nearest neighbour. Background/normalization/Q-range and uncertainty need scientific checks. |
 | Grain stress, d0, slip | `_stress_runner.py` / `midas_stress` | Actual numerical operations; require correct frames, units, material stiffness, and accepted reference results. |
 | Grain defects and grain ODF | `_capability_runner.py` → package CLIs | Real input adapters, with q-space voxel/grain inputs. Installation and accepted datasets are required; module names alone are insufficient. |
@@ -128,7 +191,8 @@ implemented adapters and their boundaries, not scientific commissioning.
 | DFXM | `midas_dfxm` forward image | Synthetic deformation field; no real-data inversion in this adapter. |
 | PF grain ODF | `load_pf_grain` | Input loading only. Successfully loading data no longer claims inversion or a completed real-data workflow. |
 | Pink beam | Spectrum construction | Deferred ROI inversion. Returns warning, not a completed analysis claim. |
-| Tomography, DCT and other technique handbooks | Vendored knowledge/capsules | A handbook or a MIDAS source package does not establish an APEXA execution adapter. No turnkey claim from this review. |
+| Tomography | `tomo` MCP server → isolated TomoPy runner | Pre-flight and reconstruction adapters are registered; `APEXA_TOMO_PYTHON` must provide TomoPy and dxchange. Facility-specific validation and commissioning remain separate. |
+| DCT and other technique handbooks | Vendored knowledge/capsules | A handbook or a MIDAS source package does not establish an APEXA execution adapter. No turnkey claim from this review. |
 | Motor control | EPICS `caget` / `caput` | Tools are registered, but supplied startup log reports missing `caget`. No hardware operations were exercised. |
 
 ## Environment findings

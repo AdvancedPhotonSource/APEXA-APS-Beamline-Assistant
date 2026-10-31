@@ -1,0 +1,23 @@
+vite v8.0.3 building client environment for production...
+[2Ktransforming...✓ 349 modules transformed.
+rendering chunks...
+computing gzip size...
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/index.html                             0.63 kB │ gzip:     0.35 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/index-CEjgnLIS.css             61.21 kB │ gzip:    11.60 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/WorkflowPanel-CjzvcWJh.js       2.29 kB │ gzip:     1.05 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/vizStore-Df-8Mfao.js            3.98 kB │ gzip:     1.50 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/ChatHistory-DyQzgqJI.js         4.34 kB │ gzip:     1.66 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/MotorDashboard-CaWplpum.js      4.38 kB │ gzip:     1.37 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/FileBrowser-AjAR5lzJ.js         5.56 kB │ gzip:     2.04 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/react-CYzKIDNi.js               8.15 kB │ gzip:     3.15 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/ResultsPanel-BuFhNNHh.js        9.31 kB │ gzip:     3.29 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/ReportView-_JOyv_TC.js         10.21 kB │ gzip:     2.90 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/index-DZidTRsS.js             607.40 kB │ gzip:   179.92 kB
+../../../../../tmp/apexa-fixes-20261028/frontend-build-final/assets/plotly-FOJmNRZ_.js          4,610.63 kB │ gzip: 1,386.82 kB
+
+✓ built in 1.41s
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.

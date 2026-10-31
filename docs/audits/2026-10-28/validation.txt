@@ -1,0 +1,145 @@
+APEXA audit validation record — 2026-10-28
+
+Repository: /Users/b324240/Git/beamline-assistant-dev
+Base commit: 60cf9e7d9d134e0d5d555bc045a8fbf3b57f0285
+Working tree: substantially modified before audit; no clean-commit assumption.
+Captured source hashes: source-manifest.json
+Later observed changes: source-drift-at-packaging.json
+
+OBSERVED CHECK RESULTS
+
+Python suite (tests/, offline/data network mode):
+  572 passed, 1 skipped, 1 warning in 18.74 seconds.
+  Output: logs/pytest.log
+  Warning detail was suppressed in the captured output.
+
+Frontend Node tests:
+  38 passed, 0 failed.
+  Output: logs/frontend-tests.log
+  These are Node tests, including source/state/transport checks, not a real-browser
+  performance or accessibility test.
+
+TypeScript build-mode check with no emit:
+  Passed; no diagnostics.
+  Output: logs/typescript.log (empty on success).
+
+Vite production build:
+  Passed; output directed to /tmp/apexa-audit-20261028/frontend-build.
+  Main JS 605.09 kB; Plotly JS 4610.63 kB, before gzip.
+  Large-chunk warning. Plotly is already lazy-loaded.
+  Output: logs/vite-build.log
+
+ESLint:
+  Failed with 5 errors in four files:
+  FileListCard.tsx, ToolResultCard.tsx, GSAS2Workbench.tsx,
+  RefinementDecisions.tsx (two errors).
+  Output: logs/eslint.log
+
+Rotation benchmark tests after a concurrent runner change:
+  46 passed in 0.15 seconds.
+  Output: logs/rotation-tests-after-change.log
+  This focused rerun is not evidence that all known semantic flaws are tested.
+
+Structural inventory:
+  132 Python files parsed successfully; 80 TypeScript/TSX files inventoried.
+  Seven configured MCP servers expose 128 decorated functions:
+  core 13, MIDAS 60, motor 13, alignment 8, GSAS-II 26, tomo 2, synthesis 6.
+  Inventory covers captured code, not every data/config/document file in the repo.
+  Textual test associations are not measured line/branch coverage.
+
+OFFLINE PROBES
+
+probes.json / reproduce/probe_audit.py:
+  Stubbed motor writes with missing readbacks and nonfinite target.
+  Policy-only shell bypass checks: commands were not executed.
+  Ledger failure classification and unsupported numerical claim.
+  Input content changed at same path; cached result incorrectly reused.
+  FastAPI TestClient without app lifespan: no MCP subprocesses started.
+  Stubbed scientific route failures, upload traversal in a disposable directory,
+  unauthenticated browse, foreign-origin WebSocket, false-positive health.
+  Pure benchmark acceptance classifier counterexample.
+
+tomo-probes.json / reproduce/probe_tomo.py:
+  Stubbed TomoPy engine; normalize/log/phase ordering, provisional center status,
+  unchanged angles for handedness labels, infinite-voxel success.
+  Establishes adapter control flow, not numerical reconstruction accuracy.
+
+performance-probes.json / reproduce/probe_performance.py:
+  Actual core async shell handler with subprocess replaced by a sleep stub.
+  Four scheduled operations: peak concurrent operations 1, elapsed 0.6212 seconds.
+  Insufficient-memory admission probe: one worker still admitted.
+  Synthetic 2880-square image preview/profile/statistics microbenchmarks.
+  No shell, provider request, engine computation or browser load test.
+
+sandbox-probe.json:
+  Only the captured APEXA driver's --help was run through its sandbox.
+  Python failed to open the driver with Operation not permitted, return code 2.
+  No model session started. Applies to the recorded runner version.
+
+live-http-readonly.json / local-process-observation.json:
+  GET /api/status, /, /api/status against existing localhost:8001 service.
+  52.1 ms, 26.4 ms, 1.5 ms, all HTTP 200.
+  Six connected servers reported; current config enables seven.
+  Point-in-time CPU/RAM/process metadata; no sustained utilization trace.
+
+harness-versions.json:
+  pi --version: 1.2.0
+  claude --version: 2.1.312 (Claude Code)
+  opencode --version: 1.18.23
+  Executable hashes captured. No model session or comparison launched.
+
+DATA INSPECTION
+
+rotation-inspection.json / reproduce/inspect_rotation.py:
+  Existing 43-row calibration summary and 12-row control summary.
+  Existing benchmark leave-one-out consistency estimate, not independent truth.
+  One raw HDF5 dataset metadata tree, not a reanalysis of the frames.
+  The original raw-file count in this earlier observation was six.
+
+rotation-motor-metadata.json:
+  Small motor/scan metadata arrays from 30 raw files visible at that observation.
+  No numerical calibration performed.
+
+rotation-availability-final.json:
+  Final directory/stat observation: 43 files, 14,988,968,724 bytes.
+  Directory changed during inspection. This is not a complete byte-integrity or
+  cloud-hydration check. No mass raw-data hashing/download was initiated.
+
+Gold:
+  Local MIDAS fixtures/test harness and notebook records inspected.
+  Current GrainsSim.csv declares 250 grains; historical manual differs.
+  No SSH connection, remote data copy or new FF-HEDM reconstruction.
+
+REPRODUCTION GUIDANCE
+
+The raw logs retain result output, not a complete shell-session transcript.
+The commands below are reproduction recipes; do not interpret every spelling
+or option as an independently captured historical invocation.
+
+From the repository, with its existing qualified development environment:
+
+  APEXA_NETWORK=data APEXA_OFFLINE=1 .venv/bin/python -m pytest tests/ -q --disable-warnings
+  APEXA_NETWORK=data APEXA_OFFLINE=1 .venv/bin/python -m pytest tests/test_rotation_benchmark.py -q
+
+From frontend/, with the already-installed lockfile environment:
+
+  node --test tests/*.test.mjs
+  ./node_modules/.bin/tsc -b --noEmit
+  ./node_modules/.bin/eslint .
+  ./node_modules/.bin/vite build --outDir /tmp/apexa-audit-20261028/frontend-build --emptyOutDir
+
+Offline probe scripts contain the original workstation and temporary paths.
+Read them, adapt only paths as needed, and retain their execution stubs.
+Reproduce figures without accessing raw inputs:
+
+  .venv/bin/python docs/audits/2026-10-28/reproduce/plot_rotation.py
+
+NOT VALIDATED
+
+Independent absolute geometry truth; full MIDAS/GSAS-II/TomoPy engine internals;
+actual provider latency or paid harness performance; browser CPU traces;
+long-duration/multi-user load; actual beamline hardware/interlock/stop behavior;
+remote job recovery; CPU/GPU numerical equivalence; dependency vulnerability
+database scan; accessibility and complete platform/deployment qualification.
+
+No production source changes or settings changes were made by this audit.

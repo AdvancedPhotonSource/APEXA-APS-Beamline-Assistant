@@ -1,0 +1,88 @@
+{
+  "browser": "156.0.8078.48",
+  "viewport": "1440x900",
+  "fixture": "1000 Markdown messages with tables and two collapsed tools each",
+  "samples": [
+    {
+      "mode": "all messages (previous rendering strategy)",
+      "commitMs": 806.9000000059605,
+      "renderedMessages": 1000,
+      "domNodes": 61011
+    },
+    {
+      "mode": "bounded messages",
+      "commitMs": 102.69999998807907,
+      "renderedMessages": 60,
+      "domNodes": 3678
+    },
+    {
+      "mode": "all messages (previous rendering strategy)",
+      "commitMs": 770.5,
+      "renderedMessages": 1000,
+      "domNodes": 61011
+    },
+    {
+      "mode": "bounded messages",
+      "commitMs": 111.5,
+      "renderedMessages": 60,
+      "domNodes": 3678
+    },
+    {
+      "mode": "all messages (previous rendering strategy)",
+      "commitMs": 712.9000000059605,
+      "renderedMessages": 1000,
+      "domNodes": 61011
+    },
+    {
+      "mode": "bounded messages",
+      "commitMs": 110.19999998807907,
+      "renderedMessages": 60,
+      "domNodes": 3678
+    }
+  ],
+  "paging": "Older page remains anchored on incoming answer; Latest reaches new answer; at most 60 messages",
+  "resultGallery": "150 results: at most 60 mounted; search resets to matching page",
+  "filePaging": "205 stubbed files: 100/100/5 mounted rows; final Next disabled",
+  "persistence": {
+    "initialCommitMs": 8.800000011920929,
+    "editCommitMs": 0.5999999940395355,
+    "payloadWrites": 0,
+    "legacyRemoved": true,
+    "journalBytes": 174,
+    "restoredDraft": "latest",
+    "restoredPoints": 250000
+  },
+  "migrationFailure": {
+    "rejected": true,
+    "legacyRetained": true,
+    "previousPoints": 250000
+  },
+  "cacheConflict": {
+    "rejected": true,
+    "points": 250000
+  },
+  "storeRestore": {
+    "firstDraft": "First session draft",
+    "secondDraft": "Second session draft",
+    "points": [
+      1,
+      2
+    ],
+    "error": null,
+    "selected_matches_expected": true
+  },
+  "startupRace": {
+    "draft": "Typed while cache was loading",
+    "sessions": 3,
+    "error": null
+  },
+  "note": "Local headless Chrome, Vite development build; synthetic rendering/persistence only. No production, network, LLM or scientific-engine speedup is implied.",
+  "environment": {
+    "platform": "macOS 15.8.1",
+    "hardware": "Apple M1 Max",
+    "memory_gib": 32,
+    "date": "2026-10-28",
+    "build": "Vite development",
+    "playwright": "1.64.1"
+  }
+}

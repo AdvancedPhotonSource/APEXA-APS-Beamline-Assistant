@@ -4,28 +4,35 @@
 
 ### 1. Run Setup Script
 ```bash
-cd beamline-assistant
+# From the repository root
 ./setup_user.sh
 ```
 
 The script will ask for:
 - Your ANL username
-- Preferred AI model (default: gpt4o)
-- MIDAS path (optional -- auto-detected)
+- Preferred AI model (setup script default: gpt55; model aliases can change with the Argo catalog)
+- A pip MIDAS environment, detected from `midas-pipeline` or entered manually
+- An optional MIDAS repo clone for forward simulation and legacy tools
+- Optional Materials Project API key
 
 ### 2. Start APEXA
 ```bash
 ./start_beamline_assistant.sh
 ```
 
-You should see:
+With the current `servers.config`, startup should report:
 ```
-  core: 9 tools
-  midas: 37 tools
+  core: 13 tools
+  midas: 60 tools
+  motor: 13 tools
+  gsas2: 26 tools
+  tomo: 2 tools
 
   APEXA - Advanced Photon EXperiment Assistant
-  Model: gpt4o (PROD)  |  46 tools  |  Servers: core, midas
+  Model: gpt55 (PROD)  |  114 tools  |  Servers: core, midas, motor, gsas2, tomo
 ```
+The connected server/tool counts depend on `servers.config`; each engine also
+depends on its own runtime and host readiness.
 
 ### 3. Start Analyzing
 ```
@@ -39,21 +46,21 @@ APEXA> show me the lineout
 
 - **Python:** 3.13+ (with `uv` package manager)
 - **Network:** ANL network or VPN
-- **MIDAS:** v11, auto-detected from standard locations
+- **MIDAS:** pip `midas-suite` environment, detected from `midas-pipeline` or configured with `APEXA_MIDAS_BIN`
 
-## MIDAS Auto-Detection
+## MIDAS setup
 
-MIDAS is found automatically from (in order):
+The setup script looks for a pip `midas-suite` environment on `PATH` and in
+common APS and Conda locations. It writes `APEXA_MIDAS_BIN` to the environment's
+`bin/` directory when it finds `midas-pipeline`. If no native environment is
+available, set it manually or install the optional local fallback:
 
-1. `$MIDAS_PATH` environment variable
-2. `~/Git/MIDAS`
-3. `~/opt/MIDAS`
-4. `/home/beams/S*USER/opt/MIDAS` (beamline systems)
-5. `~/MIDAS`
-6. `/opt/MIDAS`
-7. `~/.MIDAS`
+```bash
+uv sync --extra midas
+```
 
-No configuration needed if MIDAS is in a standard location.
+`MIDAS_PATH` points to a MIDAS repository clone and is only needed for forward
+simulation and legacy C tools. See [MIDAS setup](../MIDAS_SETUP.md) for details.
 
 ## Manual Configuration
 
@@ -66,8 +73,9 @@ nano .env
 
 ```bash
 ANL_USERNAME=your_anl_username
-ARGO_MODEL=gpt4o                    # or claudesonnet4, gemini25pro
-# MIDAS_PATH=~/Git/MIDAS            # only if auto-detection fails
+ARGO_MODEL=gpt55                     # check `models` for current gateway aliases
+APEXA_MIDAS_BIN=/path/to/midas-suite/bin
+# MIDAS_PATH=~/Git/MIDAS             # only for forward simulation / legacy tools
 ```
 
 ## CLI Commands
@@ -112,8 +120,8 @@ APEXA> what are the elastic constants for titanium?
 APEXA> models
 [Shows available models]
 
-APEXA> model claudesonnet4
-Switched to: claudesonnet4 (using DEV environment)
+APEXA> model claudesonnet55
+Switched to: claudesonnet55
 ```
 
 ## Troubleshooting
@@ -138,4 +146,4 @@ Each user should:
 
 ---
 
-See [USER_MANUAL.md](../../USER_MANUAL.md) for complete documentation.
+See the [user manual](https://github.com/AdvancedPhotonSource/APS-Beamline-Assistant/blob/main/USER_MANUAL.md) for complete documentation.

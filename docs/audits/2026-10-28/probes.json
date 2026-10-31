@@ -1,0 +1,132 @@
+[
+  {
+    "probe": "motor_failed_readbacks",
+    "write_calls": [
+      [
+        "AUDIT:m1",
+        10.0
+      ]
+    ],
+    "result": {
+      "tool": "move_motor_absolute",
+      "pv": "AUDIT:m1",
+      "target": 10.0,
+      "units": "unavailable",
+      "status": "move_issued",
+      "note": "wait=False \u2014 poll get_motor_status for DMOV=1"
+    }
+  },
+  {
+    "probe": "motor_nonfinite_target",
+    "write_count": 1,
+    "target_serialized": "nan",
+    "status": "move_issued"
+  },
+  {
+    "probe": "shell_policy_only_no_execution",
+    "command": "caput AUDIT:m1 10",
+    "allowed": true,
+    "deletion_confirmation_requested": false
+  },
+  {
+    "probe": "shell_policy_only_no_execution",
+    "command": "python3 -c \"import os; os.remove('audit-marker')\"",
+    "allowed": true,
+    "deletion_confirmation_requested": false
+  },
+  {
+    "probe": "ledger_failure_status",
+    "input": "{\"error\": \"tool failed\"}",
+    "inferred_status": "ok"
+  },
+  {
+    "probe": "ledger_failure_status",
+    "input": "{\"success\": false, \"return_code\": 1}",
+    "inferred_status": "ok"
+  },
+  {
+    "probe": "ledger_failure_status",
+    "input": "{\"status\": \"failed\"}",
+    "inferred_status": "ok"
+  },
+  {
+    "probe": "ledger_failure_status",
+    "input": "{\"completed\": false, \"timed_out\": true}",
+    "inferred_status": "ok"
+  },
+  {
+    "probe": "ledger_numeric_claim",
+    "violations": []
+  },
+  {
+    "probe": "idempotency_changed_input_same_path",
+    "executions": 1,
+    "first": {
+      "status": "success",
+      "value": "first"
+    },
+    "second": {
+      "status": "success",
+      "value": "first",
+      "cached": true,
+      "cached_at": 1793201537.481822,
+      "idempotent_note": "Identical stub_calibrate already completed for these inputs; returning the prior result (outputs verified on disk). Pass force=True to re-run."
+    }
+  },
+  {
+    "probe": "http_error_contract",
+    "route": "/api/analysis/phases",
+    "http_status": 200,
+    "result": {
+      "success": true,
+      "result": "{\"error\": \"Tool not found\"}"
+    }
+  },
+  {
+    "probe": "http_error_contract",
+    "route": "/api/analysis/peaks",
+    "http_status": 200,
+    "result": {
+      "success": true,
+      "result": "{\"error\": \"Tool not found\"}"
+    }
+  },
+  {
+    "probe": "http_error_contract",
+    "route": "/api/calibrate",
+    "http_status": 200,
+    "result": {
+      "success": true,
+      "calibration": "No calibration ran; the engine is unavailable.",
+      "message": "Calibration completed"
+    }
+  },
+  {
+    "probe": "empty_mcp_health",
+    "connected": true,
+    "servers": []
+  },
+  {
+    "probe": "upload_parent_path",
+    "route": "/api/viewer/load_calibration",
+    "http_status": 200,
+    "wrote_outside_upload_root": true
+  },
+  {
+    "probe": "unauthenticated_browse",
+    "http_status": 200
+  },
+  {
+    "probe": "cross_origin_websocket",
+    "accepted": true,
+    "response_type": "error"
+  },
+  {
+    "probe": "benchmark_contradictory_acceptance",
+    "text": "The initial attempt succeeded numerically, but validation failed. Do not use this geometry.",
+    "claim": [
+      true,
+      "geometry reported"
+    ]
+  }
+]

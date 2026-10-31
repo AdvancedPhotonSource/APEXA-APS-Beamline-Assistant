@@ -1,0 +1,7 @@
+{
+  "source": "frozen snapshot",
+  "test": "sandbox APEXA driver --help only",
+  "returncode": 2,
+  "stderr": "/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python: can't open file '/Users/b324240/Git/beamline-assistant-dev/benchmark/harness_comparison/_apexa_driver.py': [Errno 1] Operation not permitted\n",
+  "denies_driver_parent": false
+}

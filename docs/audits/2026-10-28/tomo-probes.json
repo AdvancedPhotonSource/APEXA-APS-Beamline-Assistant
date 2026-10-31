@@ -1,0 +1,35 @@
+[
+  {
+    "probe": "tomo_pipeline_order",
+    "calls": [
+      "normalize",
+      "minus_log",
+      "retrieve_phase"
+    ]
+  },
+  {
+    "probe": "provisional_center_status",
+    "source": "sweep_midpoint_provisional",
+    "status": "success"
+  },
+  {
+    "probe": "tomo_handedness_angles",
+    "angles_same": true,
+    "angles_left": [
+      0.0,
+      0.017453292519943295,
+      0.03490658503988659
+    ],
+    "angles_right": [
+      0.0,
+      0.017453292519943295,
+      0.03490658503988659
+    ],
+    "note": "Declaration is recorded but does not change angles; convention consistency needs qualification."
+  },
+  {
+    "probe": "tomo_infinite_voxel",
+    "status": "success",
+    "max_is_infinite": true
+  }
+]

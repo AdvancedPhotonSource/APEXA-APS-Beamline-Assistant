@@ -1,0 +1,1210 @@
+{
+  "root": "/Users/b324240/Box/01-Research/01-APEXA/ai_tune_rot_series",
+  "counts": {
+    "total": 43,
+    "gate_passed": 35,
+    "any_bounds": 31,
+    "nonphase_bounds": 19,
+    "passed_with_any_bounds": 23,
+    "passed_with_nonphase_bounds": 11,
+    "passed_and_tz_error_above_0.1": 0,
+    "failed_and_tz_error_above_0.1": 8
+  },
+  "rows": [
+    {
+      "scan": 261,
+      "calibrant": "CeO2",
+      "passed": false,
+      "tz": -4.576042,
+      "loo_reference": -11.512051848992542,
+      "abs_error_deg": 6.9360098489925415,
+      "bounds": [
+        "iso_R4",
+        "phi1",
+        "phi3"
+      ],
+      "nonphase_bounds": [
+        "iso_R4"
+      ]
+    },
+    {
+      "scan": 262,
+      "calibrant": "CeO2",
+      "passed": false,
+      "tz": 17.308985,
+      "loo_reference": -10.513015576409316,
+      "abs_error_deg": 27.822000576409316,
+      "bounds": [
+        "Lsd",
+        "a2",
+        "a4",
+        "iso_R2",
+        "phi4",
+        "iso_R6",
+        "iso_R4",
+        "phi2",
+        "a1",
+        "phi1",
+        "a3",
+        "phi3",
+        "a5",
+        "phi5",
+        "a6",
+        "phi6"
+      ],
+      "nonphase_bounds": [
+        "Lsd",
+        "a2",
+        "a4",
+        "iso_R2",
+        "iso_R6",
+        "iso_R4",
+        "a1",
+        "a3",
+        "a5",
+        "a6"
+      ]
+    },
+    {
+      "scan": 263,
+      "calibrant": "CeO2",
+      "passed": false,
+      "tz": -2.728808,
+      "loo_reference": -9.51397930382609,
+      "abs_error_deg": 6.785171303826091,
+      "bounds": [
+        "BC_z",
+        "tz",
+        "phi4",
+        "iso_R4",
+        "phi1",
+        "phi5",
+        "phi6"
+      ],
+      "nonphase_bounds": [
+        "BC_z",
+        "tz",
+        "iso_R4"
+      ]
+    },
+    {
+      "scan": 264,
+      "calibrant": "CeO2",
+      "passed": false,
+      "tz": -1.899371,
+      "loo_reference": -8.514943031242922,
+      "abs_error_deg": 6.615572031242921,
+      "bounds": [
+        "iso_R6",
+        "iso_R4",
+        "a1",
+        "phi3",
+        "phi6"
+      ],
+      "nonphase_bounds": [
+        "iso_R6",
+        "iso_R4",
+        "a1"
+      ]
+    },
+    {
+      "scan": 265,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": -7.515818,
+      "loo_reference": -7.515936300241378,
+      "abs_error_deg": 0.00011830024137804429,
+      "bounds": [
+        "phi4",
+        "phi2",
+        "phi1",
+        "phi3"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 266,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": -6.518371,
+      "loo_reference": -6.516482746438726,
+      "abs_error_deg": 0.0018882535612743112,
+      "bounds": [
+        "phi6"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 267,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": -5.51725,
+      "loo_reference": -5.517951596247997,
+      "abs_error_deg": 0.0007015962479970383,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 268,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": -4.518632,
+      "loo_reference": -4.5188239751178685,
+      "abs_error_deg": 0.00019197511786828159,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 269,
+      "calibrant": "CeO2",
+      "passed": false,
+      "tz": -3.0,
+      "loo_reference": -3.5197616683269075,
+      "abs_error_deg": 0.5197616683269075,
+      "bounds": [
+        "tz",
+        "phi4",
+        "iso_R6",
+        "a1",
+        "phi3",
+        "phi5",
+        "phi6"
+      ],
+      "nonphase_bounds": [
+        "tz",
+        "iso_R6",
+        "a1"
+      ]
+    },
+    {
+      "scan": 270,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": -2.519939,
+      "loo_reference": -2.5208043487792793,
+      "abs_error_deg": 0.0008653487792793513,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 271,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": -1.521178,
+      "loo_reference": -1.521732700491441,
+      "abs_error_deg": 0.0005547004914410181,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 272,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": -0.522443,
+      "loo_reference": -0.5226691859443804,
+      "abs_error_deg": 0.00022618594438039707,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 273,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": 0.476081,
+      "loo_reference": 0.476406963396812,
+      "abs_error_deg": 0.00032596339681201236,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 274,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": 1.475565,
+      "loo_reference": 1.4754073061425288,
+      "abs_error_deg": 0.00015769385747121945,
+      "bounds": [
+        "phi6"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 275,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": 2.474841,
+      "loo_reference": 2.4744173104135143,
+      "abs_error_deg": 0.0004236895864857537,
+      "bounds": [
+        "phi5"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 276,
+      "calibrant": "CeO2",
+      "passed": false,
+      "tz": 3.0,
+      "loo_reference": 3.473492239755501,
+      "abs_error_deg": 0.47349223975550103,
+      "bounds": [
+        "tz",
+        "iso_R6",
+        "a1",
+        "phi3",
+        "phi6"
+      ],
+      "nonphase_bounds": [
+        "tz",
+        "iso_R6",
+        "a1"
+      ]
+    },
+    {
+      "scan": 277,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": 4.472457,
+      "loo_reference": 4.472539731796758,
+      "abs_error_deg": 8.273179675732933e-05,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 278,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": 5.469597,
+      "loo_reference": 5.471960160956996,
+      "abs_error_deg": 0.0023631609569960688,
+      "bounds": [
+        "phi1",
+        "phi5",
+        "phi6"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 279,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": 6.470018,
+      "loo_reference": 6.470751722222246,
+      "abs_error_deg": 0.0007337222222467688,
+      "bounds": [
+        "phi2"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 280,
+      "calibrant": "CeO2",
+      "passed": true,
+      "tz": 7.471186,
+      "loo_reference": 7.469121885636696,
+      "abs_error_deg": 0.002064114363304448,
+      "bounds": [
+        "phi2",
+        "phi3"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 281,
+      "calibrant": "CeO2",
+      "passed": false,
+      "tz": -15.826054,
+      "loo_reference": 8.468673602671515,
+      "abs_error_deg": 24.294727602671514,
+      "bounds": [
+        "Lsd",
+        "a2",
+        "a4",
+        "iso_R2",
+        "phi4",
+        "iso_R6",
+        "iso_R4",
+        "phi2",
+        "a1",
+        "phi1",
+        "a3",
+        "phi3",
+        "a5",
+        "phi5",
+        "a6"
+      ],
+      "nonphase_bounds": [
+        "Lsd",
+        "a2",
+        "a4",
+        "iso_R2",
+        "iso_R6",
+        "iso_R4",
+        "a1",
+        "a3",
+        "a5",
+        "a6"
+      ]
+    },
+    {
+      "scan": 282,
+      "calibrant": "CeO2",
+      "passed": false,
+      "tz": -0.921215,
+      "loo_reference": 9.467709875254684,
+      "abs_error_deg": 10.388924875254684,
+      "bounds": [
+        "BC_y",
+        "phi4",
+        "iso_R6",
+        "iso_R4",
+        "phi2",
+        "phi1",
+        "phi3",
+        "phi5"
+      ],
+      "nonphase_bounds": [
+        "BC_y",
+        "iso_R6",
+        "iso_R4"
+      ]
+    },
+    {
+      "scan": 283,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -10.527088,
+      "loo_reference": -10.522322382852735,
+      "abs_error_deg": 0.0047656171472638675,
+      "bounds": [
+        "iso_R6",
+        "phi1",
+        "phi3",
+        "phi6"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    },
+    {
+      "scan": 284,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -9.52588,
+      "loo_reference": -9.521576522650435,
+      "abs_error_deg": 0.004303477349566265,
+      "bounds": [
+        "iso_R6"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    },
+    {
+      "scan": 285,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -8.52763,
+      "loo_reference": -8.522882680998976,
+      "abs_error_deg": 0.0047473190010247635,
+      "bounds": [
+        "iso_R6",
+        "phi1",
+        "phi6"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    },
+    {
+      "scan": 286,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -7.522051,
+      "loo_reference": -7.524805298100318,
+      "abs_error_deg": 0.002754298100318131,
+      "bounds": [
+        "phi4",
+        "phi3",
+        "phi6"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 287,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -6.523449,
+      "loo_reference": -6.523278253271769,
+      "abs_error_deg": 0.00017074672823103043,
+      "bounds": [
+        "phi4",
+        "iso_R6",
+        "phi2",
+        "phi1",
+        "phi3"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    },
+    {
+      "scan": 288,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -5.520108,
+      "loo_reference": -5.524192106457235,
+      "abs_error_deg": 0.00408410645723567,
+      "bounds": [
+        "phi5"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 289,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -4.523299,
+      "loo_reference": -4.525098255576211,
+      "abs_error_deg": 0.0017992555762109674,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 290,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -3.523483,
+      "loo_reference": -3.5252380510814305,
+      "abs_error_deg": 0.00175505108143037,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 291,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -2.524238,
+      "loo_reference": -2.5253515484460536,
+      "abs_error_deg": 0.0011135484460536027,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 292,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -1.52505,
+      "loo_reference": -1.5254721629494838,
+      "abs_error_deg": 0.0004221629494838286,
+      "bounds": [
+        "iso_R6",
+        "phi1",
+        "phi3"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    },
+    {
+      "scan": 293,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": -0.524545,
+      "loo_reference": -0.5258812771179464,
+      "abs_error_deg": 0.0013362771179463717,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 294,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": 0.474046,
+      "loo_reference": 0.47424045243519686,
+      "abs_error_deg": 0.00019445243519683464,
+      "bounds": [],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 295,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": 1.471782,
+      "loo_reference": 1.4744979897888584,
+      "abs_error_deg": 0.0027159897888584528,
+      "bounds": [
+        "iso_R6"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    },
+    {
+      "scan": 296,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": 2.473498,
+      "loo_reference": 2.4739395812241014,
+      "abs_error_deg": 0.00044158122410120626,
+      "bounds": [
+        "iso_R6"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    },
+    {
+      "scan": 297,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": 3.471225,
+      "loo_reference": 3.474014436355901,
+      "abs_error_deg": 0.0027894363559011204,
+      "bounds": [
+        "iso_R6"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    },
+    {
+      "scan": 298,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": 4.475468,
+      "loo_reference": 4.4732234141531535,
+      "abs_error_deg": 0.002244585846846725,
+      "bounds": [
+        "iso_R6"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    },
+    {
+      "scan": 299,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": 5.471748,
+      "loo_reference": 5.474320492293316,
+      "abs_error_deg": 0.002572492293316131,
+      "bounds": [
+        "phi5"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 300,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": 6.467968,
+      "loo_reference": 6.472915082904194,
+      "abs_error_deg": 0.004947082904194211,
+      "bounds": [
+        "phi2",
+        "phi5",
+        "phi6"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 301,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": 7.472216,
+      "loo_reference": 7.471802452488646,
+      "abs_error_deg": 0.0004135475113544729,
+      "bounds": [
+        "phi2",
+        "phi3",
+        "phi5"
+      ],
+      "nonphase_bounds": []
+    },
+    {
+      "scan": 302,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": 8.474734,
+      "loo_reference": 8.471628868279595,
+      "abs_error_deg": 0.003105131720404941,
+      "bounds": [
+        "phi4",
+        "iso_R6",
+        "phi1",
+        "phi3"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    },
+    {
+      "scan": 303,
+      "calibrant": "LaB6",
+      "passed": true,
+      "tz": 9.47632,
+      "loo_reference": 9.472074635684862,
+      "abs_error_deg": 0.004245364315137223,
+      "bounds": [
+        "iso_R6",
+        "phi2",
+        "phi3"
+      ],
+      "nonphase_bounds": [
+        "iso_R6"
+      ]
+    }
+  ],
+  "raw_h5_count": 6,
+  "sample_h5": "/Users/b324240/Box/01-Research/01-APEXA/ai_tune_rot_series/data/rot_series/Ceria_63keV_900mm_100x100_att0_1p0s_000262.vrx.h5",
+  "h5_metadata": [
+    {
+      "path": "WM/ADCoreVersion",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/AcqPeriod",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/AcqTime",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/AeroX",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/AeroXDail",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/ArrayCounter",
+      "shape": [
+        21
+      ],
+      "dtype": "int32"
+    },
+    {
+      "path": "WM/BinX",
+      "shape": [
+        21
+      ],
+      "dtype": "int32"
+    },
+    {
+      "path": "WM/BinY",
+      "shape": [
+        21
+      ],
+      "dtype": "int32"
+    },
+    {
+      "path": "WM/Current",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/DataType",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/DetectorManufacturer",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/DetectorModel",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/DriverVersion",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/FilePath",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/FillPattern",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/FirmwareVersion",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/FullFileName",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/Gain",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/HDFPlugInVersion",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/MaxSizeX",
+      "shape": [
+        21
+      ],
+      "dtype": "int32"
+    },
+    {
+      "path": "WM/MaxSizeY",
+      "shape": [
+        21
+      ],
+      "dtype": "int32"
+    },
+    {
+      "path": "WM/MinX",
+      "shape": [
+        21
+      ],
+      "dtype": "int32"
+    },
+    {
+      "path": "WM/MinY",
+      "shape": [
+        21
+      ],
+      "dtype": "int32"
+    },
+    {
+      "path": "WM/NDArrayEpicsTSSec",
+      "shape": [
+        21
+      ],
+      "dtype": "uint32"
+    },
+    {
+      "path": "WM/NDArrayEpicsTSnSec",
+      "shape": [
+        21
+      ],
+      "dtype": "uint32"
+    },
+    {
+      "path": "WM/NDArrayTimeStamp",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/NDArrayUniqueId",
+      "shape": [
+        21
+      ],
+      "dtype": "int32"
+    },
+    {
+      "path": "WM/NextFillInfo",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/RingOperator",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/SCUCurrent",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/SDKVersion",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/SampleName",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/SaveDest",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/SerialNumber",
+      "shape": [
+        21
+      ],
+      "dtype": "|S256"
+    },
+    {
+      "path": "WM/SizeX",
+      "shape": [
+        21
+      ],
+      "dtype": "int32"
+    },
+    {
+      "path": "WM/SizeY",
+      "shape": [
+        21
+      ],
+      "dtype": "int32"
+    },
+    {
+      "path": "WM/Temperature",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/TopUpStatus",
+      "shape": [
+        21
+      ],
+      "dtype": "float32"
+    },
+    {
+      "path": "WM/WBSlitsHCenter",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/WBSlitsHSize",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/WBSlitsVCenter",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/WBSlitsVSize",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "WM/timestamp",
+      "shape": [
+        21,
+        5
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "exchange/data",
+      "shape": [
+        21,
+        2880,
+        2880
+      ],
+      "dtype": "uint16"
+    },
+    {
+      "path": "exchange/data_dark",
+      "shape": [
+        1,
+        2880,
+        2880
+      ],
+      "dtype": "uint16"
+    },
+    {
+      "path": "exchange/data_white",
+      "shape": [
+        1,
+        2880,
+        2880
+      ],
+      "dtype": "uint16"
+    },
+    {
+      "path": "measurement/instrument/BCS/slits_DS/H_cen",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[0.]"
+    },
+    {
+      "path": "measurement/instrument/BCS/slits_DS/H_size",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[0.2]"
+    },
+    {
+      "path": "measurement/instrument/BCS/slits_DS/V_cen",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[0.]"
+    },
+    {
+      "path": "measurement/instrument/BCS/slits_DS/V_size",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[0.2]"
+    },
+    {
+      "path": "measurement/instrument/BCS/slits_US/H_cen",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[-0.0035]"
+    },
+    {
+      "path": "measurement/instrument/BCS/slits_US/H_size",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[0.1]"
+    },
+    {
+      "path": "measurement/instrument/BCS/slits_US/V_cen",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[-0.009]"
+    },
+    {
+      "path": "measurement/instrument/BCS/slits_US/V_size",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[0.1]"
+    },
+    {
+      "path": "measurement/instrument/Detector/detX",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[-2.84217094e-14]"
+    },
+    {
+      "path": "measurement/instrument/Detector/detY",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[900.]"
+    },
+    {
+      "path": "measurement/instrument/Detector/detZ",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[0.]"
+    },
+    {
+      "path": "measurement/instrument/SMS/aero",
+      "shape": [
+        21
+      ],
+      "dtype": "float64"
+    },
+    {
+      "path": "measurement/instrument/SMS/samRx",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[0.]"
+    },
+    {
+      "path": "measurement/instrument/SMS/samRz",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[0.]"
+    },
+    {
+      "path": "measurement/instrument/SMS/samX",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[-0.25]"
+    },
+    {
+      "path": "measurement/instrument/SMS/samY",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[11.5]"
+    },
+    {
+      "path": "measurement/instrument/SMS/samZ",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[0.35]"
+    },
+    {
+      "path": "measurement/process/end_date",
+      "shape": [
+        1
+      ],
+      "dtype": "|S256",
+      "value": "[b'September 13, 2026 22:03:39']"
+    },
+    {
+      "path": "measurement/process/scan_parameters/end",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[10.]"
+    },
+    {
+      "path": "measurement/process/scan_parameters/speed",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[1.]"
+    },
+    {
+      "path": "measurement/process/scan_parameters/stage",
+      "shape": [
+        1
+      ],
+      "dtype": "|S256",
+      "value": "[b'20idhedmA:m1']"
+    },
+    {
+      "path": "measurement/process/scan_parameters/start",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[-11.]"
+    },
+    {
+      "path": "measurement/process/scan_parameters/step",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[1.]"
+    },
+    {
+      "path": "measurement/process/scan_parameters/steptime",
+      "shape": [
+        1
+      ],
+      "dtype": "float64",
+      "value": "[1.]"
+    },
+    {
+      "path": "measurement/process/start_date",
+      "shape": [
+        1
+      ],
+      "dtype": "|S256",
+      "value": "[b'September 13, 2026 22:03:15']"
+    }
+  ],
+  "control": {
+    "rows": 12,
+    "columns": [
+      "scan",
+      "mode",
+      "status",
+      "tz_deg",
+      "ty_deg",
+      "lsd_um",
+      "bc_x",
+      "bc_y",
+      "held_out_ue",
+      "full_ue",
+      "gap_ue",
+      "at_bounds",
+      "im_trans",
+      "tol_tilts_deg"
+    ]
+  }
+}

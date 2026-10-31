@@ -37,9 +37,11 @@ Separately: do you need FORWARD SIMULATION?
          → everything else works without a clone.
 ```
 
-Run `docs/setup_user.sh` once and it does the YES branch for you (probes for
-`midas-pipeline`, writes `APEXA_MIDAS_BIN` into `.env`), or tells you the one
-command for the NO branch.
+Run `./setup_user.sh` from the repository root to detect a native
+`midas-pipeline` environment and write `APEXA_MIDAS_BIN` into `.env`. The guided
+`docs/setup_user.sh` does the same while also probing network readiness; if no
+native environment is found, either script explains the `uv sync --extra midas`
+fallback.
 
 ---
 
@@ -109,7 +111,7 @@ ran `--extra midas`).
 
 ### A. Beamline host with a shared gate-checked env (the common case)
 ```bash
-# setup_user.sh auto-detects this; or by hand in .env:
+# setup_user.sh auto-detects this; or set it by hand in .env:
 APEXA_MIDAS_BIN=/home/beams12/S1IDUSER/opt/envs/midas/bin
 # MIDAS_PATH only if you also run forward simulation.
 uv sync          # no extra — do NOT bundle a second midas-suite

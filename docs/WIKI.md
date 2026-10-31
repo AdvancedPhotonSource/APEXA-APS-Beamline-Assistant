@@ -1,7 +1,11 @@
 # APEXA — Advanced Photon EXperiment Assistant
 
-*An AI-powered agentic framework for autonomous HEDM data analysis and instrument
-control at synchrotron beamlines (APS, Argonne National Laboratory).*
+*An AI-powered agentic framework for synchrotron diffraction analysis, tomography
+workflows, and instrument control at APS, Argonne National Laboratory.*
+
+**Source status reviewed:** 2026-10-15. Registered tool counts below describe
+the active `servers.config`; they do not guarantee that optional engines,
+beamline dependencies, or hardware are available on a given host.
 
 This wiki is the project overview. It suits the OSF project wiki
 (https://osf.io/zxwp6) and the GitHub repository wiki.
@@ -11,9 +15,9 @@ This wiki is the project overview. It suits the OSF project wiki
 ## 1. What APEXA is
 
 APEXA turns a beamline scientist's **natural-language request** into **executed,
-verifiable data-reduction and instrument-control actions** — calibration, azimuthal
-integration, HEDM analysis, GSAS-II refinement, visualization, and EPICS motor control —
-running against the real MIDAS analysis stack and real hardware.
+verifiable data-analysis and instrument-control actions** — detector calibration and
+integration, HEDM and powder refinement, tomography workflows, visualization, and
+EPICS motor control. Execution depends on the configured engine and host.
 
 Its distinguishing idea is **execution integrity**: a stochastic LLM drives the workflow,
 but *trust lives in deterministic tool-layer code, not in the prompt*. A guard refuses to
@@ -27,25 +31,27 @@ server code before any hardware command. This makes "the model said it calibrate
 Natural-language prompt
         │
    Reasoning agent (LLM, via institutional Argo gateway)   ← stochastic
-        │   emits TOOL_CALL text
         ▼
 ╔══ DETERMINISTIC TOOL LAYER ══╗   ← trust boundary (enforced in code)
-║  • format-tolerant parser     ║
+║  • response/tool-call adapter ║
 ║  • execution-integrity guard  ║
 ║  • 5 EPICS safety checks       ║
 ╚═══════════════════════════════╝
-     │           │            │
-  core(10)    MIDAS(38)     EPICS(13)     ← 3 MCP servers, 61 tools
-     └──────────┴────────────┘
+     │             │
+  core(13)   MIDAS(60)   GSAS-II(13)   Tomo(2)   EPICS(13)
+                 ← 5 active MCP servers, 101 source-declared tools
           Real hardware · manifest-logged results
 ```
 
-- **Single reasoning loop** over all 61 tools (Claude-Code-style persistent context),
-  with a legacy keyword-routed 5-specialist mode behind `APEXA_AGENT_MODE`.
-- **Argo Gateway** returns plain-text responses (strips native tool calls), so APEXA
-  uses a **text `TOOL_CALL:` / `ARGUMENTS:` protocol** parsed deterministically.
+- **Single reasoning loop** is the default and retains conversation context. Set
+  `APEXA_AGENT_MODE=legacy` for the keyword-routed specialist mode.
+- **Argo Gateway** response handling supports native structured tool calls and a
+  textual `TOOL_CALL:` / `ARGUMENTS:` fallback; the active response form depends on
+  the provider/model and gateway configuration.
 - **MCP servers:** `core` (file/shell/X-ray calc), `midas` (FF/NF/PF-HEDM, calibration,
-  integration, GSAS-II, CIF fetch, viewers), `motor` (EPICS caget/caput).
+  integration, powder refinement, CIF fetch and viewers), `gsas2` (Agentic-GSAS-II),
+  `tomo` (TomoPy) and `motor` (EPICS caget/caput). Optional MAUD support is a limited
+  backend of MIDAS `run_gsas_refinement`, not a separate active server.
 
 ## 3. APEXA-Bench (evaluation harness)
 

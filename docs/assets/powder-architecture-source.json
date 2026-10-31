@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/pawantr/Agentic-GSAS-II-manuscript",
+  "commit": "741add81047e5d9de97d136f7d2bb7760751ddeb",
+  "path": "figures/fig1_architecture.svg",
+  "sha256": "db343719aa4ad0ba83186d24602a2016c30995dade95736e48f64849b510b7f0",
+  "caption": "Numerical engine and separately checked APEXA, queue and advisor interfaces. This diagram does not imply end-to-end validation."
+}

@@ -1,5 +1,5 @@
 site_name: APEXA Documentation
-site_description: Advanced Photon EXperiment Assistant - AI-powered beamline scientist for HEDM data analysis
+site_description: Advanced Photon EXperiment Assistant for synchrotron diffraction analysis, tomography workflows, and instrument control
 site_author: Pawan Tripathi, Advanced Photon Source
 repo_url: https://github.com/AdvancedPhotonSource/APS-Beamline-Assistant
 repo_name: AdvancedPhotonSource/APS-Beamline-Assistant
@@ -54,20 +54,29 @@ nav:
   - Home: index.md
   - Getting Started:
       - Quick Start: getting-started/quickstart.md
-      - Quick Reference: getting-started/quick-reference.md
+      - Windows Setup: WINDOWS_SETUP.md
   - User Guide:
-      - User Manual: user-guide/user-manual.md
-      - Web UI Guide: user-guide/web-ui-guide.md
-      - Smart Features: user-guide/smart-features.md
+      - Canvas Workspace: CANVAS_WORKSPACE.md
+      - Powder Refinement: powder-refinement.md
+      - GSAS-II Canvas Workbench: gsas2-workbench.md
+      - Diffraction Software Survey: diffraction-software-survey.md
+      - Phase-Transformation Dynamics: phase-transformation-dynamics.md
+      - Shared Sessions: SESSIONS.md
+      - Tomography Setup: TOMO_SETUP.md
   - Technical Reference:
-      - MIDAS Workflows: reference/midas-workflows.md
+      - Compute Dispatch: COMPUTE_DISPATCH.md
+      - APS Readiness: APS_READINESS.md
   - Setup & Deployment:
       - Beamline Setup: setup/beamline-setup.md
       - Deployment Guide: setup/deployment.md
       - Fix Calibration: setup/fix-calibration.md
-      - Install GitHub CLI: setup/install-gh-cli.md
+      - MIDAS Setup: MIDAS_SETUP.md
+      - Deployment Modes: DEPLOYMENT_MODES.md
+      - Offline Deployment: OFFLINE_DEPLOYMENT.md
   - Development:
+      - Repository Layout: REPOSITORY_LAYOUT.md
+      - Quality Gates: development/quality-gates.md
       - Architecture: development/architecture.md
       - Adding New Servers: development/adding-servers.md
-      - Migration Strategy: development/migration-strategy.md
-      - Check Attribution: development/check-attribution.md
+      - Web UI Review: WEBUI_REVIEW.md
+      - Product Audit: PRODUCT_AUDIT.md

@@ -1,0 +1,60 @@
+✔ rapid viewer and draft edits defer payload serialization until a single flush (4.860583ms)
+✔ autosave materializes the latest workspace at the debounce boundary (0.697917ms)
+✔ session switching before debounce retains each session draft and canvas (0.689875ms)
+✔ pagehide preserves edits even when the debounce has not fired (0.247541ms)
+✔ startup restores recorded canvas artifacts from the saved conversation (0.423042ms)
+✔ long-running tool results stay in the originating chat after switching (1.589292ms)
+✔ explicit report opening reveals the canvas and restores from recorded tool results (1.034208ms)
+✔ header contains the layout control in one strip and one compact theme control (5.545833ms)
+✔ compact prompt uses two rows and one border with controls in the upper strip (1.138833ms)
+✔ left navigation orders data, analysis, results and chats with motors separate (1.903708ms)
+✔ Results exposes report opening and reopening of a closed session artifact (0.941667ms)
+✔ report view gives loading feedback and retains refresh and save controls (0.392959ms)
+✔ first launch exposes both chat and canvas on a laptop workspace (3.030541ms)
+✔ full-width choices are honored and narrow screens keep chat full height (0.146375ms)
+✔ analysis setup does not inject a calibrant or beam energy into real data (0.341875ms)
+✔ suggestions follow the selected artifact type without claiming a technique inference (0.3985ms)
+✔ recorded plots keep IDs across reloads and changed data creates another view (1.511958ms)
+✔ closed and removed artifacts stay closed while new CLI results appear (0.975167ms)
+✔ image cache IDs are disposable while file paths and display settings persist (0.115833ms)
+✔ first launch opens the last CLI session with saved canvas draft attachments and model (24.82375ms)
+✔ workspace conflicts retain the local draft until explicitly reloading saved state (24.051333ms)
+✔ slow session reads cannot replace the canvas after switching sessions (23.723542ms)
+✔ archiving the active session selects the next session and restores its canvas (33.451958ms)
+✔ failed initial history read remains visibly failed (23.006333ms)
+✔ detector restoration keeps artifact identity and ignores results after a session switch (29.062916ms)
+✔ cached unsaved drafts survive reload and save against their original revision (22.399ms)
+✔ edits made during a slow refresh survive the arriving server snapshot (23.343375ms)
+✔ a completed save cannot mark a newer unmaterialized edit as saved (34.431375ms)
+✔ typed job and scientific outcomes do not become successful cards (1.076084ms)
+✔ explicit execution errors override optimistic envelopes and legacy aliases remain distinct (0.194167ms)
+✔ error prose and calibration numbers alone are not successful calculations (0.5365ms)
+✔ calibration canvas retains provisional and rejected verdicts after parameter extraction (0.421042ms)
+✔ artifact updates preserve tabs, pins, and comparison (2.204416ms)
+✔ duplicate delivery does not duplicate artifacts or tabs (0.148917ms)
+✔ a trailing parameter table does not hide the generated plot (0.115625ms)
+✔ closing a result preserves history for reopening (0.191209ms)
+✔ MP and COD outputs produce structure artifacts with actual CIF paths (0.496875ms)
+✔ native science tool opens a typed view and exits an unrelated comparison (0.225375ms)
+✔ job lifecycle states stay distinct and FF reports produce a view (0.303542ms)
+✔ chat gets the accepted frame identity without preview or draft settings (0.140375ms)
+✔ report paths use stable identities, explicit locality and encoded API queries (0.22ms)
+✔ report tool, direct open, close and reopen share one canvas entry (0.322208ms)
+✔ structured reports deduplicate delivery and require a completed tool result (0.262708ms)
+APEXA WebSocket closed { code: 1006, reason: '', clean: false }
+APEXA WebSocket closed { code: 1006, reason: '', clean: false }
+APEXA WebSocket closed { code: 1006, reason: '', clean: false }
+APEXA WebSocket closed { code: 1011, reason: 'ping timeout', clean: false }
+✔ connect is idempotent while connecting and uses wss for HTTPS (1.386709ms)
+✔ disposing cancels queued reconnects (2.325333ms)
+✔ stale socket callbacks cannot close or reconnect the new socket (1.089709ms)
+✔ brief connections retain backoff instead of retrying every two seconds (0.437625ms)
+✔ connection loss emits diagnostics without a fabricated chat error (0.261917ms)
+ℹ tests 48
+ℹ suites 0
+ℹ pass 48
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 586.326542

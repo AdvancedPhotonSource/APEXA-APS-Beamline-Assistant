@@ -1,121 +1,42 @@
-# Fix for Auto-Calibration on S1IDUSER Beamline
+# MIDAS calibration troubleshooting
 
-## Problem
-APEXA auto-calibration was failing with:
-```
-ModuleNotFoundError: No module named 'zarr'
-```
+**Reviewed:** 2026-10-15
 
-This happened because APEXA was using the UV venv Python instead of the MIDAS conda environment.
+Older instructions on this page were specific to one S1IDUSER checkout and a
+legacy `AutoCalibrateZarr.py` path. The current `midas_auto_calibrate` tool
+selects among supported MIDAS calibration engines and reports the selected
+engine, reason, and fallbacks. Read the
+[MIDAS environment guide](../MIDAS_SETUP.md) before changing a beamline
+installation.
 
-## Solution Deployed
+## Diagnose the reported result
 
-The code now automatically detects the beamline's MIDAS conda environment:
-- **Location**: `~/opt/miniconda3/envs/midas_202411/bin/python`
-- **No manual activation needed** - APEXA finds it automatically!
+1. Confirm `midas:midas_comprehensive_server.py` is enabled in
+   `servers.config`.
+2. Read the complete structured result from `midas_auto_calibrate`, including
+   `engine`, `engine_reason`, `fallbacks`, and any `fix` field.
+3. Check the prerequisites for the selected engine and the input format. The
+   [calibration skill](https://github.com/AdvancedPhotonSource/APS-Beamline-Assistant/blob/main/.agents/skills/midas-calibrate/SKILL.md)
+   documents engine selection and supported inputs.
+4. For a MIDAS pip environment, set `APEXA_MIDAS_BIN` to its `bin/` directory.
+   Set `MIDAS_PATH` only when the selected workflow needs the native repository
+   or legacy tools.
+5. After changing configuration or code, stop and restart the top-level APEXA
+   process with `./start_beamline_assistant.sh` or `./start_web_viewer.sh`.
 
-## Steps to Update on Beamline
+Do not assume that `AutoCalibrateZarr.py`, a specific conda environment name,
+or a workstation-specific path is required for every calibration. The tool
+result identifies when a legacy route is selected and what it needs.
 
-1. **Pull the latest code**:
-```bash
-cd /home/beams/S1IDUSER/CAI/git/APS-Beamline-Assistant
-git pull origin pawan-modular-v2
-```
+## Common checks
 
-2. **Restart APEXA** (stop and start the beamline assistant)
+- Verify the image exists and is readable on the APEXA host.
+- Confirm the wavelength or energy, pixel size, detector identity, and parameter
+  template are correct for this acquisition.
+- Inspect calibration residuals and the returned convergence/qualification
+  fields; successful execution alone does not establish a scientifically
+  acceptable calibration.
+- If an engine import or executable fails, preserve the error and check the
+  configured interpreter or executable directly before retrying.
 
-3. **Test calibration**:
-```bash
-APEXA> generate calibration parameters using the Ceria tif file in /home/beams/S1IDUSER/CAI/git/demo_data
-```
-
-## What Changed
-
-The `find_midas_python()` function now:
-1. Checks for `MIDAS_PYTHON` environment variable (manual override)
-2. Searches `~/opt/miniconda3` (beamline location)
-3. Looks for `midas_202411` environment specifically
-4. Falls back to `midas_env`, `midas`, or `MIDAS`
-5. Validates all dependencies are present
-
-## Expected Output
-
-When starting APEXA, you should now see:
-```
-Found conda installation at: /home/beams/S1IDUSER/opt/miniconda3
-✓ Found MIDAS conda environment 'midas_202411': /home/beams/S1IDUSER/opt/miniconda3/envs/midas_202411/bin/python
-```
-
-When running auto-calibration:
-```
-✓ Found MIDAS conda environment 'midas_202411': /home/beams/S1IDUSER/opt/miniconda3/envs/midas_202411/bin/python
-Running AutoCalibrateZarr.py...
-[Calibration proceeds successfully]
-```
-
-## Manual Override (If Needed)
-
-If the automatic detection doesn't work for some reason, you can manually specify:
-
-```bash
-export MIDAS_PYTHON=/home/beams/S1IDUSER/opt/miniconda3/envs/midas_202411/bin/python
-```
-
-Then start APEXA. It will use this Python for all MIDAS operations.
-
-## Verification
-
-To verify the MIDAS environment is properly detected, run:
-```bash
-python3 find_midas_env.py
-```
-
-This will show all Python environments on the system and which ones have MIDAS dependencies.
-
-## Key Point
-
-**You do NOT need to run `conda activate midas_202411` before starting APEXA!**
-
-The code automatically uses the full path to the midas_202411 Python interpreter, which includes all the MIDAS dependencies. The activation is only needed if you want to manually run MIDAS commands outside of APEXA.
-
-## Technical Details
-
-When APEXA runs AutoCalibrateZarr.py, it now executes:
-```python
-/home/beams/S1IDUSER/opt/miniconda3/envs/midas_202411/bin/python \\
-    ~/opt/MIDAS/utils/AutoCalibrateZarr.py \\
-    -dataFN <image> \\
-    -paramFN <params> \\
-    -ConvertFile 3 \\
-    -StoppingStrain 0.0001 \\
-    ...
-```
-
-This Python interpreter automatically has access to:
-- zarr
-- diplib
-- numba
-- h5py
-- scikit-image
-- plotly
-- All other MIDAS dependencies
-
-## If You Still See Errors
-
-1. Verify the conda environment exists:
-```bash
-ls ~/opt/miniconda3/envs/midas_202411/bin/python
-```
-
-2. Verify it has dependencies:
-```bash
-~/opt/miniconda3/envs/midas_202411/bin/python -c "import zarr, diplib, numba; print('OK')"
-```
-
-3. Check APEXA logs for the detection output
-
-4. If all else fails, use the manual override with `export MIDAS_PYTHON=...`
-
-## Contact
-
-If issues persist after pulling the update, contact Pawan or share the APEXA startup logs showing the Python detection output.
+For installation and runtime selection, see [MIDAS setup](../MIDAS_SETUP.md).

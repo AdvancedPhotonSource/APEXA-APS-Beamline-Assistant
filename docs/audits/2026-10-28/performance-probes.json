@@ -1,0 +1,56 @@
+[
+  {
+    "probe": "actual_async_shell_tool_with_stubbed_subprocess",
+    "workers_requested": 4,
+    "peak_concurrent_subprocess_stubs": 1,
+    "elapsed_s": 0.6212,
+    "serial_service_time_s": 0.6,
+    "note": "No shell was executed. Same no-await blocking pattern occurs in midas_auto_calibrate."
+  },
+  {
+    "probe": "insufficient_memory_admission",
+    "free_ram_gb": 0.1,
+    "profile_rss_gb": 7.0,
+    "plan": {
+      "n_workers": 1,
+      "threads_per_worker": 4,
+      "device": "cpu",
+      "host": "",
+      "reason": "1 worker(s) x 4 thread(s) on local [memory-bound: cores 6, memory 1, items 4]",
+      "task": "calibration",
+      "n_items": 4,
+      "resources": "local: 32 cores (32 free, load 0.0), 0/64 GB free, no GPU"
+    }
+  },
+  {
+    "probe": "in_memory_2880_frame_payload",
+    "radial_profile": false,
+    "median_s": 0.1805,
+    "runs_s": [
+      0.1927,
+      0.1805,
+      0.179
+    ],
+    "preview_chars": 4159006,
+    "input_mb": 33.1776,
+    "note": "Local synthetic microbenchmark; no disk, browser, network, or numerical engine time."
+  },
+  {
+    "probe": "in_memory_2880_frame_payload",
+    "radial_profile": true,
+    "median_s": 0.2927,
+    "runs_s": [
+      0.3226,
+      0.2927,
+      0.2883
+    ],
+    "preview_chars": 4159006,
+    "input_mb": 33.1776,
+    "note": "Local synthetic microbenchmark; no disk, browser, network, or numerical engine time."
+  },
+  {
+    "probe": "eight_global_image_statistics_passes",
+    "elapsed_s": 0.1171,
+    "note": "Replicates full-array statistics pattern in WS context builder."
+  }
+]

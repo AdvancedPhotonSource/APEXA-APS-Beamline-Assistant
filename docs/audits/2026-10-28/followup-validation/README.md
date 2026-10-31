@@ -1,0 +1,9 @@
+# Follow-up validation evidence
+
+[validation.json](validation.json) records the final local checks for the additional implementation batch and shared scientific workflows on 30 October 2026. [pytest.txt](pytest.txt) contains the combined offline Python suite; [frontend-tests.txt](frontend-tests.txt), [typescript.txt](typescript.txt), [eslint.txt](eslint.txt), and [vite.txt](vite.txt) preserve frontend validation output. Successful type and lint checks emitted no output; their exit codes are recorded in the JSON.
+
+[browser-workflows.json](browser-workflows.json) records ten synthetic interaction checks in real Chrome, using intercepted API responses. The separate rendering experiment and its method are documented in [FRONTEND_PERFORMANCE.md](../../../FRONTEND_PERFORMANCE.md). Browser interaction correctness does not establish deployed end-to-end latency. Vite's large-chunk warning remains visible in the build log.
+
+[runtime-inventory.json](runtime-inventory.json) records configured server source/package identities and declared tools without launching engines or providers. [source-sha256.json](source-sha256.json) identifies the implementation, tests and documentation at packaging time. Inclusion does not attribute every existing edit in a file to this batch: the working tree already contained substantial changes. Scoped whitespace and relative-document-link checks are recorded alongside the test logs.
+
+State databases and the frontend production build were written under temporary directories. No deployed frontend was replaced, service restarted, operator environment changed, beamline job submitted, model benchmark run, or hardware operated by this batch. Native-engine/reference qualification, external job reconciliation and hardware commissioning remain separate acceptance work. Read [the change report](../ADDITIONAL_FIXES.md) and [shared workflow guide](../../../SCIENTIFIC_WORKFLOWS.md) for the implemented scope and operating limits.
