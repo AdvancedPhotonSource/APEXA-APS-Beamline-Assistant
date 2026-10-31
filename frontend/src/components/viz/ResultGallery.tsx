@@ -5,16 +5,16 @@ import { ArtifactBody } from './ArtifactBody'
 
 /** A bounded visual overview. Opening a card restores the full scientific viewer. */
 export function ResultGallery({ onOpen }: { onOpen: () => void }) {
-  const { artifacts, reopen, compareIds, toggleCompare } = useVizStore()
+  const { artifacts, reopen, compareIds, toggleCompare, showComparison } = useVizStore()
   const loadedImages = useImageStore(s => s.loadedImages)
   const [limit, setLimit] = useState(12)
-  const visuals = [...artifacts].reverse().filter(a => ['plotly', 'image', 'diffraction', 'report', 'html-report', 'sequence', 'structure'].includes(a.type))
+  const visuals = [...artifacts].reverse().filter(a => ['plotly', 'image', 'diffraction', 'report', 'html-report', 'sequence', 'structure', 'refinement'].includes(a.type))
   return (
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: 12 }}>
       <p style={{ fontSize: 12, color: 'var(--apexa-text-muted)', margin: '0 0 12px' }}>
         {visuals.length} visual results · newest first · select two to compare
       </p>
-      {!visuals.length && <p>No plots or images yet. Tables and text are available in Results.</p>}
+      {!visuals.length && <p>No plots or images yet. Tables and text are available in History.</p>}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 12 }}>
         {visuals.slice(0, limit).map(a => {
           const diffraction = a.type === 'diffraction' ? a.data as { fileId?: string; preview?: string } : null
@@ -42,7 +42,7 @@ export function ResultGallery({ onOpen }: { onOpen: () => void }) {
         })}
       </div>
       {visuals.length > limit && <button className="apexa-gallery-button" style={{ marginTop: 12 }} onClick={() => setLimit(n => n + 12)}>Show more results</button>}
-      {compareIds.length === 2 && <button className="apexa-gallery-button" style={{ position: 'sticky', bottom: 8, marginTop: 12, background: 'var(--apexa-accent)', color: 'white' }} onClick={() => { reopen(compareIds[0]); onOpen() }}>View comparison</button>}
+      {compareIds.length === 2 && <button className="apexa-gallery-button" style={{ position: 'sticky', bottom: 8, marginTop: 12, background: 'var(--apexa-accent)', color: 'white' }} onClick={() => { showComparison(); onOpen() }}>View comparison</button>}
     </div>
   )
 }

@@ -188,3 +188,52 @@ test('cached unsaved drafts survive reload and save against their original revis
     assert.equal(useChatStore.getState().sessions[0].workspaceDirty, false)
   } finally { dispose(); await tick() }
 })
+
+test('edits made during a slow refresh survive the arriving server snapshot', async () => {
+  setup([record('refresh-edit')])
+  const dispose = useChatStore.getState().init()
+  try {
+    await until(() => useChatStore.getState().currentSessionId === 'refresh-edit' && useChatStore.getState().sessionSync === 'ready')
+    const fetch = globalThis.fetch
+    let finish
+    globalThis.fetch = async (url, options) => url === '/api/sessions/refresh-edit' && options?.method === 'GET'
+      ? new Promise(resolve => { finish = resolve }) : fetch(url, options)
+    const reading = useChatStore.getState().reloadSession('refresh-edit')
+    useChatStore.getState().setDraft('Edited during refresh')
+    finish({ ok: true, json: async () => record('refresh-edit') })
+    await reading
+    assert.equal(useChatStore.getState().draft, 'Edited during refresh')
+    assert.equal(useChatStore.getState().sessions[0].workspaceDirty, true)
+    await useChatStore.getState().saveWorkspace()
+  } finally { dispose(); await tick() }
+})
+
+test('a completed save cannot mark a newer unmaterialized edit as saved', async () => {
+  const { disk, calls } = setup([record('inflight-edit')])
+  const dispose = useChatStore.getState().init()
+  try {
+    await until(() => useChatStore.getState().currentSessionId === 'inflight-edit' && useChatStore.getState().sessionSync === 'ready')
+    const fetch = globalThis.fetch
+    let finish
+    let delayFirstWrite = true
+    globalThis.fetch = async (url, options) => {
+      if (options?.method === 'PUT' && delayFirstWrite) {
+        delayFirstWrite = false
+        return new Promise(resolve => { finish = () => fetch(url, options).then(resolve) })
+      }
+      return fetch(url, options)
+    }
+    useChatStore.getState().setDraft('First snapshot')
+    const writing = useChatStore.getState().saveWorkspace()
+    await until(() => !!finish)
+    useChatStore.getState().setDraft('Latest snapshot')
+    await finish()
+    await writing
+    assert.equal(useChatStore.getState().sessions[0].workspaceDirty, true)
+    await useChatStore.getState().saveWorkspace()
+    assert.equal(disk.get('inflight-edit').workspace.draft, 'Latest snapshot')
+    assert.equal(disk.get('inflight-edit').workspaceRevision, 2)
+    assert.equal(calls.filter(call => call.method === 'PUT').length, 2)
+    assert.equal(useChatStore.getState().sessions[0].workspaceDirty, false)
+  } finally { dispose(); await tick() }
+})

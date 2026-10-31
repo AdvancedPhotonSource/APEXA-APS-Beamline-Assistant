@@ -38,8 +38,9 @@ export async function sendChatHttp(message: string, threadId?: string, viewerCon
 
 // Phase 2 endpoints
 
-export async function browseDirectory(path: string = '.', signal?: AbortSignal): Promise<BrowseResult> {
-  const res = await fetch(`${BASE}/api/browse?path=${encodeURIComponent(path)}`, { signal })
+export async function browseDirectory(path: string = '.', signal?: AbortSignal, offset = 0, limit = 100): Promise<BrowseResult> {
+  const params = new URLSearchParams({ path, offset: String(offset), limit: String(limit) })
+  const res = await fetch(`${BASE}/api/browse?${params}`, { signal })
   if (!res.ok) throw new Error(`Browse failed: ${res.status}`)
   return res.json()
 }

@@ -1,5 +1,6 @@
 import type { VizArtifact } from '@/api/types'
 import { cn } from '@/lib/cn'
+import { useEffect, useRef } from 'react'
 
 interface VizTabsProps {
   artifacts: VizArtifact[]
@@ -9,32 +10,63 @@ interface VizTabsProps {
 }
 
 export function VizTabs({ artifacts, activeId, onSelect, onClose }: VizTabsProps) {
+  const tabs = useRef(new Map<string, HTMLButtonElement>())
+  useEffect(() => {
+    // Reveal the chosen tab without stealing focus from chat or viewer controls.
+    if (activeId) tabs.current.get(activeId)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeId, artifacts.length])
   if (artifacts.length === 0) return null
+
+  const close = (id: string, restoreFocus: boolean) => {
+    const index = artifacts.findIndex(artifact => artifact.id === id)
+    const neighbor = artifacts[index + 1] ?? artifacts[index - 1]
+    onClose(id)
+    if (restoreFocus && neighbor) tabs.current.get(neighbor.id)?.focus()
+  }
 
   return (
     <div role="tablist" aria-label="Open results" className="flex shrink-0 items-center gap-0.5 px-2 pt-2 overflow-x-auto border-b"
       style={{ borderColor: 'var(--apexa-border)', background: 'var(--apexa-surface-2)' }}>
-      {artifacts.map((a) => (
+      {artifacts.map((a, index) => (
         <div
           key={a.id}
           className={cn(
-            'group shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-xs cursor-pointer transition-colors',
-            a.id === activeId ? 'border-b-2 border-blue-500' : 'opacity-60 hover:opacity-100'
+            'group shrink-0 flex items-center gap-1 px-1 rounded-t-lg text-xs transition-colors',
+            a.id === activeId ? 'border-b-2' : 'opacity-60 hover:opacity-100'
           )}
           style={{
             background: a.id === activeId ? 'var(--apexa-surface)' : 'transparent',
-            color: a.id === activeId ? 'var(--apexa-text)' : 'var(--apexa-text-muted)',
+            borderBottomColor: 'var(--apexa-accent)',
+            color: a.id === activeId ? 'var(--apexa-accent)' : 'var(--apexa-text-muted)',
           }}
-          onClick={() => onSelect(a.id)}
-          role="tab" aria-selected={a.id === activeId} tabIndex={0}
-          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(a.id) } }}
+          role="presentation"
         >
-          <TypeIcon type={a.type} />
-          <span className="max-w-[120px] truncate">{a.title}</span>
+          <button type="button" ref={node => { if (node) tabs.current.set(a.id, node); else tabs.current.delete(a.id) }}
+            className="flex min-w-0 items-center gap-1.5 rounded px-2 py-1.5" title={a.title}
+            role="tab" id={`canvas-tab-${encodeURIComponent(a.id)}`} aria-controls="canvas-active-view"
+            aria-selected={a.id === activeId} tabIndex={a.id === activeId || (!activeId && index === 0) ? 0 : -1}
+            onClick={() => onSelect(a.id)} onKeyDown={event => {
+              const target = event.key === 'ArrowRight' ? (index + 1) % artifacts.length
+                : event.key === 'ArrowLeft' ? (index - 1 + artifacts.length) % artifacts.length
+                  : event.key === 'Home' ? 0 : event.key === 'End' ? artifacts.length - 1 : null
+              if (target != null) {
+                event.preventDefault()
+                onSelect(artifacts[target].id)
+                tabs.current.get(artifacts[target].id)?.focus()
+              } else if (event.key === 'Delete') {
+                event.preventDefault()
+                close(a.id, true)
+              }
+            }}>
+            <TypeIcon type={a.type} />
+            <span className="max-w-[120px] truncate">{a.title}</span>
+          </button>
           <button
+            type="button"
             aria-label={`Close ${a.title}`}
-            onClick={(e) => { e.stopPropagation(); onClose(a.id) }}
-            className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-400"
+            title={`Close ${a.title}; keep it in History`}
+            onClick={event => close(a.id, event.detail === 0)}
+            className="rounded px-1.5 py-1 opacity-60 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
           >
             x
           </button>
@@ -51,6 +83,12 @@ function TypeIcon({ type }: { type: string }) {
       return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+        </svg>
+      )
+    case 'refinement':
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={className}>
+          <path d="M3 17l5-5 4 3 8-9" /><path d="M15 6h5v5" /><path d="M3 21h18" />
         </svg>
       )
     case 'diffraction':

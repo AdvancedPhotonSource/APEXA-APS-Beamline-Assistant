@@ -1,5 +1,8 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useVizStore } from '@/stores/vizStore'
+import { useChatStore } from '@/stores/chatStore'
+import { vizResultId } from '@/lib/canvasIdentity'
+import { resultIdentity } from '@/lib/parseToolResult'
 
 interface VizFile {
   file: string
@@ -30,35 +33,66 @@ function basename(path: string): string {
 }
 
 export function VizLauncher() {
+  const sessionId = useChatStore(state => state.currentSessionId)
+  return <SessionVizLauncher key={sessionId ?? 'no-session'} sessionId={sessionId} />
+}
+
+function SessionVizLauncher({ sessionId }: { sessionId: string | null }) {
   const [dir, setDir] = useState('')
   const [files, setFiles] = useState<DiscoverResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [vizLoading, setVizLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const addArtifacts = useVizStore((s) => s.addArtifacts)
+  const discoveryRequest = useRef<AbortController | null>(null)
+  const viewerRequest = useRef<AbortController | null>(null)
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    const abortRequests = () => { discoveryRequest.current?.abort(); viewerRequest.current?.abort() }
+    // Invalidate immediately, including a switch away and back before React renders.
+    const unsubscribe = useChatStore.subscribe((next, previous) => {
+      if (next.currentSessionId !== previous.currentSessionId) abortRequests()
+    })
+    return () => { mounted.current = false; abortRequests(); unsubscribe() }
+  }, [])
+  const current = useCallback((controller: AbortController) => mounted.current && !controller.signal.aborted
+    && useChatStore.getState().currentSessionId === sessionId, [sessionId])
 
   const discover = useCallback(async (path: string) => {
     if (!path.trim()) return
+    discoveryRequest.current?.abort()
+    viewerRequest.current?.abort()
+    const controller = new AbortController()
+    discoveryRequest.current = controller
     setLoading(true)
+    setVizLoading(null)
+    setFiles(null)
     setError(null)
     try {
-      const res = await fetch(`${API}/discover?path=${encodeURIComponent(path)}`)
+      const res = await fetch(`${API}/discover?path=${encodeURIComponent(path)}`, { signal: controller.signal })
       if (!res.ok) {
         const err = await res.json()
         throw new Error(err.detail || 'Discovery failed')
       }
       const data: DiscoverResult = await res.json()
+      if (!current(controller)) return
       setFiles(data)
     } catch (e) {
+      if (!current(controller)) return
       setError((e as Error).message)
       setFiles(null)
     } finally {
-      setLoading(false)
+      if (current(controller)) setLoading(false)
     }
-  }, [])
+  }, [current])
 
   const openViewer = useCallback(async (endpoint: string, file: string, extras?: Record<string, string>) => {
+    viewerRequest.current?.abort()
+    const controller = new AbortController()
+    viewerRequest.current = controller
     setVizLoading(file)
+    setError(null)
     try {
       const body = new FormData()
       body.append('file', file)
@@ -67,44 +101,46 @@ export function VizLauncher() {
           body.append(k, v)
         }
       }
-      const res = await fetch(`${API}/${endpoint}`, { method: 'POST', body })
+      const res = await fetch(`${API}/${endpoint}`, { method: 'POST', body, signal: controller.signal })
       if (!res.ok) {
         const err = await res.json()
         throw new Error(err.detail || 'Visualization failed')
       }
       const result: VizResult = await res.json()
+      if (!current(controller)) return
+      const provenance = { tool: `viz:${endpoint}`, inputs: [file, ...Object.values(extras ?? {})], params: { endpoint, ...extras } }
 
       const artifacts = []
       // Main plotly artifact
       if (result.plotly) {
         artifacts.push({
-          id: crypto.randomUUID(),
+          id: vizResultId(endpoint, file, result.plotly, extras),
           type: 'plotly' as const,
           title: result.title || basename(file),
           data: result.plotly,
-          sourceMessageId: 'viz-launcher',
+          sourceMessageId: '', provenance,
         })
       }
       // Table artifacts
       for (const tbl of result.tables || []) {
         artifacts.push({
-          id: crypto.randomUUID(),
+          id: `viz-table-${resultIdentity({ tool: `viz:${endpoint}`, status: 'completed', data: { file, extras, table: tbl } })}`,
           type: 'table' as const,
           title: tbl.title,
           data: tbl.data,
-          sourceMessageId: 'viz-launcher',
+          sourceMessageId: '', provenance,
         })
       }
       if (artifacts.length > 0) {
-        addArtifacts(artifacts)
-        useVizStore.getState().showCanvas()
+        addArtifacts(artifacts, { activate: true })
       }
     } catch (e) {
+      if (!current(controller)) return
       setError((e as Error).message)
     } finally {
-      setVizLoading(null)
+      if (current(controller)) setVizLoading(null)
     }
-  }, [addArtifacts])
+  }, [addArtifacts, current])
 
   const totalFiles = files
     ? files.lineout.length + files.calibrant.length + files.caked.length +

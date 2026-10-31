@@ -7,10 +7,18 @@ interface ThemeState {
   setMode: (mode: ThemeMode) => void
 }
 
+function initialTheme(): ThemeMode {
+  try {
+    const saved = localStorage.getItem('apexa-theme')
+    if (saved === 'dark' || saved === 'light' || saved === 'midnight') return saved
+  } catch { /* A blocked browser store should not prevent rendering. */ }
+  return 'light'
+}
+
 export const useThemeStore = create<ThemeState>((set) => ({
-  mode: (localStorage.getItem('apexa-theme') as ThemeMode) ?? 'dark',
+  mode: initialTheme(),
   setMode: (mode) => {
-    localStorage.setItem('apexa-theme', mode)
+    try { localStorage.setItem('apexa-theme', mode) } catch { /* Keep the current window usable. */ }
     set({ mode })
   },
 }))

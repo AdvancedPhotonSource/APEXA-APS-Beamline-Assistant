@@ -4,6 +4,8 @@ import { useVizStore } from '../src/stores/vizStore.ts'
 import { extractArtifacts, parseDirectToolResult } from '../src/lib/parseToolResult.ts'
 import { canvasContext } from '../src/lib/canvasContext.ts'
 import { isHtmlReport, reportApiUrl, reportFileArtifact } from '../src/lib/reportArtifacts.ts'
+import { fileViewId, vizResultId } from '../src/lib/canvasIdentity.ts'
+import { restoredWorkspace } from '../src/lib/sessionWorkspace.ts'
 
 beforeEach(() => useVizStore.getState().clear())
 const artifact = (id, type = 'plotly') => ({ id, type, title: id, data: {}, sourceMessageId: 'turn' })
@@ -126,4 +128,93 @@ test('structured reports deduplicate delivery and require a completed tool resul
   assert.deepEqual(first[0].provenance.inputs, ['/data/report.html'])
   assert.equal(extractArtifacts([{ ...result, status: 'failed' }], 'message').length, 0)
   assert.equal(extractArtifacts([{ ...result, data: { report: '/data/report.html' } }], 'message')[0].type, 'html-report')
+})
+
+test('repeat delivery preserves a closed tab, current selection and layout revision', () => {
+  const store = useVizStore.getState()
+  store.addArtifacts([artifact('a'), artifact('b')])
+  store.closeTab('b')
+  const before = useVizStore.getState()
+  store.addArtifacts([artifact('b')])
+  const after = useVizStore.getState()
+  assert.deepEqual(after.openIds, ['a'])
+  assert.equal(after.activeId, 'a')
+  assert.equal(after.revealRevision, before.revealRevision)
+  assert.equal(after.canvasRevision, before.canvasRevision)
+  store.addArtifacts([artifact('b')], { activate: true })
+  assert.equal(useVizStore.getState().activeId, 'b')
+  assert.deepEqual(useVizStore.getState().openIds, ['a', 'b'])
+})
+
+test('comparison survives selecting its second tab; a different explicit open exits it', () => {
+  const store = useVizStore.getState()
+  store.addArtifacts([artifact('a'), artifact('b'), artifact('c')])
+  store.setActive('a'); store.toggleCompare('a')
+  store.setActive('b'); store.toggleCompare('b')
+  assert.deepEqual(useVizStore.getState().compareIds, ['a', 'b'])
+  store.reopen('c')
+  assert.equal(useVizStore.getState().activeId, 'c')
+  assert.deepEqual(useVizStore.getState().compareIds, [])
+})
+
+test('new visuals reveal Active and comparison can reopen closed selections', () => {
+  const store = useVizStore.getState()
+  store.addArtifacts([artifact('a'), artifact('b')])
+  store.closeTab('a')
+  store.toggleCompare('a'); store.toggleCompare('b'); store.showComparison()
+  assert.deepEqual(useVizStore.getState().compareIds, ['a', 'b'])
+  assert.ok(useVizStore.getState().openIds.includes('a'))
+  const revision = useVizStore.getState().revealRevision
+  store.addArtifacts([artifact('new', 'image')])
+  assert.equal(useVizStore.getState().activeId, 'new')
+  assert.deepEqual(useVizStore.getState().compareIds, [])
+  assert.ok(useVizStore.getState().revealRevision > revision)
+})
+
+test('closing the active tab selects its right neighbor, then its left neighbor', () => {
+  const store = useVizStore.getState()
+  store.addArtifacts([artifact('a'), artifact('b'), artifact('c')])
+  store.setActive('b'); store.closeTab('b')
+  assert.equal(useVizStore.getState().activeId, 'c')
+  store.closeTab('c')
+  assert.equal(useVizStore.getState().activeId, 'a')
+  store.closeTab('a')
+  assert.equal(useVizStore.getState().activeId, null)
+  assert.equal(useVizStore.getState().artifacts.length, 3)
+})
+
+test('CIF entry points reuse the viewer and retain settings; remote paths stay distinct', () => {
+  const store = useVizStore.getState()
+  const path = '/data/Ni.cif'
+  store.addArtifact({ ...artifact('old-data-browser-id', 'structure'), data: { path, viewerState: { axes: true } } })
+  const result = { tool: 'core:open_science_view', status: 'completed', data: {
+    canvas: { schema_version: 1, type: 'structure', data: { path, location: 'local' } },
+  } }
+  store.addArtifacts(extractArtifacts([result], 'm'))
+  assert.equal(useVizStore.getState().artifacts.length, 1)
+  assert.deepEqual(useVizStore.getState().artifacts[0].data.viewerState, { axes: true })
+  store.addArtifact({ ...artifact('remote', 'structure'), data: { path, location: 'remote' } })
+  assert.equal(useVizStore.getState().artifacts.length, 2)
+  assert.notEqual(fileViewId('structure', path), fileViewId('structure', path, 'remote'))
+})
+
+test('legacy saved file identities migrate with closed state, favorites and viewer settings', () => {
+  const path = '/data/Ni.cif'
+  const old = { ...artifact('structure-old', 'structure'), data: { path, viewerState: { axes: true } } }
+  const workspace = restoredWorkspace({ messages: [{ id: 'm', artifacts: [old] }], workspace: {
+    artifacts: [old], openIds: [], activeId: null, pinned: [old.id], compareIds: [old.id], recordedArtifactIds: [old.id],
+  } })
+  assert.equal(workspace.artifacts.length, 1)
+  assert.deepEqual(workspace.openIds, [])
+  assert.deepEqual(workspace.pinned, [fileViewId('structure', path)])
+  assert.deepEqual(workspace.compareIds, workspace.pinned)
+  assert.deepEqual(workspace.artifacts[0].data.viewerState, { axes: true })
+})
+
+test('plot snapshots distinguish changed data or settings without timestamp duplicates', () => {
+  const plot = { data: [{ x: [1, 2], y: [3, 4] }] }
+  const id = vizResultId('lineout', '/data/scan.csv', plot, { y: 'I', x: 'q' })
+  assert.equal(id, vizResultId('lineout', '/data/scan.csv', structuredClone(plot), { x: 'q', y: 'I' }))
+  assert.notEqual(id, vizResultId('lineout', '/data/scan.csv', { data: [{ x: [1, 2], y: [5, 6] }] }, { x: 'q', y: 'I' }))
+  assert.notEqual(id, vizResultId('lineout', '/data/scan.csv', plot, { x: 'q', y: 'sigma' }))
 })

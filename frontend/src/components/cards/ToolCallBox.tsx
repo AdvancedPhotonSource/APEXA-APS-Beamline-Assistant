@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ToolResult } from '@/api/types'
 import { ToolResultCard } from './ToolResultCard'
+import { boundedPreview } from '@/lib/boundedPreview'
 
 /**
  * Claude-Code-style collapsible tool-call box: a compact one-line header
@@ -12,22 +13,21 @@ import { ToolResultCard } from './ToolResultCard'
 const STATUS_COLOR: Record<string, string> = {
   success: '#22c55e', completed: '#22c55e',
   error: '#ef4444', failed: '#ef4444', warning: '#f59e0b',
+  rejected: '#ef4444', denied: '#ef4444', provisional: '#f59e0b',
 }
 
 function oneLineSummary(r: ToolResult): string {
   const d = r.data || {}
   // Prefer the most informative field the tool returned.
-  for (const k of ['message', 'output_root', 'result_folder', 'lineout_xy', 'param_file', 'status']) {
+  for (const k of ['message', 'output_file', 'output_root', 'result_folder', 'lineout_xy', 'param_file', 'n_tracks', 'status']) {
     const v = (d as Record<string, unknown>)[k]
     if (typeof v === 'string' && v) return v.length > 90 ? v.slice(0, 90) + '…' : v
   }
   if (typeof (d as Record<string, unknown>).succeeded === 'number')
     return `${(d as Record<string, unknown>).succeeded} succeeded`
+  if (typeof (d as Record<string, unknown>).tracks === 'number')
+    return String((d as Record<string, unknown>).tracks) + ' tracks'
   return ''
-}
-
-function fmt(obj: unknown): string {
-  try { return JSON.stringify(obj, null, 2) } catch { return String(obj) }
 }
 
 export function ToolCallBox({ result }: { result: ToolResult }) {
@@ -74,7 +74,7 @@ export function ToolCallBox({ result }: { result: ToolResult }) {
           {result.args && Object.keys(result.args).length > 0 && (
             <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 10, color: 'var(--apexa-text-muted)', fontWeight: 600, marginBottom: 2 }}>IN</div>
-              <pre style={preStyle}>{fmt(result.args)}</pre>
+              <pre style={preStyle}>{boundedPreview(result.args)}</pre>
             </div>
           )}
           <div>

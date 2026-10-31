@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import type { ToolResult } from '@/api/types'
+import { boundedPreview, downloadJson } from '@/lib/boundedPreview'
 
 function formatValue(v: unknown): string {
   if (v === null || v === undefined) return '—'
   if (typeof v === 'number') return Number.isInteger(v) ? String(v) : v.toFixed(6)
   if (typeof v === 'boolean') return v ? 'Yes' : 'No'
-  if (typeof v === 'string') return v
-  return JSON.stringify(v)
+  if (typeof v === 'string') return v.length > 1500 ? v.slice(0, 1500) + '…' : v
+  return boundedPreview(v)
 }
 
 export function GenericCard({ result }: { result: ToolResult }) {
@@ -30,7 +31,7 @@ export function GenericCard({ result }: { result: ToolResult }) {
       </div>
       {simple.length > 0 && (
         <div className="px-3 py-2 space-y-1">
-          {simple.map(([k, v]) => (
+          {simple.slice(0, 40).map(([k, v]) => (
             <div key={k} className="flex justify-between items-baseline gap-4 text-xs">
               <span className="text-zinc-500 shrink-0">{k.replace(/_/g, ' ')}</span>
               <span className="text-zinc-200 font-mono text-[11px] truncate text-right">{formatValue(v)}</span>
@@ -52,11 +53,13 @@ export function GenericCard({ result }: { result: ToolResult }) {
           </button>
           {expanded && (
             <pre className="px-3 pb-2 text-[11px] text-zinc-400 font-mono whitespace-pre-wrap overflow-x-auto max-h-48 overflow-y-auto">
-              {JSON.stringify(Object.fromEntries(complex), null, 2)}
+              {boundedPreview(Object.fromEntries(complex.slice(0, 40)))}
             </pre>
           )}
         </div>
       )}
+      <button className="apexa-gallery-button m-2" onClick={() => downloadJson(data, tool)}>Download full result</button>
+      {(expanded || simple.length > 40) && <p className="px-3 pb-2 text-[10px] text-zinc-500">Preview is bounded. Download includes the complete recorded result.</p>}
     </div>
   )
 }

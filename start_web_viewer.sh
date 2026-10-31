@@ -27,7 +27,7 @@ if [ -d "frontend" ]; then
     NEED_BUILD=0
     if [ ! -f "frontend/dist/index.html" ]; then
         NEED_BUILD=1
-    elif [ -n "$(find frontend/src -type f -newer frontend/dist/index.html -print -quit)" ]; then
+    elif [ -n "$(find frontend/src frontend/public -type f -newer frontend/dist/index.html -print -quit)" ]; then
         NEED_BUILD=1
     fi
     for config in frontend/package.json frontend/package-lock.json frontend/vite.config.ts frontend/tsconfig*.json frontend/index.html; do

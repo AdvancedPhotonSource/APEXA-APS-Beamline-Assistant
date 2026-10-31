@@ -1,5 +1,8 @@
 import type { ToolResult, VizArtifact } from '@/api/types'
 import { reportFileArtifact } from './reportArtifacts.ts'
+import { fileViewId } from './canvasIdentity.ts'
+import { resultIdentity } from './resultIdentity.ts'
+export { resultIdentity } from './resultIdentity.ts'
 
 export function parseToolResults(text: string): ToolResult[] {
   const results: ToolResult[] = []
@@ -46,7 +49,8 @@ export function parseToolResults(text: string): ToolResult[] {
   if (results.length === 0 && hasCalibrationPattern(text)) {
     const data = extractCalibrationFromText(text)
     if (data) {
-      results.push({ tool: 'midas_auto_calibrate', status: 'completed', data })
+      // A number mentioned in prose is not an executed/validated calibration.
+      results.push({ tool: 'midas_auto_calibrate', status: 'unknown', data })
     }
   }
 
@@ -62,11 +66,31 @@ function inferTool(data: Record<string, unknown>): string {
   return 'unknown'
 }
 
-function inferStatus(data: Record<string, unknown>): ToolResult['status'] {
-  if (data.status === 'error' || data.status === 'failed' || data.success === false || data.error) return 'error'
-  if (data.status === 'running' || data.status === 'submitted' || data.status === 'partial' || data.status === 'unknown') return data.status
-  if (data.status === 'completed' || data.status === 'complete' || data.success === true) return 'completed'
-  if (data.status === 'warning') return 'warning'
+export function inferStatus(data: Record<string, unknown>): ToolResult['status'] {
+  const outcomes = [data._apexa_outcome, data.outcome].filter(value => value && typeof value === 'object') as Record<string, unknown>[]
+  const nested = data.outcome && data.result && typeof data.result === 'object' ? inferStatus(data.result as Record<string, unknown>) : null
+  const states = [...outcomes.map(outcome => outcome.execution), data.execution_state, data.execution_status, data.status, nested]
+    .filter((state): state is string => typeof state === 'string').map(state => state.toLowerCase())
+  const verdicts = [...outcomes.map(outcome => outcome.scientific_verdict), data.scientific_verdict, data.scientific_status]
+    .filter((verdict): verdict is string => typeof verdict === 'string').map(verdict => verdict.toLowerCase())
+  const errors = Array.isArray(data.errors) ? data.errors.length > 0 : !!data.errors
+  const failedExit = ['returncode', 'return_code', 'exit_code'].some(key => data[key] != null && data[key] !== 0)
+  if (data.isError === true || data.error || errors || failedExit || data.timed_out === true
+      || states.some(state => ['error', 'failed', 'failure', 'timeout', 'timed_out'].includes(state))) return 'error'
+  if (data.nothing_was_run === true || states.some(state => ['denied', 'blocked', 'permission_denied', 'resource_unavailable'].includes(state))) return 'denied'
+  if (states.some(state => ['cancelled', 'canceled'].includes(state))) return 'cancelled'
+  // HTTP success=false also represents pending or provisional work. The typed
+  // outcome, when present, keeps those separate from failed execution.
+  if (states.some(state => ['running', 'in_progress', 'started'].includes(state))) return 'running'
+  if (states.includes('submitted')) return 'submitted'
+  if (states.some(state => ['queued', 'pending'].includes(state)) || data.completed === false) return 'pending'
+  if (verdicts.some(verdict => ['rejected', 'failed', 'fail', 'invalid'].includes(verdict)) || data.gate_passed === false || data.scientifically_valid === false || states.includes('rejected')) return 'rejected'
+  if (verdicts.some(verdict => ['provisional', 'warning', 'needs_review'].includes(verdict)) || states.some(state => ['provisional', 'needs_review', 'needs_selection'].includes(state))) return 'provisional'
+  if (data.success === false) return 'error'
+  if (states.includes('warning')) return 'warning'
+  if (states.includes('partial')) return 'partial'
+  if (states.includes('unknown')) return 'unknown'
+  if (states.some(state => ['completed', 'complete', 'done', 'ok'].includes(state)) || data.success === true) return 'completed'
   return 'success'
 }
 
@@ -102,22 +126,13 @@ export function parseDirectToolResult(tool: string, resultJson: string): ToolRes
     }
   } catch {
     if (resultJson && resultJson.trim().length > 0) {
-      return { tool, status: 'success', data: { text_result: resultJson } }
+      const failed = /^(?:error\b|failed\b|traceback\b)/i.test(resultJson.trim())
+      const denied = /^denied\b/i.test(resultJson.trim()) || resultJson.slice(0, 400).includes('⛔')
+      return { tool, status: failed ? 'error' : denied ? 'denied' : 'completed',
+        data: failed ? { error: resultJson } : { text_result: resultJson } }
     }
   }
   return null
-}
-
-// Content identity is stable across live events, CLI import and page reload.
-// Identical tool output reuses a view; a changed result creates a new one.
-function resultIdentity(result: ToolResult): string {
-  const text = JSON.stringify([result.tool, result.data])
-  let a = 2166136261, b = 5381
-  for (let i = 0; i < text.length; i++) {
-    a = Math.imul(a ^ text.charCodeAt(i), 16777619)
-    b = Math.imul(b, 33) ^ text.charCodeAt(i)
-  }
-  return `${(a >>> 0).toString(36)}-${(b >>> 0).toString(36)}`
 }
 
 export function extractArtifacts(results: ToolResult[], messageId: string): VizArtifact[] {
@@ -126,6 +141,55 @@ export function extractArtifacts(results: ToolResult[], messageId: string): VizA
   for (const result of results) {
     const key = resultIdentity(result)
     const toolName = result.tool.split(':').pop()
+    const powderTools = new Set(['refine_pattern', 'plan_refinement', 'assess_refinement', 'refine_series_submit',
+      'powder_refine_submit', 'refinement_status', 'powder_evidence', 'powder_advise',
+      'powder_trial', 'powder_live_ingest', 'powder_session_create', 'powder_session_status',
+      'powder_session_evidence', 'powder_session_control', 'powder_adopt', 'powder_improve',
+      'powder_strategy_sweep_submit', 'powder_compare', 'gsas2_tutorials', 'gsas2_capabilities',
+      'gsas2_workflow_submit', 'gsas2_workflow_status', 'gsas2_workflow_cancel'])
+    if (powderTools.has(toolName ?? '')) {
+      const data = result.data
+      const hasRefinementEvidence = ['job_id', 'job_ids', 'jobs', 'gpx_path', 'Rwp', 'panels',
+        'proposals', 'trials', 'accepted', 'diagnostic_jobs', 'session_dir', 'workflow_dir',
+        'tutorials', 'methods', 'research_capabilities', 'coverage', 'comparison', 'stages'].some(field => field in data)
+      if (hasRefinementEvidence) {
+        const identity = typeof data.session_dir === 'string' ? data.session_dir
+          : typeof data.workflow_dir === 'string' ? data.workflow_dir
+          : typeof data.job_id === 'string' ? data.job_id
+          : typeof data.gpx_path === 'string' ? data.gpx_path
+          : typeof data.observation_id === 'string' ? data.observation_id : key
+        const title = toolName === 'refinement_status' || toolName === 'powder_refine_submit'
+          || toolName === 'refine_series_submit'
+          ? `Powder refinement · ${typeof data.job_id === 'string' ? data.job_id : 'job'}`
+          : toolName === 'powder_evidence' ? `Refinement evidence · ${typeof data.observation_id === 'string' ? data.observation_id : 'pattern'}`
+          : toolName === 'powder_trial' ? 'Refinement trial'
+          : toolName === 'powder_advise' ? 'Refinement diagnosis'
+          : toolName?.startsWith('gsas2_') ? 'GSAS-II workbench'
+          : typeof data.session_dir === 'string' ? 'Refinement session'
+          : 'Agentic refinement'
+        const inputPaths = [data.data_file, data.instrument_file, data.gpx_path, data.output_dir, data.artifact,
+          ...(Array.isArray(data.cif_files) ? data.cif_files : []),
+          ...((Array.isArray(data.jobs) ? data.jobs : []).flatMap(job => {
+            if (!job || typeof job !== 'object') return []
+            const j = job as Record<string, unknown>
+            const r = j.result && typeof j.result === 'object' ? j.result as Record<string, unknown> : {}
+            const payload = j.payload && typeof j.payload === 'object' ? j.payload as Record<string, unknown> : {}
+            const observations = Array.isArray(payload.observations) ? payload.observations : []
+            return [r.gpx_path, ...observations.flatMap(observation => {
+              if (!observation || typeof observation !== 'object') return []
+              const o = observation as Record<string, unknown>
+              return [o.data_path, o.instrument_path, ...(Array.isArray(o.cif_paths) ? o.cif_paths : [])]
+            })]
+          }))].filter((path): path is string => typeof path === 'string')
+        artifacts.push({ id: `powder-refinement-${identity}`, type: 'refinement', title,
+          data: { ...data, tool: result.tool }, sourceMessageId: messageId,
+          provenance: { inputs: inputPaths, tool: result.tool, timestamp: Date.now() } })
+      }
+    }
+    if (toolName === 'powder_report' && (result.status === 'success' || result.status === 'completed')
+        && typeof result.data.path === 'string') {
+      artifacts.push(reportFileArtifact(result.data.path, messageId, 'local', 'Powder refinement report'))
+    }
     if (toolName === 'generate_ff_reconstruction_report' && typeof result.data.report_html === 'string'
         && (result.status === 'success' || result.status === 'completed')) {
       artifacts.push({ ...reportFileArtifact(result.data.report_html, messageId,
@@ -139,7 +203,7 @@ export function extractArtifacts(results: ToolResult[], messageId: string): VizA
         && typeof canvas.data?.path === 'string') {
       artifacts.push({ id: canvas.type === 'html-report'
           ? reportFileArtifact(canvas.data.path, messageId, canvas.data.location === 'remote' ? 'remote' : 'local').id
-          : `canvas-${canvas.type}-${canvas.data.path}`, type: canvas.type,
+          : fileViewId(canvas.type, canvas.data.path, canvas.data.location === 'remote' ? 'remote' : 'local'), type: canvas.type,
         title: canvas.title ?? canvas.data.path, data: canvas.data, sourceMessageId: messageId,
         provenance: { inputs: [canvas.data.path], tool: result.tool, timestamp: Date.now() } })
     }
@@ -153,20 +217,21 @@ export function extractArtifacts(results: ToolResult[], messageId: string): VizA
           const path = entry.cif_file ?? entry.cif
           if (typeof path !== 'string' || !path) continue
           const source = toolName === 'fetch_cif_from_mp' ? `Materials Project ${entry.material_id ?? ''}` : `COD ${entry.cod_id ?? ''}`
-          artifacts.push({ id: `structure-${source}-${path}`, type: 'structure', title: source.trim(),
+          artifacts.push({ id: fileViewId('structure', path), type: 'structure', title: source.trim(),
             data: { path, source }, sourceMessageId: messageId,
             provenance: { inputs: [path], tool: result.tool, timestamp: Date.now() } })
         }
       }
     }
-    if (result.tool === 'midas_auto_calibrate' && result.status !== 'error') {
+    if (toolName === 'midas_auto_calibrate' && result.status !== 'error' && result.status !== 'failed') {
       const calParams = (result.data.calibrated_parameters ?? result.data) as Record<string, unknown>
       if (calParams && Object.keys(calParams).length > 0) {
         artifacts.push({
           id: `cal-${key}`,
           type: 'table',
           title: 'Calibration Parameters',
-          data: calParams,
+          // Preserve the outcome when the parameters become a standalone view.
+          data: { ...calParams, status: result.status },
           sourceMessageId: messageId,
         })
       }

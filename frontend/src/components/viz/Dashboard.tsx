@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useVizStore } from '@/stores/vizStore'
 import { useChatStore } from '@/stores/chatStore'
 import { fetchCsvData, uploadFile } from '@/api/endpoints'
@@ -18,45 +18,65 @@ export function Dashboard() {
   const [isDragOver, setIsDragOver] = useState(false)
   const [status, setStatus] = useState<{ msg: string; type: 'info' | 'error' } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
 
   const processFiles = useCallback(async (files: File[]) => {
-    for (const file of files) {
-      const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
-      if (isHtmlReport(file.name) || ['cif','tif','tiff','ge','ge1','ge2','ge3','ge4','ge5','h5','hdf5','hdf','nxs','cbf','edf'].includes(ext)) {
-        setStatus({ msg: `Loading ${file.name}...`, type: 'info' })
-        try {
-          const data = await uploadFile(file)
-          addArtifact(isHtmlReport(file.name) ? reportFileArtifact(data.path, '', 'local', file.name)
-            : { id: `upload-${data.file_id}`, type: ext === 'cif' ? 'structure' : 'sequence',
-              title: file.name, data: { path: data.path, location: 'local', source: 'Uploaded file' }, sourceMessageId: '' })
-          setStatus(null)
-        } catch (err) {
-          setStatus({ msg: `Failed to load ${file.name}: ${err}`, type: 'error' })
-        }
-      } else if (['csv','dat','xy','txt'].includes(ext)) {
-        setStatus({ msg: `Loading ${file.name}...`, type: 'info' })
-        try {
-          const data = await uploadFile(file)
-          if (data.path) {
-            const csv = await fetchCsvData(data.path)
-            const cols = csv.columns
-            addArtifact({
-              id: `upload-${data.file_id}`, type: 'plotly', title: file.name,
-              data: {
-                data: [{ x: csv.data[cols[0]], y: csv.data[cols.length > 1 ? cols[1] : cols[0]], type: 'scatter', mode: 'lines', line: { color: '#3b82f6' } }],
-                layout: { title: file.name, xaxis: { title: cols[0] }, yaxis: { title: cols.length > 1 ? cols[1] : 'Value' } },
-              },
-              sourceMessageId: '',
-            })
-            setStatus(null)
+    const sessionId = useChatStore.getState().currentSessionId
+    let sessionCurrent = true
+    // This subscription belongs to the whole batch, not the empty-state view:
+    // the first opened file unmounts Dashboard while later files still load.
+    const unsubscribe = useChatStore.subscribe((next, previous) => {
+      if (next.currentSessionId !== previous.currentSessionId) sessionCurrent = false
+    })
+    const current = () => sessionCurrent && useChatStore.getState().currentSessionId === sessionId
+    const updateStatus = (next: typeof status) => { if (mounted.current && current()) setStatus(next) }
+    try {
+      for (const file of files) {
+        if (!current()) return
+        const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+        if (isHtmlReport(file.name) || ['cif','tif','tiff','ge','ge1','ge2','ge3','ge4','ge5','h5','hdf5','hdf','nxs','cbf','edf'].includes(ext)) {
+          updateStatus({ msg: `Loading ${file.name}...`, type: 'info' })
+          try {
+            const data = await uploadFile(file)
+            if (!current()) return
+            addArtifact(isHtmlReport(file.name) ? reportFileArtifact(data.path, '', 'local', file.name)
+              : { id: `upload-${data.file_id}`, type: ext === 'cif' ? 'structure' : 'sequence',
+                title: file.name, data: { path: data.path, location: 'local', source: 'Uploaded file' }, sourceMessageId: '' })
+            updateStatus(null)
+          } catch (err) {
+            updateStatus({ msg: `Failed to load ${file.name}: ${err}`, type: 'error' })
           }
-        } catch (err) {
-          setStatus({ msg: `Failed to load ${file.name}: ${err}`, type: 'error' })
+        } else if (['csv','dat','xy','txt'].includes(ext)) {
+          updateStatus({ msg: `Loading ${file.name}...`, type: 'info' })
+          try {
+            const data = await uploadFile(file)
+            if (!current()) return
+            if (data.path) {
+              const csv = await fetchCsvData(data.path)
+              if (!current()) return
+              const cols = csv.columns
+              addArtifact({
+                id: `upload-${data.file_id}`, type: 'plotly', title: file.name,
+                data: {
+                  data: [{ x: csv.data[cols[0]], y: csv.data[cols.length > 1 ? cols[1] : cols[0]], type: 'scatter', mode: 'lines', line: { color: '#3b82f6' } }],
+                  layout: { title: file.name, xaxis: { title: cols[0] }, yaxis: { title: cols.length > 1 ? cols[1] : 'Value' } },
+                },
+                sourceMessageId: '',
+              })
+              updateStatus(null)
+            }
+          } catch (err) {
+            updateStatus({ msg: `Failed to load ${file.name}: ${err}`, type: 'error' })
+          }
+        } else {
+          updateStatus({ msg: `Unsupported file type: .${ext}`, type: 'error' })
         }
-      } else {
-        setStatus({ msg: `Unsupported file type: .${ext}`, type: 'error' })
       }
-    }
+    } finally { unsubscribe() }
   }, [addArtifact])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -79,9 +99,9 @@ export function Dashboard() {
           Results appear here
         </h2>
         <p style={{ fontSize: 12.5, color: 'var(--apexa-text-muted)', lineHeight: 1.5, maxWidth: 560 }}>
-          Structures, detector sequences, plots and reports open here as tabs — each
-          one you can pin, compare side-by-side, and trace back to the exact tool and
-          inputs that made it (the provenance footer). Ask in <b>chat</b>, drop a file
+          Each new result opens automatically as a tab. Closing a tab keeps it in
+          <b> History</b>; Pin saves it as a favorite. You can compare two results and
+          inspect their source tools and inputs below the viewer. Ask in <b>chat</b>, drop a file
           below, or pick one in the <b>Data</b> panel and hit <b>Recommend</b>.
         </p>
       </div>
@@ -165,11 +185,14 @@ export function Dashboard() {
           </div>
         </div>
 
-        {/* Common commands — send to chat, don't just decorate */}
+        {/* Powder reduction and refinement entry points */}
         <div className="apexa-hoverable" style={{ ...card, gridColumn: '1 / -1', padding: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--apexa-text)', marginBottom: 8 }}>Prepare an analysis</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--apexa-text)', marginBottom: 4 }}>Powder diffraction</div>
+          <div style={{ fontSize: 11, color: 'var(--apexa-text-muted)', marginBottom: 9 }}>
+            Reduce detector data, inspect a fit, or prepare a handoff to another Rietveld program.
+          </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {WORKFLOW_OPTIONS.filter(o => ['ff', 'nf', 'pf', 'refine', 'pdf'].includes(o.id)).map((option) => (
+            {WORKFLOW_OPTIONS.filter(o => ['calibrate', 'integrate', 'rings', 'dynamics', 'refine', 'refinement-handoff'].includes(o.id)).map((option) => (
               <button
                 key={option.id}
                 onClick={() => sendMessage(workflowPrompt(option))}
@@ -180,6 +203,20 @@ export function Dashboard() {
                 onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--apexa-accent, #3b82f6)')}
                 onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--apexa-border)')}
               >{option.name}</button>
+            ))}
+          </div>
+        </div>
+
+        {/* HEDM and total-scattering workflows */}
+        <div className="apexa-hoverable" style={{ ...card, gridColumn: '1 / -1', padding: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--apexa-text)', marginBottom: 8 }}>HEDM and total scattering</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {WORKFLOW_OPTIONS.filter(o => ['ff', 'nf', 'pf', 'pdf'].includes(o.id)).map((option) => (
+              <button key={option.id} onClick={() => sendMessage(workflowPrompt(option))}
+                style={{ fontSize: 11, padding: '5px 11px', borderRadius: 16, cursor: 'pointer',
+                  background: 'var(--apexa-surface-2)', border: '1px solid var(--apexa-border)', color: 'var(--apexa-text-2)' }}>
+                {option.name}
+              </button>
             ))}
           </div>
         </div>

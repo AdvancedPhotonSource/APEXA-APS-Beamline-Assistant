@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useChatStore } from '@/stores/chatStore'
 import { WORKFLOW_OPTIONS, workflowPrompt } from '@/lib/workflowCatalog'
+import { ActiveWorkflows } from './ActiveWorkflows'
 
 export function WorkflowPanel() {
   const sendMessage = useChatStore((s) => s.sendMessage)
@@ -11,6 +12,7 @@ export function WorkflowPanel() {
 
   return (
     <div className="p-3 space-y-4 overflow-y-auto h-full">
+      <ActiveWorkflows />
       <p className="text-xs leading-relaxed" style={{ color: 'var(--apexa-text-muted)' }}>
         Choose an inspection or prepare an analysis plan. APEXA checks your inputs
         and executor availability before proposing a run.

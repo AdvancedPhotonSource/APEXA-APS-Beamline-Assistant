@@ -13,8 +13,10 @@ export function ResultsPanel() {
   const [path, setPath] = useState('')
   const [location, setLocation] = useState<ReportLocation>('local')
   const [error, setError] = useState('')
+  const [page, setPage] = useState(0)
   const rows = [...artifacts].reverse().filter(a => (!reportsOnly || ['report', 'html-report'].includes(a.type))
     && `${a.title} ${a.provenance?.inputs?.join(' ') ?? ''}`.toLowerCase().includes(filter.toLowerCase()))
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(rows.length / 60) - 1))
 
   const openReport = () => {
     const source = path.trim()
@@ -46,12 +48,17 @@ export function ResultsPanel() {
     </form>
     {mode === 'directory' ? <div className="min-h-0 flex-1"><VizLauncher /></div> : <>
       <div className="shrink-0 space-y-2 p-2">
-        <input type="search" aria-label="Search session results" placeholder="Search results…" value={filter} onChange={e => setFilter(e.target.value)}
+        <input type="search" aria-label="Search session results" placeholder="Search results…" value={filter} onChange={e => { setFilter(e.target.value); setPage(0) }}
           className="w-full rounded border p-2" style={{ background: 'var(--apexa-surface-2)', borderColor: 'var(--apexa-border)' }} />
-        <label className="flex items-center gap-2"><input type="checkbox" checked={reportsOnly} onChange={e => setReportsOnly(e.target.checked)} />Reports only</label>
+        <label className="flex items-center gap-2"><input type="checkbox" checked={reportsOnly} onChange={e => { setReportsOnly(e.target.checked); setPage(0) }} />Reports only</label>
+        {rows.length > 60 && <div className="flex items-center gap-2" aria-label="Result pages">
+          <button className="apexa-gallery-button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>
+          <span>{currentPage * 60 + 1}–{Math.min(rows.length, (currentPage + 1) * 60)} of {rows.length}</span>
+          <button className="apexa-gallery-button" disabled={(currentPage + 1) * 60 >= rows.length} onClick={() => setPage(currentPage + 1)}>Next</button>
+        </div>}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-2 space-y-1">
-        {rows.map(a => <button key={a.id} className="apexa-workflow-option w-full rounded border p-2 text-left" onClick={() => setActive(a.id)}
+        {rows.slice(currentPage * 60, (currentPage + 1) * 60).map(a => <button key={a.id} className="apexa-workflow-option w-full rounded border p-2 text-left" onClick={() => setActive(a.id)}
           title={`Open ${a.title} in canvas`} style={{ borderColor: 'var(--apexa-border)', background: 'var(--apexa-surface-2)' }}>
           <span className="block truncate font-medium">{a.title}</span>
           <span className="block mt-1 text-[10px]" style={{ color: 'var(--apexa-text-muted)' }}>

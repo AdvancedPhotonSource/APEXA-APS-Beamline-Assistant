@@ -1,3 +1,4 @@
+import { resultIdentity } from '../lib/resultIdentity.ts'
 import { create } from 'zustand'
 import type { ImageStats, VizArtifact } from '@/api/types'
 import { loadImageByPath, adjustImage, fetchRadialProfile } from '@/api/endpoints'
@@ -52,22 +53,28 @@ export const useImageStore = create<ImageState>((set, get) => ({
     const epoch = imageSession
     const data = artifact.data as { path?: string; settings?: ViewerSettings }
     if (!data.path) throw new Error('This saved image has no source path. Reopen it from Data.')
-    const result = await loadImageByPath(data.path)
-    if (!isCurrent() || epoch !== imageSession) return
-    if (!result.success) throw new Error('Could not reopen the saved image. Check that its source file is available.')
-    const settings = data.settings ?? { vmin: result.stats.min, vmax: result.stats.max, gamma: 1, colormap: 'viridis' }
-    let preview = result.preview
-    if (data.settings) {
-      const adjusted = await adjustImage(result.file_id, settings)
-      if (!adjusted.success) throw new Error('Could not restore the saved image display settings.')
-      preview = adjusted.image
+    try {
+      const result = await loadImageByPath(data.path)
+      if (!isCurrent() || epoch !== imageSession) return
+      if (!result.success) throw new Error('Could not reopen the saved image. Check that its source file is available.')
+      const settings = data.settings ?? { vmin: result.stats.min, vmax: result.stats.max, gamma: 1, colormap: 'viridis' }
+      let preview = result.preview
+      if (data.settings) {
+        const adjusted = await adjustImage(result.file_id, settings)
+        if (!isCurrent() || epoch !== imageSession) return
+        if (!adjusted.success) throw new Error('Could not restore the saved image display settings.')
+        preview = adjusted.image
+      }
+      if (!isCurrent() || epoch !== imageSession) return
+      set(s => ({ loadedImages: new Map(s.loadedImages).set(result.file_id, {
+        fileId: result.file_id, filename: result.filename, stats: result.stats, preview, path: data.path!, settings,
+      }) }))
+      useVizStore.getState().updateArtifact(artifact.id, { data: { ...data, fileId: result.file_id, preview, stats: result.stats } })
+      if (useVizStore.getState().activeId === artifact.id) get().setActiveImage(result.file_id)
+    } catch (error) {
+      if (!isCurrent() || epoch !== imageSession) return
+      throw error
     }
-    if (!isCurrent() || epoch !== imageSession) return
-    set(s => ({ loadedImages: new Map(s.loadedImages).set(result.file_id, {
-      fileId: result.file_id, filename: result.filename, stats: result.stats, preview, path: data.path!, settings,
-    }) }))
-    useVizStore.getState().updateArtifact(artifact.id, { data: { ...data, fileId: result.file_id, preview, stats: result.stats } })
-    if (useVizStore.getState().activeId === artifact.id) get().setActiveImage(result.file_id)
   },
 
   loadImage: async (path: string) => {
@@ -115,6 +122,7 @@ export const useImageStore = create<ImageState>((set, get) => ({
         })
       }
     } catch (e) {
+      if (epoch !== imageSession) return
       throw new Error(`Failed to load image: ${String(e)}`)
     } finally {
       if (epoch === imageSession) set({ isLoading: false })
@@ -176,6 +184,7 @@ export const useImageStore = create<ImageState>((set, get) => ({
   },
 
   computeRadialProfile: async () => {
+    const epoch = imageSession
     const { activeImageId, loadedImages } = get()
     if (!activeImageId) return
     const img = loadedImages.get(activeImageId)
@@ -185,10 +194,11 @@ export const useImageStore = create<ImageState>((set, get) => ({
       const centerX = Math.floor(img.stats.shape[1] / 2)
       const centerY = Math.floor(img.stats.shape[0] / 2)
       const result = await fetchRadialProfile(activeImageId, centerX, centerY)
+      if (epoch !== imageSession) return
 
       if (result.success) {
         useVizStore.getState().addArtifact({
-          id: `radial-${activeImageId}-${Date.now()}`,
+          id: `radial-${resultIdentity({ tool: 'radial-profile', status: 'completed', data: { path: img.path, centerX, centerY, radii: result.radii, intensity: result.intensity ?? result.intensities } })}`,
           type: 'plotly',
           title: `Radial Profile - ${img.filename}`,
           data: {
@@ -213,6 +223,7 @@ export const useImageStore = create<ImageState>((set, get) => ({
         })
       }
     } catch (e) {
+      if (epoch !== imageSession) return
       console.error('Failed to compute radial profile:', e)
     }
   },

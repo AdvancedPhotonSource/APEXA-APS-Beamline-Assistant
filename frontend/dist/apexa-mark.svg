@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>APEXA — photon beam and diffraction</title>
+  <rect width="64" height="64" rx="15" fill="#2443b0"/>
+  <path d="M17 48 32 15 47 48M23 36h18" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M6 33h22m7-5 18-11M35 37l18 11" fill="none" stroke="#00d0e5" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="32" cy="33" r="4" fill="#00d0e5"/>
+  <path d="M48 25a17 17 0 0 1 0 16m7-21a25 25 0 0 1 0 25" fill="none" stroke="#00d0e5" stroke-width="2" stroke-linecap="round"/>
+</svg>

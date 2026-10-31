@@ -1,8 +1,8 @@
-import { useId, useState } from 'react'
+import { useState } from 'react'
 import type { ToolResult } from '@/api/types'
 import { useVizStore } from '@/stores/vizStore'
 import { provenanceFromToolResult } from '@/lib/provenance'
-import { extractArtifacts } from '@/lib/parseToolResult'
+import { extractArtifacts, resultIdentity } from '@/lib/parseToolResult'
 
 /**
  * Shared chrome for every chat-side tool card. Adds the two things that make a
@@ -20,25 +20,22 @@ export function ToolCardChrome({
 }) {
   const addArtifact = useVizStore((s) => s.addArtifact)
   const [copied, setCopied] = useState(false)
-  const cardId = useId()
   const prov = provenanceFromToolResult(result)
 
   const openInCanvas = () => {
     const visuals = extractArtifacts([result], '')
     if (visuals.length) {
-      useVizStore.getState().addArtifacts(visuals)
-      useVizStore.getState().showCanvas()
+      useVizStore.getState().addArtifacts(visuals, { activate: true })
       return
     }
     addArtifact({
-      id: `tr-${result.tool}-${cardId}`,
+      id: `tr-${resultIdentity(result)}`,
       type: 'table',
       title: result.tool,
       data: result.data,
       sourceMessageId: '',
       provenance: prov,
     })
-    useVizStore.getState().showCanvas()
   }
 
   const copyCommand = async () => {

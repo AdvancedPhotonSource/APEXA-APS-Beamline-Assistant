@@ -13,6 +13,7 @@ export interface ChatMessage {
 export interface ToolResult {
   tool: string
   status: 'success' | 'error' | 'completed' | 'failed' | 'warning' | 'running' | 'submitted' | 'partial' | 'unknown'
+    | 'pending' | 'provisional' | 'rejected' | 'denied' | 'cancelled'
   data: Record<string, unknown>
   args?: Record<string, unknown>   // tool-call inputs, for the "in:" view
 }
@@ -49,7 +50,7 @@ export interface SessionWorkspace {
   browsePath?: string
 }
 
-export type ArtifactType = 'plotly' | 'image' | 'table' | 'text' | 'diffraction' | 'report' | 'structure' | 'sequence' | 'html-report'
+export type ArtifactType = 'plotly' | 'image' | 'table' | 'text' | 'diffraction' | 'report' | 'structure' | 'sequence' | 'html-report' | 'refinement'
 
 /**
  * Provenance travels with every scientific artifact so a result is never just
@@ -139,6 +140,11 @@ export interface BrowseResult {
   path: string
   parent: string | null
   entries: BrowseEntry[]
+  offset?: number
+  limit?: number
+  total?: number
+  has_more?: boolean
+  next_offset?: number | null
 }
 
 export interface ImageStats {

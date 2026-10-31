@@ -13,13 +13,18 @@
   --apexa-accent-grad: linear-gradient(135deg, #3b82f6, #6366f1);
   --apexa-accent-soft: rgba(59, 130, 246, 0.12);
   --apexa-ring: rgba(59, 130, 246, 0.55);
+  --apexa-avatar-bg: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  --apexa-avatar-shadow: 0 0 10px rgba(59,130,246,0.3);
+  --apexa-rail-selected-bg: linear-gradient(135deg, var(--apexa-accent-soft), transparent);
+  --apexa-rail-selected-text: var(--apexa-accent);
+  --apexa-rail-selected-shadow: inset 2px 0 0 var(--apexa-accent), 0 0 16px rgba(59,130,246,0.16);
   --apexa-radius: 10px;
   --apexa-radius-sm: 7px;
   --apexa-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* ====== Dark theme (default) — deeper, cooler, illuminated ====== */
-:root, [data-theme="dark"] {
+/* ====== Dark theme — retained for an explicitly selected preference ====== */
+[data-theme="dark"] {
   --apexa-surface: #191a20;
   --apexa-surface-2: #20222a;
   --apexa-surface-3: #292c36;
@@ -29,6 +34,7 @@
   --apexa-text-2: #aab0bd;
   --apexa-text-muted: #737a89;
   --apexa-chat-user: #17314f;
+  --apexa-chat-user-text: #f5f6f8;
   --apexa-chat-assistant: #20222a;
   --apexa-panel-bg: #101116;
   --apexa-image-bg: #000000;
@@ -41,26 +47,38 @@
   color-scheme: dark;
 }
 
-/* ====== Light theme — clean, soft-elevated ====== */
-[data-theme="light"] {
+/* ====== Classic light — original white / cobalt / cyan palette; first-use default ====== */
+:root:not([data-theme]), [data-theme="light"] {
+  --apexa-accent: #2443b0;
+  --apexa-accent-2: #2443b0;
+  --apexa-accent-3: #00b3ca;
+  --apexa-accent-grad: linear-gradient(#2443b0, #2443b0);
+  --apexa-accent-soft: rgba(36, 67, 176, 0.08);
+  --apexa-ring: #2443b0;
+  --apexa-avatar-bg: #00b3ca;
+  --apexa-avatar-shadow: none;
+  --apexa-rail-selected-bg: #2443b0;
+  --apexa-rail-selected-text: #ffffff;
+  --apexa-rail-selected-shadow: none;
   --apexa-surface: #ffffff;
-  --apexa-surface-2: #f2f5fa;
-  --apexa-surface-3: #e6eaf2;
-  --apexa-border: #d3dae5;
+  --apexa-surface-2: #f7f8fa;
+  --apexa-surface-3: #eef1f5;
+  --apexa-border: #dfe3eb;
   --apexa-border-hover: #98a2b3;
-  --apexa-text: #0b1220;       /* near-black for crisp body text */
-  --apexa-text-2: #1d2939;     /* darkened: was #344054 — readable in blocks */
-  --apexa-text-muted: #475467; /* darkened: was #667085 */
-  --apexa-chat-user: #eaf2ff;
-  --apexa-chat-assistant: #f7f9fc;
-  --apexa-panel-bg: #eaeef4;
+  --apexa-text: #19202f;
+  --apexa-text-2: #334155;
+  --apexa-text-muted: #5d6b80;
+  --apexa-chat-user: #2443b0;
+  --apexa-chat-user-text: #ffffff;
+  --apexa-chat-assistant: #f7f8fa;
+  --apexa-panel-bg: #ffffff;
   --apexa-image-bg: #1a1d2e;
-  --apexa-rail-bg: #e6e9ef;
-  --apexa-rail-active: #d0d5dd;
-  --apexa-glow: 0 0 16px rgba(59, 130, 246, 0.16);
+  --apexa-rail-bg: #ffffff;
+  --apexa-rail-active: #eef1f5;
+  --apexa-glow: none;
   --apexa-elev-1: 0 1px 2px rgba(16,24,40,0.06), 0 2px 8px rgba(16,24,40,0.05);
-  --apexa-elev-2: 0 8px 24px rgba(16,24,40,0.10), 0 0 20px rgba(59,130,246,0.05);
-  --apexa-app-glow: radial-gradient(1100px 520px at 50% -8%, rgba(59,130,246,0.06), transparent 62%);
+  --apexa-elev-2: 0 8px 24px rgba(16,24,40,0.10);
+  --apexa-app-glow: none;
   color-scheme: light;
 }
 
@@ -104,6 +122,7 @@
   --apexa-text-2: #94a3b8;
   --apexa-text-muted: #64748b;
   --apexa-chat-user: #1e3a5f;
+  --apexa-chat-user-text: #f1f5f9;
   --apexa-chat-assistant: #1e293b;
   --apexa-panel-bg: #0b1120;
   --apexa-image-bg: #020617;
@@ -261,7 +280,7 @@ body {
   opacity: 0.9;
   animation: apexaAurora 34s var(--apexa-ease) infinite alternate;
 }
-[data-theme="light"] #root::before { opacity: 0.55; }
+:root:not([data-theme]) #root::before, [data-theme="light"] #root::before { display: none; }
 #root > * { position: relative; z-index: 1; }
 
 @keyframes apexaAurora {
@@ -362,6 +381,7 @@ body {
   80%, 100% { transform: translateX(120%); }
 }
 @media (prefers-reduced-motion: reduce) { .apexa-sheen::after { animation: none; } }
+[data-theme="light"] .apexa-sheen::after { display: none; }
 
 /* Modern focus ring on real interactive elements only */
 button:focus-visible, a:focus-visible, select:focus-visible,

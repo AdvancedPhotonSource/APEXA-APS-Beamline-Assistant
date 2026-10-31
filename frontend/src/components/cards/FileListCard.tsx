@@ -1,7 +1,12 @@
 import type { ToolResult } from '@/api/types'
+import { useMemo, useState } from 'react'
+import { downloadJson } from '@/lib/boundedPreview'
 
+// Match the literal terminal ESC byte without embedding control characters in
+// a regex literal. Directory output can contain ANSI SGR color sequences.
+const ansiColors = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g')
 function stripAnsi(str: string): string {
-  return str.replace(/\x1b\[[0-9;]*m/g, '')
+  return str.replace(ansiColors, '')
 }
 
 function classifyEntry(line: string): { name: string; type: 'dir' | 'symlink' | 'file'; ext: string } {
@@ -27,15 +32,18 @@ const extColors: Record<string, string> = {
 }
 
 export function FileListCard({ result }: { result: ToolResult }) {
+  const [page, setPage] = useState(0)
   const listing = result.data.listing ?? result.data.content ?? result.data.entries
-  const text = typeof listing === 'string' ? listing : JSON.stringify(listing, null, 2)
-  const lines = stripAnsi(text).split('\n')
-  const dirPath = lines[0]?.trim() || ''
-  const entries = lines.slice(1)
-    .map((l: string) => l.trim())
-    .filter((l: string) => l && !l.startsWith('(') && !l.match(/^\d+ director/))
-
-  const classified = entries.map(classifyEntry).filter(e => e.name)
+  const { entries, dirPath } = useMemo(() => {
+    if (Array.isArray(listing)) return { entries: listing, dirPath: String(result.data.path ?? '') }
+    const lines = stripAnsi(typeof listing === 'string' ? listing : '').split('\n')
+    return { dirPath: lines[0]?.trim() || '', entries: lines.slice(1).map(l => l.trim()).filter(l => l && !l.startsWith('(') && !/^\d+ director/.test(l)) }
+  }, [listing, result.data.path])
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(entries.length / 100) - 1))
+  const classified = entries.slice(currentPage * 100, (currentPage + 1) * 100).map(entry => {
+    if (entry && typeof entry === 'object') return classifyEntry(String(entry.name ?? entry.path ?? '') + (entry.is_dir ? '/' : ''))
+    return classifyEntry(String(entry))
+  }).filter(e => e.name)
   const dirs = classified.filter(e => e.type === 'dir')
   const symlinks = classified.filter(e => e.type === 'symlink')
   const files = classified.filter(e => e.type === 'file')
@@ -107,7 +115,12 @@ export function FileListCard({ result }: { result: ToolResult }) {
         borderTop: '1px solid var(--apexa-border)',
         fontSize: 10, color: 'var(--apexa-text-muted)',
       }}>
-        {dirs.length} folders, {files.length} files
+        {entries.length ? `${currentPage * 100 + 1}–${Math.min((currentPage + 1) * 100, entries.length)} of ${entries.length} entries` : 'No entries'}
+        {entries.length > 100 && <span className="inline-flex gap-2 ml-2">
+          <button className="apexa-gallery-button" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous entries</button>
+          <button className="apexa-gallery-button" disabled={(currentPage + 1) * 100 >= entries.length} onClick={() => setPage(currentPage + 1)}>Next entries</button>
+          <button className="apexa-gallery-button" onClick={() => downloadJson(result.data, 'directory-result')}>Download full listing</button>
+        </span>}
       </div>
     </div>
   )

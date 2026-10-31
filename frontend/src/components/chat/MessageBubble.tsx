@@ -70,6 +70,11 @@ export const MessageBubble = memo(function MessageBubble({ message }: { message:
   // stop rating. The dialog is reserved for a report, where prose earns its cost.
   const [rated, setRated] = useState<'up' | 'down' | null>(null)
   const [reporting, setReporting] = useState(false)
+  const [fullText, setFullText] = useState(false)
+  const [toolPage, setToolPage] = useState(0)
+  const text = fullText ? message.content : message.content.slice(0, 24000)
+  const tools = message.toolResults ?? []
+  const toolStart = Math.min(toolPage * 12, Math.max(0, tools.length - 1))
 
   async function rate(kind: 'up' | 'down') {
     setRated(kind)                       // optimistic; a lost rating is not worth a spinner
@@ -84,7 +89,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: { message:
   const isUser = message.role === 'user'
 
   return (
-    <div style={{
+    <div data-message-id={message.id} style={{
       display: 'flex',
       gap: 12,
       padding: '14px 20px',
@@ -107,27 +112,35 @@ export const MessageBubble = memo(function MessageBubble({ message }: { message:
         boxShadow: isUser
           ? '0 1px 2px rgba(0,0,0,0.14), 0 0 16px rgba(59,130,246,0.10)'
           : 'var(--apexa-elev-1)',
-        color: 'var(--apexa-text)',
+        color: isUser ? 'var(--apexa-chat-user-text)' : 'var(--apexa-text)',
       }}>
         {message.content && (
           <div className="px-4 py-3 text-sm leading-relaxed [overflow-wrap:anywhere]">
             {isUser ? (
               <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                {message.content}
+                {text}
               </div>
             ) : (
               <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-                {message.content}
+                {text}
               </Markdown>
             )}
+            {message.content.length > 24000 && <button className="apexa-gallery-button" onClick={() => setFullText(!fullText)}>
+              {fullText ? 'Collapse response' : `Read full response (${message.content.length.toLocaleString()} characters)`}
+            </button>}
           </div>
         )}
 
         {message.toolResults && message.toolResults.length > 0 && (
           <div className="px-4 pb-3">
-            {message.toolResults.map((result, i) => (
-              <ToolCallBox key={i} result={result} />
+            {tools.slice(toolStart, toolStart + 12).map((result, i) => (
+              <ToolCallBox key={toolStart + i} result={result} />
             ))}
+            {tools.length > 12 && <div className="flex items-center gap-2 pt-2" aria-label="Tool result pages">
+              <button className="apexa-gallery-button" disabled={toolPage === 0} onClick={() => setToolPage(toolPage - 1)}>Previous results</button>
+              <span>{toolStart + 1}–{Math.min(toolStart + 12, tools.length)} of {tools.length}</span>
+              <button className="apexa-gallery-button" disabled={toolStart + 12 >= tools.length} onClick={() => setToolPage(toolPage + 1)}>Next results</button>
+            </div>}
           </div>
         )}
 

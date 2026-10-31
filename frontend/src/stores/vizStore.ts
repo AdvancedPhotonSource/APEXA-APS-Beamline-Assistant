@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { VizArtifact } from '@/api/types'
+import { canonicalFileArtifact } from '../lib/canvasIdentity.ts'
 
 interface VizState {
   // `artifacts` is the full session HISTORY — nothing is dropped when a tab is
@@ -16,7 +17,7 @@ interface VizState {
   canvasRevision: number       // user actions reveal a hidden workspace canvas
 
   addArtifact: (artifact: VizArtifact) => void
-  addArtifacts: (artifacts: VizArtifact[]) => void
+  addArtifacts: (artifacts: VizArtifact[], options?: { activate?: boolean }) => void
   updateArtifact: (id: string, patch: Partial<VizArtifact>) => void
   setActive: (id: string) => void
   showCanvas: () => void
@@ -25,6 +26,7 @@ interface VizState {
   removeArtifact: (id: string) => void    // hard delete from history
   togglePin: (id: string) => void
   toggleCompare: (id: string) => void
+  showComparison: () => void
   clearCompare: () => void
   clear: () => void
 }
@@ -43,37 +45,41 @@ export const useVizStore = create<VizState>((set) => ({
   revealRevision: 0,
   canvasRevision: 0,
 
-  addArtifact: (artifact) =>
-    set((s) => {
-      const a = stamp(artifact)
-      const reveal = ['structure', 'sequence', 'report', 'html-report'].includes(a.type)
-      return {
-        revealRevision: s.revealRevision + (reveal ? 1 : 0),
-        compareIds: reveal ? [] : s.compareIds,
-        artifacts: s.artifacts.some(item => item.id === a.id)
-          ? s.artifacts.map(item => item.id === a.id ? a : item) : [...s.artifacts, a],
-        openIds: s.openIds.includes(a.id) ? s.openIds : [...s.openIds, a.id],
-        activeId: a.id,
-      }
-    }),
+  // Explicit opens always select the requested result. Background delivery only
+  // opens new identities; repeated delivery never resurrects a closed tab.
+  addArtifact: (artifact) => useVizStore.getState().addArtifacts([artifact], { activate: true }),
 
-  addArtifacts: (artifacts) =>
+  addArtifacts: (artifacts, options = {}) =>
     set((s) => {
-      const stamped = artifacts.map(stamp)
+      if (!artifacts.length) return {}
       const merged = new Map(s.artifacts.map(a => [a.id, a]))
-      stamped.forEach(a => merged.set(a.id, a))
-      const newIds = stamped.map((a) => a.id).filter((id) => !s.openIds.includes(id))
-      const current = s.artifacts.find(a => a.id === s.activeId)
-      const reveal = stamped.some(a => ['structure', 'sequence', 'report', 'html-report'].includes(a.type))
+      const incoming = new Map<string, VizArtifact>()
+      for (const artifact of artifacts.map(canonicalFileArtifact)) {
+        const previous = merged.get(artifact.id)
+        const a = stamp({ ...artifact, createdAt: previous?.createdAt ?? artifact.createdAt,
+          sourceMessageId: artifact.sourceMessageId || previous?.sourceMessageId || '' })
+        // Delivery of the original file request must not erase an edited viewer.
+        if (previous && ['structure', 'sequence'].includes(a.type) && a.data && typeof a.data === 'object') {
+          const old = previous.data && typeof previous.data === 'object' ? previous.data as Record<string, unknown> : {}
+          a.data = { ...a.data as Record<string, unknown>,
+            ...Object.fromEntries(['viewerState', 'appliedContext', 'preview'].filter(key => key in old).map(key => [key, old[key]])) }
+        }
+        merged.set(a.id, a)
+        incoming.set(a.id, a)
+      }
+      const known = new Set(s.artifacts.map(a => a.id))
+      const opened = [...incoming.values()].filter(a => options.activate || !known.has(a.id))
+      const selected = [...opened].reverse().find(a => ['plotly', 'diffraction', 'image', 'html-report', 'report', 'structure', 'sequence', 'refinement'].includes(a.type))
+        ?? [...opened].reverse().find(a => a.type !== 'text')
+        ?? (options.activate || !s.activeId ? opened.at(-1) : undefined)
       return {
-        revealRevision: s.revealRevision + (reveal ? 1 : 0),
-        compareIds: reveal ? [] : s.compareIds,
         artifacts: [...merged.values()],
-        openIds: [...new Set([...s.openIds, ...newIds])],
-        // Prefer the scientific visual over a trailing parameter table.
-        activeId: [...stamped].reverse().find(a => ['plotly', 'diffraction', 'image', 'html-report', 'report', 'structure', 'sequence'].includes(a.type))?.id
-          ?? (current && ['plotly', 'diffraction', 'image', 'html-report', 'report', 'structure', 'sequence'].includes(current.type) ? current.id : null)
-          ?? stamped[stamped.length - 1]?.id ?? s.activeId,
+        openIds: [...new Set([...s.openIds, ...opened.map(a => a.id)])],
+        activeId: selected?.id ?? s.activeId,
+        // A new result consistently reveals Active, regardless of renderer type.
+        revealRevision: s.revealRevision + (selected ? 1 : 0),
+        canvasRevision: s.canvasRevision + (selected ? 1 : 0),
+        compareIds: selected && s.compareIds.length === MAX_COMPARE ? [] : s.compareIds,
       }
     }),
 
@@ -84,13 +90,13 @@ export const useVizStore = create<VizState>((set) => ({
   setActive: (id) => set(s => s.artifacts.some(a => a.id === id) ? {
     activeId: id,
     openIds: s.openIds.includes(id) ? s.openIds : [...s.openIds, id],
-    compareIds: [],
+    compareIds: s.compareIds.length === MAX_COMPARE ? [] : s.compareIds,
     revealRevision: s.revealRevision + 1,
     canvasRevision: s.canvasRevision + 1,
   } : {}),
 
   showCanvas: () => set(s => ({
-    compareIds: [],
+    compareIds: s.compareIds.length === MAX_COMPARE ? [] : s.compareIds,
     revealRevision: s.revealRevision + 1,
     canvasRevision: s.canvasRevision + 1,
   })),
@@ -100,18 +106,12 @@ export const useVizStore = create<VizState>((set) => ({
       const openIds = s.openIds.filter((o) => o !== id)
       return {
         openIds,
-        activeId: s.activeId === id ? (openIds[openIds.length - 1] ?? null) : s.activeId,
+        activeId: s.activeId === id ? (openIds[Math.min(s.openIds.indexOf(id), openIds.length - 1)] ?? null) : s.activeId,
         compareIds: s.compareIds.filter((c) => c !== id),
       }
     }),
 
-  reopen: (id) =>
-    set((s) => ({
-      openIds: s.openIds.includes(id) ? s.openIds : [...s.openIds, id],
-      activeId: id,
-      revealRevision: s.revealRevision + 1,
-      canvasRevision: s.canvasRevision + 1,
-    })),
+  reopen: (id) => useVizStore.getState().setActive(id),
 
   removeArtifact: (id) =>
     set((s) => {
@@ -120,7 +120,7 @@ export const useVizStore = create<VizState>((set) => ({
       return {
         artifacts: filtered,
         openIds,
-        activeId: s.activeId === id ? (openIds[openIds.length - 1] ?? null) : s.activeId,
+        activeId: s.activeId === id ? (openIds[Math.min(s.openIds.indexOf(id), openIds.length - 1)] ?? null) : s.activeId,
         pinned: s.pinned.filter((p) => p !== id),
         compareIds: s.compareIds.filter((c) => c !== id),
       }
@@ -136,12 +136,20 @@ export const useVizStore = create<VizState>((set) => ({
   // Toggle an artifact into the compare set (FIFO, capped at MAX_COMPARE).
   toggleCompare: (id) =>
     set((s) => {
+      if (!s.artifacts.some(a => a.id === id)) return {}
       if (s.compareIds.includes(id)) {
         return { compareIds: s.compareIds.filter((c) => c !== id) }
       }
       const next = [...s.compareIds, id]
       return { compareIds: next.slice(-MAX_COMPARE) }
     }),
+
+  showComparison: () => set(s => {
+    const ids = s.compareIds.filter(id => s.artifacts.some(a => a.id === id))
+    if (ids.length !== MAX_COMPARE) return {}
+    return { openIds: [...new Set([...s.openIds, ...ids])], activeId: ids[0],
+      revealRevision: s.revealRevision + 1, canvasRevision: s.canvasRevision + 1 }
+  }),
 
   clearCompare: () => set({ compareIds: [] }),
 

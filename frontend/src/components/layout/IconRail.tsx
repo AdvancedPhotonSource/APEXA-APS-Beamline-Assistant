@@ -101,10 +101,10 @@ function RailButton({
         cursor: 'pointer',
         transition: 'all 150ms var(--apexa-ease)',
         background: active
-          ? 'linear-gradient(135deg, var(--apexa-accent-soft), transparent)'
+          ? 'var(--apexa-rail-selected-bg)'
           : 'transparent',
-        color: active ? 'var(--apexa-accent)' : 'var(--apexa-text-muted)',
-        boxShadow: active ? 'inset 2px 0 0 var(--apexa-accent), 0 0 16px rgba(59,130,246,0.16)' : 'none',
+        color: active ? 'var(--apexa-rail-selected-text)' : 'var(--apexa-text-muted)',
+        boxShadow: active ? 'var(--apexa-rail-selected-shadow)' : 'none',
       }}
       onMouseEnter={(e) => {
         if (!active) {
@@ -131,11 +131,11 @@ export function ApexaLogo({ size = 28 }: { size?: number }) {
       width: size,
       height: size,
       borderRadius: '50%',
-      background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+      background: 'var(--apexa-avatar-bg)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      boxShadow: '0 0 10px rgba(59,130,246,0.3)',
+      boxShadow: 'var(--apexa-avatar-shadow)',
       flexShrink: 0,
     }}>
       {/* Stylized diffraction ring icon */}

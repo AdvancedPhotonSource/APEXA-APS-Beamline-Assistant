@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { useConnectionStore } from '@/stores/connectionStore'
 import { useThemeStore, type ThemeMode } from '@/stores/themeStore'
+import { ApexaLogo } from '@/components/ui/ApexaLogo'
 
 export function Header({ children }: { children?: ReactNode }) {
   const { connected, selectedModel, availableModels, setModel } = useConnectionStore()
@@ -8,7 +9,7 @@ export function Header({ children }: { children?: ReactNode }) {
   const allModels = Object.values(availableModels).flatMap(models =>
     Object.entries(models).map(([id, name]) => ({ id, name: String(name) })))
   const themes: { value: ThemeMode; label: string; icon: string }[] = [
-    { value: 'light', label: 'Light', icon: '☀' },
+    { value: 'light', label: 'Classic light', icon: '☀' },
     { value: 'dark', label: 'Dark', icon: '◑' },
     { value: 'midnight', label: 'Midnight', icon: '☾' },
   ]
@@ -17,7 +18,9 @@ export function Header({ children }: { children?: ReactNode }) {
 
   return (
     <header className="apexa-topbar">
-      <span className="apexa-brand" title="Advanced Photon EXperiment Assistant">APEXA</span>
+      <span className="flex shrink-0 items-center gap-2" title="Advanced Photon EXperiment Assistant">
+        <ApexaLogo /><span className="apexa-brand">APEXA</span>
+      </span>
       {children}
       <div className="apexa-header-controls">
         {allModels.length > 0 && <select className="apexa-model-select" aria-label="Analysis assistant model"

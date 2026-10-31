@@ -6,11 +6,12 @@ import { parseToolResults, extractArtifacts, parseDirectToolResult } from '@/lib
 import { useVizStore } from './vizStore'
 import { useConfirmStore, nextConfirmId } from './confirmStore'
 import { canvasContext } from '@/lib/canvasContext'
-import { listServerSessions, readServerSession, createServerSession, importBrowserSession, renameServerSession, archiveServerSession, writeServerWorkspace } from '@/api/sessions'
+import { listServerSessions, readServerSession, createServerSession, importBrowserSession, renameServerSession, archiveServerSession, writeServerWorkspace, SessionApiUnavailable } from '@/api/sessions'
 import { durableWorkspace, hydrateSession, restoredWorkspace, messageArtifacts } from '@/lib/sessionWorkspace'
 import { useFileStore } from './fileStore'
 import { useImageStore } from './imageStore'
 import { useConnectionStore } from './connectionStore'
+import { BrowserSessionCache } from '@/lib/browserSessionCache'
 
 
 interface ChatState {
@@ -32,6 +33,8 @@ interface ChatState {
   currentSessionId: string | null
   sessionSync: 'loading' | 'ready' | 'saving' | 'error'
   sessionError: string | null
+  sessionLocalOnly: boolean
+  browserCacheError: string | null
   draft: string
   attachments: SessionAttachment[]
   setDraft: (text: string) => void
@@ -64,6 +67,8 @@ function genId() {
 // ── Session persistence (localStorage) ──────────────────────────────────────
 const LS_SESSIONS = 'apexa.chat.sessions'
 const LS_CURRENT = 'apexa.chat.current'
+let browserCache: BrowserSessionCache | null = null
+let browserCacheReady = true
 
 function genSid() {
   return `sess-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -72,6 +77,15 @@ function loadSessions(): ChatSession[] {
   try { return JSON.parse(localStorage.getItem(LS_SESSIONS) || '[]') } catch { return [] }
 }
 function saveSessions(sessions: ChatSession[]) {
+  if (browserCache) {
+    const cache = browserCache
+    if (browserCacheReady) void cache.save(sessions).then(() => {
+      if (cache === browserCache) useChatStore.setState({ browserCacheError: null })
+    }).catch(error => {
+      if (cache === browserCache) useChatStore.setState({ browserCacheError: `Browser backup failed: ${String(error)}. Keep this tab open and save the server workspace before closing.` })
+    })
+    return
+  }
   try { localStorage.setItem(LS_SESSIONS, JSON.stringify(sessions)) } catch { /* quota */ }
 }
 function saveCurrentId(id: string | null) {
@@ -92,14 +106,24 @@ const workspaceVersions = new Map<string, number>()
 const workspaceTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const workspacePending = new Map<string, SessionWorkspace>()
 const workspaceQueues = new Map<string, Promise<void>>()
-const workspaceSaved = new Map<string, string>()
 const workspaceInflight = new Map<string, SessionWorkspace>()
 const workspaceErrors = new Map<string, string>()
 
-function captureWorkspace(): SessionWorkspace {
-  const { artifacts, openIds, activeId, pinned, compareIds } = useVizStore.getState()
-  const chat = useChatStore.getState()
-  const images = useImageStore.getState()
+// Zustand updates these arrays/maps immutably. Retain their references while the
+// user interacts; defer traversal, artifact extraction and JSON serialization.
+// A source belongs to its session even if the canvas switches before the timer.
+interface WorkspaceSource {
+  canvas: Pick<ReturnType<typeof useVizStore.getState>, 'artifacts' | 'openIds' | 'activeId' | 'pinned' | 'compareIds'>
+  chat: Pick<ChatState, 'messages' | 'draft' | 'attachments'>
+  images: ReturnType<typeof useImageStore.getState>
+  recordedArtifactIds: string[]
+  browsePath: string
+}
+const workspaceSources = new Map<string, WorkspaceSource>()
+
+function captureWorkspace(source: WorkspaceSource): SessionWorkspace {
+  const { artifacts, openIds, activeId, pinned, compareIds } = source.canvas
+  const { chat, images } = source
   return durableWorkspace({
     artifacts: artifacts.map(a => {
       if (a.type !== 'diffraction') return a
@@ -109,10 +133,10 @@ function captureWorkspace(): SessionWorkspace {
         settings: image?.fileId === images.activeImageId ? images.settings : image?.settings ?? data.settings } }
     }), openIds, activeId, pinned, compareIds,
     recordedArtifactIds: [...new Set([
-      ...(chat.sessions.find(s => s.id === chat.currentSessionId)?.workspace?.recordedArtifactIds ?? []),
+      ...source.recordedArtifactIds,
       ...messageArtifacts(chat.messages).map(a => a.id),
     ])],
-    draft: chat.draft, attachments: chat.attachments, browsePath: useFileStore.getState().currentPath,
+    draft: chat.draft, attachments: chat.attachments, browsePath: source.browsePath,
   })
 }
 
@@ -138,21 +162,34 @@ function scheduleWorkspace() {
   if (hydration) return
   const state = useChatStore.getState()
   const id = state.currentSessionId
-  if (!id) return
-  const workspace = captureWorkspace()
-  const changed = JSON.stringify(workspace) !== workspaceSaved.get(id) || workspacePending.has(id)
-  useChatStore.setState(s => ({ sessions: s.sessions.map(session => session.id === id ? { ...session, workspace, workspaceDirty: syncEnabled && changed } : session) }))
-  saveSessions(useChatStore.getState().sessions)
-  if (!syncEnabled) return
-  if (!changed) return
-  workspacePending.set(id, workspace)
+  const session = state.sessions.find(session => session.id === id)
+  if (!id || !session) return
+  workspaceSources.set(id, {
+    canvas: useVizStore.getState(), chat: { messages: state.messages, draft: state.draft, attachments: state.attachments },
+    images: useImageStore.getState(), recordedArtifactIds: session.workspace?.recordedArtifactIds ?? [],
+    browsePath: useFileStore.getState().currentPath,
+  })
   clearTimeout(workspaceTimers.get(id))
   workspaceTimers.set(id, setTimeout(() => { void flushWorkspace(id).catch(error => syncError(error, id)) }, 600))
+}
+
+function materializeWorkspace(id: string) {
+  const source = workspaceSources.get(id)
+  if (!source) return
+  workspaceSources.delete(id)
+  if (!useChatStore.getState().sessions.some(session => session.id === id)) return
+  const workspace = captureWorkspace(source)
+  if (syncEnabled) workspacePending.set(id, workspace)
+  useChatStore.setState(s => ({ sessions: s.sessions.map(session => session.id === id
+    ? { ...session, workspace, workspaceDirty: syncEnabled } : session) }))
+  saveSessions(useChatStore.getState().sessions)
 }
 
 async function flushWorkspace(id: string): Promise<void> {
   clearTimeout(workspaceTimers.get(id))
   workspaceTimers.delete(id)
+  materializeWorkspace(id)
+  if (!syncEnabled) return
   const work = async () => {
     await bootstrap
     const epoch = lifecycle
@@ -164,11 +201,11 @@ async function flushWorkspace(id: string): Promise<void> {
     try {
       const result = await writeServerWorkspace(id, workspace, workspaceVersions.get(id) ?? 0)
       workspaceVersions.set(id, result.workspaceRevision)
-      workspaceSaved.set(id, JSON.stringify(workspace))
       workspaceErrors.delete(id)
       if (epoch !== lifecycle) return
       useChatStore.setState(s => ({ ...(s.currentSessionId === id ? { sessionSync: 'ready' as const, sessionError: null } : {}),
-        sessions: s.sessions.map(session => session.id === id ? { ...session, workspaceRevision: result.workspaceRevision, workspaceDirty: workspacePending.has(id) } : session) }))
+        sessions: s.sessions.map(session => session.id === id ? { ...session, workspaceRevision: result.workspaceRevision,
+          workspaceDirty: workspacePending.has(id) || workspaceSources.has(id) } : session) }))
       saveSessions(useChatStore.getState().sessions)
     } catch (error) {
       // Retain the local snapshot, but do not silently overwrite another window.
@@ -242,7 +279,7 @@ async function renderVizFile(
 
 function autoRenderIntegration(result: ToolResult, messageId: string) {
   if (!result.tool || !result.tool.includes('integrate')) return
-  if (result.status === 'error') return
+  if (!['success', 'completed'].includes(result.status)) return
   const d = result.data as Record<string, unknown>
 
   // Collect (lineout, caked) pairs from the payload: single-file tools expose
@@ -279,14 +316,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sessions: [],
   currentSessionId: null,
   sessionSync: 'ready', sessionError: null, draft: '', attachments: [],
+  sessionLocalOnly: false, browserCacheError: null,
 
-  setDraft: draft => { set({ draft }); scheduleWorkspace() },
-  setAttachments: attachments => { set({ attachments }); scheduleWorkspace() },
+  setDraft: draft => { if (get().draft !== draft) { set({ draft }); scheduleWorkspace() } },
+  setAttachments: attachments => { if (get().attachments !== attachments) { set({ attachments }); scheduleWorkspace() } },
 
   saveWorkspace: async () => {
+    if (browserCache) await bootstrap.catch(() => {})
     scheduleWorkspace()
     const id = get().currentSessionId
     if (id) await flushWorkspace(id).catch(error => syncError(error, id))
+    await browserCache?.flush().catch(() => {})
   },
 
   reloadSession: async (id, restore = true, discardLocal = false) => {
@@ -297,18 +337,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       if (discardLocal) {
         await workspaceQueues.get(id)?.catch(() => {})
+        workspaceSources.delete(id)
         workspacePending.delete(id)
         clearTimeout(workspaceTimers.get(id))
+        workspaceTimers.delete(id)
         workspaceErrors.delete(id)
-      }
+      } else materializeWorkspace(id)
       const session = hydrateSession(await readServerSession(id))
       if (epoch !== lifecycle) return
+      // Edits made while the request was in flight take precedence as well.
+      materializeWorkspace(id)
       const previousWorkspace = get().sessions.find(s => s.id === id)?.workspace
       const pendingWorkspace = workspacePending.get(id) ?? workspaceInflight.get(id)
       if (!workspaceVersions.has(id) || (restore && !pendingWorkspace)) workspaceVersions.set(id, session.workspaceRevision ?? 0)
-      if (restore && !pendingWorkspace) {
-        workspaceSaved.set(id, JSON.stringify(session.workspace ?? {}))
-      }
       if (pendingWorkspace) {
         session.workspace = pendingWorkspace
         session.workspaceDirty = true
@@ -360,11 +401,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   init: (options) => {
     syncEnabled = options?.sync !== false
+    set({ sessionLocalOnly: false, browserCacheError: null })
     const epoch = ++lifecycle
     let disposed = false
+    const previousCache = browserCache
+    const cache = typeof indexedDB !== 'undefined' ? new BrowserSessionCache() : null
+    browserCache = cache
+    browserCacheReady = !cache
+    let savedBrowserId: string | null = null
+    try { savedBrowserId = localStorage.getItem(LS_CURRENT) } catch { /* no browser storage */ }
 
     // Restore session history (or create the first session).
-    const loaded = loadSessions()
+    let loaded = loadSessions()
     for (const session of loaded) {
       if (session.workspaceDirty && session.workspace) {
         workspacePending.set(session.id, session.workspace)
@@ -384,9 +432,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ sessions: [sess], currentSessionId: id, messages: [] })
       restoreSessionArtifacts(sess)
     }
+    const initialRows = get().sessions
+    const initialId = get().currentSessionId
 
     // Migrate browser-only sessions before any new turn can use their IDs.
     bootstrap = (async () => {
+      if (cache) {
+        try {
+          await previousCache?.flush().catch(() => {})
+          const recovered = await cache.read(loaded)
+          if (disposed || epoch !== lifecycle) return
+          // Preserve local edits/selection made during slow IndexedDB startup.
+          for (const id of workspaceSources.keys()) materializeWorkspace(id)
+          const currentRows = get().sessions
+          const merged = new Map(recovered.map(session => [session.id, session]))
+          for (const session of currentRows) {
+            if (session !== initialRows.find(row => row.id === session.id) || recovered.length === 0) merged.set(session.id, session)
+          }
+          loaded = [...merged.values()]
+          const currentChanged = currentRows.find(s => s.id === initialId) !== initialRows.find(s => s.id === initialId)
+          let savedId = get().currentSessionId
+          if (savedId === initialId && !currentChanged) savedId = savedBrowserId
+          const chosen = loaded.find(s => s.id === savedId) ?? loaded[0]
+          if (chosen) {
+            set({ sessions: loaded, currentSessionId: chosen.id, messages: chosen.messages })
+            saveCurrentId(chosen.id)
+            restoreSessionArtifacts(chosen)
+          }
+          for (const session of loaded) if (session.workspaceDirty && session.workspace) {
+            workspacePending.set(session.id, session.workspace)
+            workspaceVersions.set(session.id, session.workspaceRevision ?? 0)
+          }
+          browserCacheReady = true
+          saveSessions(loaded)
+        } catch (error) {
+          if (disposed || epoch !== lifecycle) return
+          // Keep the legacy source intact; never claim an incomplete migration succeeded.
+          set({ browserCacheError: `Browser backup could not be restored: ${String(error)}` })
+        }
+      }
       if (!syncEnabled) return
       set({ sessionSync: 'loading', sessionError: null })
       try {
@@ -399,7 +483,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const existing = result.sessions.find(s => s.id === savedId)
         const chosen = existing ?? result.sessions.find(s => s.id === result.last_active) ?? result.sessions[0]
         if (chosen) {
-          set({ sessions: result.sessions.map(s => ({ ...s, serverBacked: true })), currentSessionId: chosen.id })
+          const cached = get().sessions
+          set({ sessions: result.sessions.map(s => ({ ...cached.find(old => old.id === s.id), ...s,
+            messages: cached.find(old => old.id === s.id)?.messages ?? s.messages, serverBacked: true })), currentSessionId: chosen.id })
           saveCurrentId(chosen.id)
           await get().reloadSession(chosen.id)
         } else if (savedId) {
@@ -407,7 +493,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
           await get().reloadSession(savedId)
         }
         if (!disposed && get().sessionSync === 'error') throw new Error(get().sessionError ?? 'Session could not be restored')
-      } catch (error) { if (!disposed) syncError(error); throw error }
+      } catch (error) {
+        if (!disposed && error instanceof SessionApiUnavailable) {
+          // A stale backend should not make the chat unusable. Keep the browser
+          // cache active and show the recovery instruction in Session History.
+          syncEnabled = false
+          set({ sessionLocalOnly: true })
+          syncError(error)
+          return
+        }
+        if (!disposed) syncError(error)
+        throw error
+      }
     })()
     void bootstrap.catch(() => {})
     void bootstrap.then(() => {
@@ -421,7 +518,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const unsubFiles = useFileStore.subscribe((state, previous) => { if (state.currentPath !== previous.currentPath) scheduleWorkspace() })
     const unsubImages = useImageStore.subscribe((state, previous) => { if (state.settings !== previous.settings) scheduleWorkspace() })
     const onFocus = () => { if (!(get().pendingCount > 0)) void get().refreshSessions() }
+    // Navigation can happen before the debounce expires. Cache the latest
+    // state snapshot synchronously; dirty server work is recovered on next init.
+    const cacheWorkspaces = () => { for (const id of workspaceSources.keys()) materializeWorkspace(id) }
     if (syncEnabled && typeof window !== 'undefined') window.addEventListener?.('focus', onFocus)
+    if (typeof window !== 'undefined') window.addEventListener?.('pagehide', cacheWorkspaces)
+    const onVisibility = () => { if (document.visibilityState === 'hidden') cacheWorkspaces() }
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisibility)
     const poll = syncEnabled ? setInterval(() => {
       const current = get().sessions.find(s => s.id === get().currentSessionId)
       if (current?.status === 'running' && !(pendingByThread.get(current.id) ?? 0)) void get().reloadSession(current.id, false)
@@ -538,11 +641,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     })
     return () => {
+      cacheWorkspaces()
+      void cache?.flush().finally(() => cache.close()).catch(() => {})
       disposed = true
       lifecycle += 1
       unsubscribe(); unsubCanvas(); unsubFiles(); unsubImages()
       if (poll) clearInterval(poll)
       if (typeof window !== 'undefined') window.removeEventListener?.('focus', onFocus)
+      if (typeof window !== 'undefined') window.removeEventListener?.('pagehide', cacheWorkspaces)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility)
+      for (const timer of workspaceTimers.values()) clearTimeout(timer)
+      workspaceTimers.clear()
       for (const id of workspacePending.keys()) void flushWorkspace(id).catch(error => syncError(error, id))
     }
   },
@@ -657,6 +766,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   newChat: () => {
     get()._persist()
+    if (get().currentSessionId) materializeWorkspace(get().currentSessionId!)
     const id = genSid()
     const sess: ChatSession = { id, title: 'New chat', messages: [], createdAt: Date.now(), updatedAt: Date.now() }
     saveCurrentId(id)
@@ -672,6 +782,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   switchSession: (id) => {
     if (id === get().currentSessionId) return
     get()._persist()
+    if (get().currentSessionId) materializeWorkspace(get().currentSessionId!)
+    materializeWorkspace(id)
     const sess = get().sessions.find((s) => s.id === id)
     if (!sess) return
     saveCurrentId(id)
@@ -686,8 +798,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const sessions = get().sessions.filter(s => s.id !== id)
       const active = id === get().currentSessionId
       set({ sessions })
+      workspaceSources.delete(id)
       workspacePending.delete(id)
       clearTimeout(workspaceTimers.get(id))
+      workspaceTimers.delete(id)
       if (active) {
         if (sessions[0]) get().switchSession(sessions[0].id)
         else get().newChat()
@@ -712,12 +826,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const msg = get().messages.find((m) => m.id === messageId)
     if (!msg) return
     useVizStore.getState().addArtifact({
-      id: `pinned-${messageId}-${Date.now()}`,
+      id: `pinned-${messageId}`,
       type: 'text',
       title: 'Pinned Response',
       data: msg.content,
       sourceMessageId: messageId,
     })
+    const canvas = useVizStore.getState()
+    if (!canvas.pinned.includes(`pinned-${messageId}`)) canvas.togglePin(`pinned-${messageId}`)
     useVizStore.getState().showCanvas()
   },
 }))

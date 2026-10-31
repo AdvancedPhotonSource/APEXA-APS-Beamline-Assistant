@@ -1,14 +1,32 @@
 import type { ChatSession, SessionWorkspace } from './types'
 
+export class SessionApiUnavailable extends Error {
+  constructor() {
+    super('This APEXA server does not expose the session API. Chat can continue with this browser’s local history. Restart APEXA with ./start_web_viewer.sh from the current checkout to restore shared sessions.')
+    this.name = 'SessionApiUnavailable'
+  }
+}
+
 async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  const response = await fetch(`/api/sessions${path}`, {
-    method, headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(15000), cache: 'no-store',
-  })
-  const data = await response.json()
-  if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Session request failed (${response.status})`)
-  return data
+  let response: Response
+  try {
+    response = await fetch(`/api/sessions${path}`, {
+      method, headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(15000), cache: 'no-store',
+    })
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(`Could not reach the APEXA session API: ${reason}`)
+  }
+  // Reverse proxies and old server versions may return an HTML 404 page.
+  // Keep that response actionable instead of leaking a JSON parse exception.
+  const data: Record<string, unknown> = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    if (response.status === 404 && (path === '' || path === '/import')) throw new SessionApiUnavailable()
+    throw new Error(typeof data.detail === 'string' ? data.detail : `Session request failed (${response.status})`)
+  }
+  return data as T
 }
 
 export const listServerSessions = () => request<{ sessions: ChatSession[]; last_active?: string }> ('')

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { workflowFixture } from './workflow-fixture.mjs'
 
 // Component markup checks; these do not claim browser layout/interaction testing.
 registerHooks({
@@ -35,6 +36,61 @@ const { IconRail } = await import('../src/components/layout/IconRail.tsx')
 const { ResultsPanel } = await import('../src/components/viz/ResultsPanel.tsx')
 const { HtmlReportView } = await import('../src/components/viz/HtmlReportView.tsx')
 const { useVizStore } = await import('../src/stores/vizStore.ts')
+const { useChatStore } = await import('../src/stores/chatStore.ts')
+const { MessageList } = await import('../src/components/chat/MessageList.tsx')
+const { MessageBubble } = await import('../src/components/chat/MessageBubble.tsx')
+const { WorkflowRunCard } = await import('../src/components/workflows/WorkflowRunCard.tsx')
+
+test('workflow card separates science from execution, respects allowed gates and links full evidence', () => {
+  const run = workflowFixture({ orchestration_state: 'blocked', job_execution: 'completed', scientific_verdict: 'rejected',
+    gate: { gate_id: 'reject-only', kind: 'result_review', step_id: 'calibrate', decisions: ['reject'], recovery: false, prompt: 'Review failed QC' },
+    stages: [{ id: 'calibrate', tool: 'midas_auto_calibrate', state: 'completed', run_id: 'job/1',
+      outcome: { execution: 'completed', scientific_verdict: 'rejected' }, cancellation_status: null }] })
+  const markup = renderToStaticMarkup(createElement(WorkflowRunCard, { run, busy: false, uncertain: false,
+    onDecide() {}, onCancel() {}, onRetry() {} }))
+  assert.match(markup, /Workflow: blocked/)
+  assert.match(markup, /Execution: completed/)
+  assert.match(markup, /Science: rejected/)
+  assert.match(markup, /Stop workflow/)
+  assert.doesNotMatch(markup, /Approve &amp; continue/)
+  assert.match(markup, /href="\/api\/runs\/job%2F1"/)
+  assert.match(markup, /href="\/api\/workflows\/workflow-fixture"/)
+  assert.match(markup, /midas_integrate_series/)
+  assert.match(markup, /parameter_file uses calibrate/)
+})
+
+test('workflow cancellation pending is not presented as a confirmed external job stop', () => {
+  const run = workflowFixture({ orchestration_state: 'cancel_requested', gate: null, job_execution: 'running' })
+  const markup = renderToStaticMarkup(createElement(WorkflowRunCard, { run, busy: false, uncertain: false,
+    onDecide() {}, onCancel() {}, onRetry() {} }))
+  assert.match(markup, /Workflow: cancel requested/)
+  assert.match(markup, /Execution: running/)
+  assert.match(markup, /External jobs may still be active/)
+  assert.doesNotMatch(markup, /Request cancellation/)
+})
+
+test('long conversation renders the newest bounded page and exposes navigation', () => {
+  const initial = useChatStore.getInitialState()
+  const previous = { ...initial }
+  Object.assign(initial, { messages: Array.from({ length: 500 }, (_, i) => ({ id: `bounded-${i}`, role: 'user', content: `Message ${i}`, timestamp: i })), isLoading: false })
+  try {
+    const markup = renderToStaticMarkup(createElement(MessageList))
+    assert.equal((markup.match(/data-message-id=/g) || []).length, 60)
+    assert.match(markup, /data-message-id="bounded-499"/)
+    assert.doesNotMatch(markup, /data-message-id="bounded-0"/)
+    assert.match(markup, /aria-label="Conversation pages"/)
+  } finally { Object.assign(initial, previous) }
+})
+
+test('one huge answer bounds initial text and tool rows while keeping access to the rest', () => {
+  const message = { id: 'huge', role: 'assistant', content: 'x'.repeat(50000), timestamp: 1,
+    toolResults: Array.from({ length: 1000 }, (_, i) => ({ tool: `fixture_${i}`, status: 'completed', data: {} })) }
+  const markup = renderToStaticMarkup(createElement(MessageBubble, { message }))
+  assert.match(markup, /Read full response/)
+  assert.match(markup, /Next results/)
+  assert.doesNotMatch(markup, /fixture_999/)
+  assert.ok(markup.length < 60000)
+})
 
 test('header contains the layout control in one strip and one compact theme control', () => {
   const markup = renderToStaticMarkup(createElement(Header, null, createElement('div', { 'aria-label': 'Workspace layout' }, 'Chat Split Canvas')))

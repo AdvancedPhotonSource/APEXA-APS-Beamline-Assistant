@@ -1,3 +1,5 @@
+import { fileViewId } from '@/lib/canvasIdentity'
+import { resultIdentity } from '@/lib/resultIdentity'
 import { useEffect, useRef } from 'react'
 import { useFileStore } from '@/stores/fileStore'
 import { useImageStore } from '@/stores/imageStore'
@@ -10,10 +12,10 @@ const IMAGE_EXTS = new Set(['.tif', '.tiff', '.ge', '.ge2', '.ge3', '.ge4', '.ge
 const DATA_EXTS = new Set(['.csv', '.dat', '.xy', '.txt'])
 
 export function FileBrowser() {
-  const { currentPath, parentPath, entries, isLoading, error, browse, goUp } = useFileStore()
+  const { currentPath, parentPath, entries, isLoading, error, browse, goUp, offset, total, nextOffset, page, cancel } = useFileStore()
   const loadImage = useImageStore((s) => s.loadImage)
   const sendMessage = useChatStore((s) => s.sendMessage)
-  const initialized = useRef(false)
+  const openEpoch = useRef(0)
 
   // Grounded recommendation: hand the real path to APEXA → it calls
   // recommend_workflow and reports options in chat (nothing is executed).
@@ -22,13 +24,21 @@ export function FileBrowser() {
       + `Inspect it and tell me what I can do and my options before running anything.`)
 
   useEffect(() => {
-    if (!initialized.current) {
-      initialized.current = true
-      browse()
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    void browse()
+    return () => cancel()
+  }, [browse, cancel])
+
+  useEffect(() => {
+    const unsubscribe = useChatStore.subscribe((state, previous) => {
+      if (state.currentSessionId !== previous.currentSessionId) openEpoch.current += 1
+    })
+    return () => { openEpoch.current += 1; unsubscribe() }
+  }, [])
 
   const handleFileClick = async (path: string, ext?: string) => {
+    const epoch = openEpoch.current
+    const sessionId = useChatStore.getState().currentSessionId
+    const isCurrent = () => epoch === openEpoch.current && sessionId === useChatStore.getState().currentSessionId
     if (isHtmlReport(path)) {
       useVizStore.getState().addArtifact(reportFileArtifact(path))
       useVizStore.getState().showCanvas()
@@ -37,7 +47,7 @@ export function FileBrowser() {
     if (!ext) return
 
     if (ext === '.cif') {
-      useVizStore.getState().addArtifact({ id: `structure-${path}`, type: 'structure', title: path.split('/').pop() ?? 'Crystal structure', data: { path, source: 'Local CIF' }, sourceMessageId: '' })
+      useVizStore.getState().addArtifact({ id: fileViewId('structure', path), type: 'structure', title: path.split('/').pop() ?? 'Crystal structure', data: { path, source: 'Local CIF' }, sourceMessageId: '' })
       useVizStore.getState().showCanvas()
       return
     }
@@ -45,24 +55,27 @@ export function FileBrowser() {
     if (IMAGE_EXTS.has(ext)) {
       try {
         await loadImage(path)
+        if (!isCurrent()) return
         const images = useImageStore.getState()
         if (images.activeImageId && images.loadedImages.get(images.activeImageId)?.path === path) {
           useVizStore.getState().showCanvas()
         }
       } catch (e) {
+        if (!isCurrent()) return
         console.error('Failed to load image:', e)
         alert('Failed to load image: ' + String(e))
       }
     } else if (DATA_EXTS.has(ext)) {
       try {
         const csv = await fetchCsvData(path)
+        if (!isCurrent()) return
         const columns = csv.columns
         const xCol = columns[0]
         const yCol = columns.length > 1 ? columns[1] : columns[0]
         const name = path.split('/').pop() ?? 'data'
 
         useVizStore.getState().addArtifact({
-          id: `csv-${path}`,
+          id: `csv-${resultIdentity({ tool: 'csv-preview', status: 'completed', data: { path, columns, values: csv.data } })}`,
           type: 'plotly',
           title: name,
           data: {
@@ -84,6 +97,7 @@ export function FileBrowser() {
         })
         useVizStore.getState().showCanvas()
       } catch (e) {
+        if (!isCurrent()) return
         console.error('Failed to load CSV:', e)
         alert('Failed to load data file: ' + String(e))
       }
@@ -131,7 +145,7 @@ export function FileBrowser() {
 
       <button className="apexa-gallery-button" style={{ margin: '6px 10px' }} onClick={() => {
         useVizStore.getState().addArtifact({
-        id: `sequence-${currentPath}`, type: 'sequence', title: currentPath.split('/').pop() ?? 'Detector sequence', data: { path: currentPath }, sourceMessageId: '',
+        id: fileViewId('sequence', currentPath), type: 'sequence', title: currentPath.split('/').pop() ?? 'Detector sequence', data: { path: currentPath }, sourceMessageId: '',
         })
         useVizStore.getState().showCanvas()
       }}>Open folder as detector sequence</button>
@@ -139,6 +153,14 @@ export function FileBrowser() {
       {error && (
         <div style={{ padding: '6px 10px', color: '#ef4444', background: 'rgba(239,68,68,0.1)', fontSize: 11 }}>{error}</div>
       )}
+
+      <div className="flex items-center gap-2 px-2 py-1" role="group" aria-label="File pages">
+        <button className="apexa-gallery-button" disabled={isLoading || offset === 0} onClick={() => page(Math.max(0, offset - 100))}>Previous</button>
+        <span role="status" className="flex-1 text-center">{entries.length ? `${offset + 1}–${offset + entries.length} of ${total}` : `${total} files`}</span>
+        <button className="apexa-gallery-button" disabled={isLoading || nextOffset == null} onClick={() => nextOffset != null && page(nextOffset)}>Next</button>
+        {isLoading ? <button className="apexa-gallery-button" onClick={cancel}>Cancel</button>
+          : <button className="apexa-gallery-button" onClick={() => browse()}>Refresh</button>}
+      </div>
 
       {/* File list */}
       <div style={{ flex: 1, overflowY: 'auto' }}>

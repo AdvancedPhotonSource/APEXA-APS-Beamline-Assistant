@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useChatStore } from '@/stores/chatStore'
 import { MessageBubble } from './MessageBubble'
 import { TypingIndicator } from './TypingIndicator'
@@ -6,25 +6,55 @@ import { useVizStore } from '@/stores/vizStore'
 import { suggestedWorkflows, workflowPrompt } from '@/lib/workflowCatalog'
 
 export function MessageList() {
+  const sessionId = useChatStore(s => s.currentSessionId)
+  return <SessionMessages key={sessionId} />
+}
+
+export const CHAT_PAGE_SIZE = 60
+
+function SessionMessages() {
   const messages = useChatStore((s) => s.messages)
   const isLoading = useChatStore((s) => s.isLoading)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const followBottom = useRef(true)
+  // null follows the newest page; an explicit index stays anchored while a new
+  // answer arrives. Paging bounds Markdown/card DOM without variable-height guesses.
+  const [anchor, setAnchor] = useState<number | null>(null)
+  const latestStart = Math.max(0, messages.length - CHAT_PAGE_SIZE)
+  const start = Math.min(anchor ?? latestStart, latestStart)
+  const end = Math.min(messages.length, start + CHAT_PAGE_SIZE)
+  const latest = anchor == null
+  const move = (next: number | null) => {
+    setAnchor(next)
+    followBottom.current = next == null
+    scrollRef.current?.scrollTo({ top: 0 })
+  }
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
+    if (latest && followBottom.current) bottomRef.current?.scrollIntoView({ behavior: 'instant' })
+  }, [messages.length, isLoading, latest])
 
   if (messages.length === 0 && !isLoading) {
     return <WelcomeScreen />
   }
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+    <div ref={scrollRef} data-testid="chat-scroll" onScroll={e => {
+      const el = e.currentTarget
+      followBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100
+    }} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
+      {messages.length > CHAT_PAGE_SIZE && <nav aria-label="Conversation pages" className="sticky top-0 z-10 flex items-center gap-2 p-2" style={{ background: 'var(--apexa-bg)' }}>
+        <button className="apexa-gallery-button" disabled={start === 0} onClick={() => move(Math.max(0, start - CHAT_PAGE_SIZE))}>Older</button>
+        <span className="flex-1 text-center text-xs">Messages {start + 1}–{end} of {messages.length}</span>
+        <button className="apexa-gallery-button" disabled={end >= messages.length} onClick={() => move(start + CHAT_PAGE_SIZE >= latestStart ? null : start + CHAT_PAGE_SIZE)}>Newer</button>
+        <button className="apexa-gallery-button" disabled={latest} onClick={() => move(null)}>Latest</button>
+      </nav>}
       <div className="w-full min-w-0">
-        {messages.map((msg) => (
+        {messages.slice(start, end).map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
         ))}
-        <TypingIndicator />
+        {latest && <TypingIndicator />}
         <div ref={bottomRef} />
       </div>
     </div>

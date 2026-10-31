@@ -1,3 +1,4 @@
+import { fileViewId } from '@/lib/canvasIdentity'
 import { useEffect, useState } from 'react'
 import { useImageStore } from '@/stores/imageStore'
 import { useVizStore } from '@/stores/vizStore'
@@ -18,12 +19,12 @@ import type { VizArtifact } from '@/api/types'
  * produces (plot, image, table) as stable, addressable things you can pin,
  * compare side-by-side, and trace back to what produced them (provenance footer).
  * A persistent header states that role and toggles between the open artifact
- * (Active) and the full session record (Results) for reproducibility.
+ * (Active) and the full session record (History) for reproducibility.
  */
 export function VizPanel({ onFocus, focused = false }: { onFocus?: () => void; focused?: boolean }) {
   const { artifacts, openIds, activeId, setActive, closeTab, pinned, togglePin, compareIds, toggleCompare, clearCompare, revealRevision } =
     useVizStore()
-  type CanvasView = 'active' | 'gallery' | 'results'
+  type CanvasView = 'active' | 'gallery' | 'history'
   const [choice, setChoice] = useState<{ view: CanvasView; revision: number }>({ view: 'active', revision: revealRevision })
   // Derive from the store revision so requests made while this canvas is hidden
   // still open Active when React resumes its effects and viewers.
@@ -44,7 +45,7 @@ export function VizPanel({ onFocus, focused = false }: { onFocus?: () => void; f
 
   return (
     <div className="apexa-canvas" style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, minWidth: 0, background: 'var(--apexa-surface)' }}>
-      {/* Canvas identity + Active/Results segmented control (always visible so the
+      {/* Canvas identity + Active/History segmented control (always visible so the
           panel's role is legible). */}
       <div style={{
         display: 'flex', flexWrap: 'wrap', flexShrink: 0, alignItems: 'center', gap: 8,
@@ -60,19 +61,22 @@ export function VizPanel({ onFocus, focused = false }: { onFocus?: () => void; f
           {focused ? 'Restore layout' : 'Expand canvas'}
         </ToolbarBtn>}
         <div style={{ display: 'flex', borderRadius: 7, overflow: 'hidden', border: '1px solid var(--apexa-border)' }}>
-          <SegBtn active={view === 'active'} onClick={() => setView('active')}>Active</SegBtn>
-          <SegBtn active={view === 'gallery'} onClick={() => setView('gallery')}>Gallery</SegBtn>
-          <SegBtn active={view === 'results'} onClick={() => setView('results')}>Results ({artifacts.length})</SegBtn>
+          <SegBtn active={view === 'active'} onClick={() => setView('active')} title="Inspect your open tabs">Active ({openArtifacts.length})</SegBtn>
+          <SegBtn active={view === 'gallery'} onClick={() => setView('gallery')} title="Browse visual results and select a comparison">Gallery</SegBtn>
+          <SegBtn active={view === 'history'} onClick={() => setView('history')} title="All session results, including closed tabs and favorites">History ({artifacts.length})</SegBtn>
         </div>
       </div>
+      <p className="shrink-0 border-b px-3 py-1.5 text-[10px]" style={{ margin: 0, color: 'var(--apexa-text-muted)', borderColor: 'var(--apexa-border)' }}>
+        New results open automatically. Closing a tab keeps it in History. Pin saves a favorite.
+      </p>
 
       {view === 'gallery' ? (
         <ResultGallery onOpen={() => setView('active')} />
-      ) : view === 'results' ? (
+      ) : view === 'history' ? (
         <CanvasHistory onOpen={() => setView('active')} />
       ) : !active ? (
         <div style={{ padding: 24, color: 'var(--apexa-text-muted)', fontSize: 13 }}>
-          All tabs closed. Switch to <b>Results ({artifacts.length})</b> to re-open a result.
+          All tabs closed. <button className="apexa-gallery-button" onClick={() => setView('history')}>Open History ({artifacts.length})</button> to reopen a result.
         </div>
       ) : (
       <ActiveView
@@ -93,10 +97,12 @@ export function VizPanel({ onFocus, focused = false }: { onFocus?: () => void; f
   )
 }
 
-function SegBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+function SegBtn({ active, onClick, children, title }: { active: boolean; onClick: () => void; children: React.ReactNode; title: string }) {
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
+      title={title}
       style={{
         padding: '3px 10px', border: 'none', fontSize: 11, cursor: 'pointer',
         background: active ? 'var(--apexa-accent-grad)' : 'var(--apexa-surface)',
@@ -156,7 +162,7 @@ function ActiveView({
         {active.type === 'diffraction' && fileId && !inCompare && (
           <ToolbarBtn active={false} onClick={() => {
             const image = useImageStore.getState().loadedImages.get(fileId ?? '')
-            if (image) useVizStore.getState().addArtifact({ id: `sequence-${image.path}`, type: 'sequence', title: image.filename, data: { path: image.path }, sourceMessageId: active.sourceMessageId })
+            if (image) useVizStore.getState().addArtifact({ id: fileViewId('sequence', image.path), type: 'sequence', title: image.filename, data: { path: image.path }, sourceMessageId: active.sourceMessageId })
           }} title="Browse frames, apply dark/mask, inspect and simulate rings">Analyze frames</ToolbarBtn>
         )}
         {active.type === 'diffraction' && fileId && !inCompare && (
@@ -164,10 +170,10 @@ function ActiveView({
             {controlsOpen ? 'Hide controls' : 'Image controls'}
           </ToolbarBtn>
         )}
-        <ToolbarBtn active={isPinned} onClick={() => togglePin(active.id)} title="Pin this artifact">
+        <ToolbarBtn active={isPinned} onClick={() => togglePin(active.id)} title={isPinned ? 'Remove from History favorites' : 'Save to History favorites; the tab can still be closed'}>
           {isPinned ? '★ pinned' : '☆ pin'}
         </ToolbarBtn>
-        <ToolbarBtn active={isComparing} onClick={() => toggleCompare(active.id)} title="Add to side-by-side compare (max 2)">
+        <ToolbarBtn active={isComparing} onClick={() => toggleCompare(active.id)} title="Select this result, then another tab and Compare to view two results">
           ⧉ compare{compareIds.length ? ` (${compareIds.length}/2)` : ''}
         </ToolbarBtn>
         {inCompare && (
@@ -176,9 +182,14 @@ function ActiveView({
           </ToolbarBtn>
         )}
       </div>
+      {compareIds.length === 1 && <p className="shrink-0 px-3 py-1 text-[11px]" style={{ margin: 0, color: 'var(--apexa-text-muted)' }}>
+        One result selected. Open another tab and choose Compare.
+        <button className="apexa-gallery-button ml-2" onClick={clearCompare}>Clear selection</button>
+      </p>}
 
       {/* Body — single active artifact, or two-up compare */}
-      <div className="apexa-canvas-body" style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden', display: 'flex' }}>
+      <div className="apexa-canvas-body" role="tabpanel" id="canvas-active-view" aria-labelledby={`canvas-tab-${encodeURIComponent(active.id)}`}
+        style={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden', display: 'flex' }}>
         {inCompare ? (
           <div className="apexa-compare-grid">
             {compareArtifacts.map((a, i) => (
@@ -249,6 +260,7 @@ function ToolbarBtn({
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       title={title}
       style={{
         padding: '3px 10px',

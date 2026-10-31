@@ -6,11 +6,13 @@ import { ResponseView } from './ResponseView'
 import type { ReportData } from './ReportView'
 import { DiffractionViewer } from '@/components/viewer/DiffractionViewer'
 import { FileListCard } from '@/components/cards/FileListCard'
-import { cardFor } from '@/components/cards/ToolResultCard'
+import { ToolResultBody } from '@/components/cards/ToolResultCard'
+import { inferStatus } from '@/lib/parseToolResult'
 import { isDirectoryData, inferToolFromData } from '@/lib/artifactInfer'
 import { StructureView } from './StructureView'
 import { SequenceView } from '@/components/viewer/SequenceView'
 import { HtmlReportView } from './HtmlReportView'
+import { RefinementView } from './RefinementView'
 const ReportView = lazy(() => import('./ReportView').then(m => ({ default: m.ReportView })))
 
 function SavedDiffractionView({ artifact }: { artifact: VizArtifact }) {
@@ -57,6 +59,8 @@ export function ArtifactBody({ artifact }: { artifact: VizArtifact }) {
     return <Suspense fallback={<p style={{ padding: 16 }}>Loading report…</p>}><ReportView data={a.data as ReportData} /></Suspense>
   }
 
+  if (a.type === 'refinement') return <RefinementView key={a.id} data={a.data} />
+
   if (a.type === 'diffraction') {
     return <SavedDiffractionView key={a.id} artifact={a} />
   }
@@ -79,7 +83,7 @@ export function ArtifactBody({ artifact }: { artifact: VizArtifact }) {
         {isDirectoryData(a.data) ? (
           <FileListCard result={{ tool: 'list_directory', status: 'success', data: a.data as Record<string, unknown> }} />
         ) : (
-          cardFor({ tool: inferToolFromData(a.data), status: 'success', data: a.data as Record<string, unknown> })
+          <ToolResultBody result={{ tool: inferToolFromData(a.data), status: inferStatus(a.data as Record<string, unknown>), data: a.data as Record<string, unknown> }} />
         )}
       </div>
     )
