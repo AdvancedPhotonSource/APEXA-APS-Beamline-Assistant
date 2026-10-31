@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Harness comparison: same backend, same task, different driver.
+"""WITHDRAWN LEGACY SCORING RIG — retained for provider/CLI adapter reuse.
+
+The historical results are invalid; this module does not establish a controlled
+harness comparison. See README.md and rotation_benchmark.py for current limits.
+The original experimental rationale below is historical, not validated evidence.
+
+Harness comparison: same backend, same task, different driver.
 
 Measures how much of an agent's reliability is a property of the HARNESS rather than
 the model. All arms are pointed at one Argo endpoint, so model and transport
@@ -93,12 +99,12 @@ HARNESSES: Dict[str, Harness] = {
         name="pi", binary="pi",
         # pi does NOT read OPENAI_BASE_URL -- with it set, pi still went to
         # api.openai.com and 401'd on an ANL username. Custom endpoints are
-        # declared in ~/.pi/agent/models.json; ensure_pi_provider() writes the
-        # `argo` entry (the function this comment used to name never existed).
+        # declared in models.json under its agent directory. Rotation trials
+        # use PI_CODING_AGENT_DIR and an isolated per-run provider file.
         argv=["pi", "-p", "--provider", "argo", "--model", "{model}", "{prompt}"],
         env={},
-        supports_mcp=False,
-        note="npm i -g --ignore-scripts @earendil-works/pi-coding-agent  (or: curl -fsSL https://pi.dev/install.sh | sh) -- deliberately ships no MCP, so shell condition only"),
+        supports_mcp=True,
+        note="Current @earendil-works/pi-coding-agent supports native MCP; adapters must configure common tools explicitly"),
     "apexa": Harness(
         name="apexa", binary=None, argv=None,
         env={"APEXA_LLM_MODE": "proxy", "APEXA_LLM_BASE_URL": "{base_url}"},
@@ -310,15 +316,14 @@ def write_opencode_config(path: Path, base_url: str, api_key: str, model: str,
 
 
 def ensure_pi_provider(base_url: str, api_key: str, model: str,
-                       max_tokens: int = MAX_TOKENS) -> Path:
-    """Make ~/.pi/agent/models.json carry an `argo` provider for `model`.
+                       max_tokens: int = MAX_TOKENS, *, config_path: Optional[Path] = None) -> Path:
+    """Write the Argo provider, preferably in an isolated PI_CODING_AGENT_DIR.
 
-    Pi has no per-run config override, so this merges into the user's file:
-    only the `argo` provider entry is touched, and the original is copied to
-    models.json.bak the first time.
+    The optional path keeps trial configuration out of the user's global state.
+    Historical callers retain the existing merge/backup behavior when omitted.
     """
     import shutil as _sh
-    path = Path.home() / ".pi" / "agent" / "models.json"
+    path = Path(config_path) if config_path is not None else Path.home() / ".pi" / "agent" / "models.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     data = {}
     if path.exists():
@@ -338,6 +343,7 @@ def ensure_pi_provider(base_url: str, api_key: str, model: str,
                    "contextWindow": 200000, "maxTokens": max_tokens})
     prov["models"] = models
     path.write_text(json.dumps(data, indent=2))
+    path.chmod(0o600)
     return path
 
 

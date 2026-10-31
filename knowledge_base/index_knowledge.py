@@ -21,6 +21,11 @@ import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import sys as _sys
+_repo_root = str(Path(__file__).resolve().parent.parent)
+if _repo_root not in _sys.path:
+    _sys.path.insert(0, _repo_root)
+
 import os as _os
 
 # ChromaDB ships anonymised telemetry to PostHog — an outbound call to a third
@@ -70,14 +75,8 @@ def _load_embedder():
         from apexa_model_policy import assert_allowed
     assert_allowed(EMBED_MODEL, role="embedder")
     offline = _apply_offline_hf_env()
-    kwargs = {"trust_remote_code": True}
-    if offline:
-        kwargs["local_files_only"] = True
-    try:
-        return SentenceTransformer(EMBED_MODEL, **kwargs)
-    except TypeError:
-        kwargs.pop("local_files_only", None)
-        return SentenceTransformer(EMBED_MODEL, **kwargs)
+    from knowledge_base.lifecycle import load_embedder
+    return load_embedder(SentenceTransformer, EMBED_MODEL, offline=offline)[0]
 
 # Per-model task prefixes. Nomic requires explicit task tags; most other models
 # (Nemotron, E5 in symmetric mode) don't. When in doubt, add an entry here.
@@ -248,7 +247,7 @@ def chunk_flat_text(text: str, chunk_size: int = 500, overlap: int = 50) -> List
 
 
 def file_hash(path: Path) -> str:
-    h = hashlib.md5()
+    h = hashlib.sha256()
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(4096), b""):
             h.update(block)
@@ -294,10 +293,9 @@ def index_paper(
 
         total = 0
         for page_idx, page in enumerate(reader.pages, start=1):
-            try:
-                page_text = page.extract_text() or ""
-            except Exception:
-                page_text = ""
+            # Extraction failures abort the staged build; publishing a partial
+            # replacement as complete would silently remove searchable evidence.
+            page_text = page.extract_text() or ""
             for sub_idx, chunk in enumerate(chunk_page_text(page_text)):
                 meta = {
                     "source": pdf_path.name,
@@ -374,10 +372,9 @@ def index_book(pdf_path: Path, collection, embedder) -> int:
             embed_prefix = f"{title}. Topics: {topics}" if title else f"Topics: {topics}"
         total = 0
         for page_idx, page in enumerate(reader.pages, start=1):
-            try:
-                page_text = page.extract_text() or ""
-            except Exception:
-                page_text = ""
+            # Extraction failures abort the staged build; publishing a partial
+            # replacement as complete would silently remove searchable evidence.
+            page_text = page.extract_text() or ""
             for sub_idx, chunk in enumerate(chunk_page_text(page_text, max_words=700)):
                 embed_text = f"{embed_prefix}\n\n{chunk}" if embed_prefix else chunk
                 embedding = embed_doc(embedder, embed_text)
@@ -464,33 +461,7 @@ def index_capsule(technique: str, cap_dir: Path, collection, embedder) -> int:
     return total
 
 
-def index_documents(kb_path: Path, collection_name: str = "hedm_knowledge"):
-    if chromadb is None or SentenceTransformer is None or PyPDF2 is None:
-        print("❌ Missing dependencies. Install: chromadb sentence-transformers PyPDF2")
-        return
-
-    print("\U0001f680 Starting knowledge base indexing...")
-    print()
-    print(f"\U0001f4e6 Loading embedding model ({EMBED_MODEL})...")
-    embedder = _load_embedder()
-    print("   ✓ Model loaded")
-
-    chroma_path = kb_path / "chroma_db"
-    chroma_path.mkdir(exist_ok=True)
-    client = chromadb.PersistentClient(path=str(chroma_path))
-
-    try:
-        client.delete_collection(name=collection_name)
-        print(f"   Deleted existing collection '{collection_name}'")
-    except Exception:
-        pass
-
-    collection = client.create_collection(
-        name=collection_name,
-        metadata={"description": "HEDM knowledge base with citation-aware chunks",
-                  "hnsw:space": "cosine"},
-    )
-
+def _populate_documents(kb_path: Path, collection, embedder):
     stats = {"papers": 0, "logbooks": 0, "books": 0, "capsules": 0,
              "total_chunks": 0, "papers_with_bib": 0}
 
@@ -501,6 +472,8 @@ def index_documents(kb_path: Path, collection_name: str = "hedm_knowledge"):
         for pdf in sorted(papers_dir.glob("*.pdf")):
             print(f"   Processing: {pdf.name}")
             n, cite = index_paper(pdf, collection, embedder)
+            if n <= 0:
+                raise ValueError("A selected source produced no searchable text; active index retained")
             has_bib = pdf.with_suffix(".bib").exists()
             tag = " [.bib]" if has_bib else " [PDF metadata fallback]"
             print(f"      ✓ Indexed {n} chunks{tag}")
@@ -517,6 +490,8 @@ def index_documents(kb_path: Path, collection_name: str = "hedm_knowledge"):
         for txt in sorted(list(logbooks_dir.glob("*.txt")) + list(logbooks_dir.glob("*.md"))):
             print(f"   Processing: {txt.name}")
             n = index_logbook(txt, collection, embedder)
+            if n <= 0:
+                raise ValueError("A selected source produced no searchable text; active index retained")
             print(f"      ✓ Indexed {n} chunks")
             stats["logbooks"] += 1
             stats["total_chunks"] += n
@@ -528,6 +503,8 @@ def index_documents(kb_path: Path, collection_name: str = "hedm_knowledge"):
         for book in sorted(books_dir.glob("*.pdf")):
             print(f"   Processing: {book.name}")
             n = index_book(book, collection, embedder)
+            if n <= 0:
+                raise ValueError("A selected source produced no searchable text; active index retained")
             print(f"      ✓ Indexed {n} chunks")
             stats["books"] += 1
             stats["total_chunks"] += n
@@ -544,9 +521,7 @@ def index_documents(kb_path: Path, collection_name: str = "hedm_knowledge"):
         _techniques = _capsule_registry.available_techniques()
         _capsules_dir = _capsule_registry.CAPSULES_DIR
     except Exception as _e:
-        _techniques = ()
-        _capsules_dir = kb_path / "capsules"
-        print(f"   ⚠️  capsule_registry unavailable ({_e}); skipping capsules")
+        raise RuntimeError("Capsule discovery failed; active index retained") from _e
 
     if _techniques:
         print()
@@ -555,29 +530,47 @@ def index_documents(kb_path: Path, collection_name: str = "hedm_knowledge"):
             cap_dir = _capsules_dir / tech
             print(f"   Processing: {tech}")
             n = index_capsule(tech, cap_dir, collection, embedder)
+            if n <= 0:
+                raise ValueError("A selected source produced no searchable text; active index retained")
             print(f"      ✓ Indexed {n} chunks")
             stats["capsules"] += 1
             stats["total_chunks"] += n
 
-    stats_file = kb_path / "data" / "index_stats.json"
-    stats_file.parent.mkdir(exist_ok=True)
-    with open(stats_file, "w") as f:
-        json.dump({
-            **stats,
-            "collection_name": collection_name,
-            "embedding_model": EMBED_MODEL,
-        }, f, indent=2)
+    return stats
 
-    print()
-    print("=" * 60)
-    print("✅ Indexing complete")
-    print(f"   Papers: {stats['papers']} ({stats['papers_with_bib']} with .bib sidecar)")
-    print(f"   Logbooks: {stats['logbooks']}")
-    print(f"   Books: {stats['books']}")
-    print(f"   Capsules: {stats['capsules']}")
-    print(f"   Total chunks: {stats['total_chunks']}")
-    print(f"   DB: {chroma_path}")
-    print("=" * 60)
+
+def _source_snapshot(kb_path: Path):
+    import capsule_registry
+    files = []
+    for directory, suffixes in (("papers", {".pdf", ".bib"}), ("books", {".pdf", ".bib"}),
+                                ("logbooks", {".txt", ".md"})):
+        files.extend(p for p in (kb_path / directory).glob("*") if p.is_file() and p.suffix.lower() in suffixes)
+    files.extend(capsule_registry.CAPSULES_DIR.rglob("*.md"))
+    return {str(path.resolve()): file_hash(path) for path in sorted(files)}
+
+
+def _build_stable_sources(kb_path, collection, embedder):
+    before = _source_snapshot(kb_path)
+    stats = _populate_documents(kb_path, collection, embedder)
+    if before != _source_snapshot(kb_path):
+        raise ValueError("Knowledge sources changed during indexing; active index retained")
+    stats["source_manifest_sha256"] = hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest()
+    return stats
+
+
+def index_documents(kb_path: Path, collection_name: str = "hedm_knowledge"):
+    if chromadb is None or SentenceTransformer is None or PyPDF2 is None:
+        raise RuntimeError("Missing dependencies: chromadb sentence-transformers PyPDF2")
+    from knowledge_base.lifecycle import load_embedder, publish_generation
+    offline = _apply_offline_hf_env()
+    embedder, identity = load_embedder(SentenceTransformer, EMBED_MODEL, offline=offline)
+    chroma_path = kb_path / "chroma_db"
+    chroma_path.mkdir(parents=True, exist_ok=True)
+    client = chromadb.PersistentClient(path=str(chroma_path))
+    record = publish_generation(client, kb_path, collection_name,
+        lambda collection: _build_stable_sources(kb_path, collection, embedder), identity)
+    print(f"Published {record['chunks']} chunks in immutable generation {record['collection_name']}")
+    return record
 
 
 def test_query(kb_path: Path, query: str = "How does MIDAS index grains?"):
@@ -585,10 +578,12 @@ def test_query(kb_path: Path, query: str = "How does MIDAS index grains?"):
         return
     print()
     print(f"\U0001f50d Test query: '{query}'")
-    embedder = _load_embedder()
+    from knowledge_base.lifecycle import active_collection, load_embedder
+    embedder, identity = load_embedder(SentenceTransformer, EMBED_MODEL,
+                                      offline=_apply_offline_hf_env())
     client = chromadb.PersistentClient(path=str(kb_path / "chroma_db"))
     try:
-        collection = client.get_collection(name="hedm_knowledge")
+        collection, _ = active_collection(client, kb_path, embedding=identity)
         emb = embed_query(embedder, query)
         results = collection.query(query_embeddings=[emb], n_results=3)
         for i, (doc, meta, dist) in enumerate(zip(

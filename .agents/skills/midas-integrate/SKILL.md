@@ -60,6 +60,24 @@ midas_integrate_series(
 )
 ```
 
+For a directory of separate TIFF frames, set the input `pattern` explicitly to
+`"*.tif"` or `"*.tiff"`; the tool default is `"*.h5"`. Confirm the selected MIDAS
+runtime can read that TIFF layout before processing the full series. An explicitly
+supplied `images` list is processed in the order supplied; directory discovery is
+sorted by numeric filename suffix with a stable filename tie-break.
+
+Do not infer dark pairing from a directory called `Background` or from the nearest
+frame number alone. Verify that the candidate is a detector dark/background for
+the same exposure and attenuation, and that the facility workflow intends pixelwise
+subtraction. This MCP tool accepts one `dark_file` for all patterns or matches
+individual files by naming convention. It does not combine a background stack;
+when a homogeneous TIFF background group is scientifically appropriate, use
+combine_detector_backgrounds with method="mean" or "median" and an explicit
+output_file first. The combiner records its inputs and output but does not assess
+correction suitability. Verify that the selected MIDAS runtime reads its float32
+TIFF before passing it as dark_file. If no valid correction is established, make
+the no-dark choice explicit and record it in the pilot manifest.
+
 ### Report ONLY verified outputs (all integration tools)
 
 Every integration tool returns the **real** output paths it found on disk and

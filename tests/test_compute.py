@@ -17,11 +17,12 @@ def res(cores=96, load1=0.0, mem_free=1800.0, gpus=1, gpu_free=40.0):
     return C.Resources(
         host="testhost", cores=cores, load1=load1,
         mem_total_gb=2000.0, mem_free_gb=mem_free,
-        gpus=[C.GPU(i, f"GPU{i}", 48.0, gpu_free) for i in range(gpus)])
+        gpus=[C.GPU(i, f"GPU{i}", 48.0, gpu_free, uuid=f"GPU-fixture-{i}") for i in range(gpus)])
 
 
 @pytest.fixture(autouse=True)
 def isolated(tmp_path, monkeypatch):
+    monkeypatch.setenv("APEXA_RESOURCE_DB", str(tmp_path / "resources.sqlite3"))
     monkeypatch.setattr(C, "APEXA_DIR", tmp_path)
     monkeypatch.setattr(C, "PROFILES_JSON", tmp_path / "task_profiles.json")
     monkeypatch.setattr(C, "INVENTORY_JSON", tmp_path / "compute_cache.json")
@@ -38,12 +39,12 @@ def test_gpu_declined_when_measured_no_faster():
 
 
 def test_gpu_used_when_measured_faster():
-    prof = C.TaskProfile(task="t", gpu_speedup=8.0, rss_gb=4.0)
+    prof = C.TaskProfile(task="t", gpu_speedup=8.0, rss_gb=4.0, vram_gb=4.0)
     assert C.plan(10, profile=prof, resources=res(gpus=2)).device.startswith("cuda")
 
 
 def test_gpu_declined_when_it_would_not_fit():
-    prof = C.TaskProfile(task="t", gpu_speedup=8.0, rss_gb=60.0)
+    prof = C.TaskProfile(task="t", gpu_speedup=8.0, rss_gb=4.0, vram_gb=60.0)
     assert C.plan(10, profile=prof, resources=res(gpu_free=12.0)).device == "cpu"
 
 
@@ -74,7 +75,7 @@ def test_load_from_other_users_shrinks_the_plan():
 def test_memory_can_be_the_binding_cap():
     prof = C.TaskProfile(task="hog", threads_per_worker=1, rss_gb=100.0)
     p = C.plan(43, profile=prof, resources=res(mem_free=350.0))
-    assert p.n_workers == 3 and "memory-bound" in p.reason
+    assert p.n_workers == 2 and "memory-bound" in p.reason  # 25% memory reserve
 
 
 def test_never_more_workers_than_items():
@@ -111,6 +112,92 @@ def test_zero_items_is_not_an_error():
 def test_unreachable_host_plans_conservatively(monkeypatch):
     monkeypatch.setattr(C, "_remote_inventory", lambda *a, **k: None)
     assert C.inventory("nope", force=True).cores == 1
+    assert C.plan(1, "calibration", host="nope").n_workers == 0
+
+
+@pytest.mark.parametrize("free", [0.0, 0.1, 6.9])
+def test_insufficient_memory_admits_no_workers(free):
+    p = C.plan(4, profile=C.TaskProfile("fit", rss_gb=7), resources=res(mem_free=free))
+    assert p.n_workers == 0
+    assert "nothing admitted" in p.reason
+
+
+def test_internally_parallel_engine_requires_memory_too():
+    p = C.plan(1, profile=C.TaskProfile("ff", rss_gb=16, internally_parallel=True),
+               resources=res(mem_free=2))
+    assert p.n_workers == 0
+
+
+def test_unknown_memory_is_not_unlimited():
+    assert C.plan(1, profile=C.TaskProfile("fit", rss_gb=1),
+                  resources=C.Resources(cores=32)).n_workers == 0
+
+
+def test_busy_cpu_does_not_force_one_worker():
+    assert C.plan(1, "calibration", resources=res(load1=100)).n_workers == 0
+
+
+def test_vram_caps_concurrency_separately_from_host_rss():
+    p = C.plan(50, profile=C.TaskProfile("gpu-fit", rss_gb=1, vram_gb=12,
+                                       threads_per_worker=1, gpu_speedup=8),
+               resources=res(gpus=1, gpu_free=40))
+    assert p.device == "cuda:0"
+    assert p.n_workers == 2  # 30 GiB after reserve admits two 12 GiB workers
+    assert "vram-bound" in p.reason
+
+
+def test_explicit_gpu_requires_a_known_vram_budget():
+    p = C.plan(1, profile=C.TaskProfile("gpu-fit", rss_gb=1),
+               resources=res(), device="cuda:0")
+    assert p.n_workers == 0
+    assert "VRAM profile unknown" in p.reason
+
+
+def test_competing_worker_lease_is_refused_then_released():
+    resources = res(cores=4, mem_free=8, gpus=0)
+    profile = C.TaskProfile("fit", threads_per_worker=3, rss_gb=5)
+    first = C.plan(1, profile=profile, resources=resources)
+    # Both callers can form a plan before either one reserves capacity.
+    second = C.plan(1, profile=profile, resources=resources)
+    with C.reserve_worker(first):
+        assert C.plan(1, profile=profile, resources=resources).n_workers == 0
+        with pytest.raises(C.ResourceUnavailable):
+            with C.reserve_worker(second):
+                pytest.fail("competing worker must not start")
+    with C.reserve_worker(second):
+        pass
+    assert C._reserved("")["cpu"] == 0
+
+
+def test_automatic_gpu_selection_avoids_an_already_leased_device():
+    resources = res(cores=16, mem_free=64, gpus=2, gpu_free=20)
+    profile = C.TaskProfile("fit", threads_per_worker=2, rss_gb=1, vram_gb=12, gpu_speedup=4)
+    first = C.plan(1, profile=profile, resources=resources)
+    with C.reserve_worker(first):
+        second = C.plan(1, profile=profile, resources=resources)
+        assert first.device != second.device
+
+
+def test_gpu_inventory_respects_cuda_visibility_and_remaps_logical_index(monkeypatch):
+    devices = [C.GPU(0, "first", 48, 40, uuid="GPU-aaa"),
+               C.GPU(2, "second", 48, 32, uuid="GPU-bbb")]
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2")
+    visible = C._visible_gpus(devices)
+    assert len(visible) == 1
+    assert visible[0].index == 0 and visible[0].uuid == "GPU-bbb"
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "-1")
+    assert C._visible_gpus(devices) == []
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "MIG-unqualified")
+    assert C._visible_gpus(devices) == []
+
+
+def test_child_is_pinned_to_the_admitted_physical_gpu():
+    p = C.ExecutionPlan(device="cuda:2", gpu_uuid="GPU-qualified", threads_per_worker=3)
+    base = {"CUDA_VISIBLE_DEVICES": "0,1,2"}
+    child = C.worker_env(p, base)
+    assert child["CUDA_VISIBLE_DEVICES"] == "GPU-qualified"
+    assert p.child_device == "cuda:0"
+    assert base["CUDA_VISIBLE_DEVICES"] == "0,1,2"
 
 
 # ── execution ────────────────────────────────────────────────────────────────
@@ -186,15 +273,11 @@ def test_pick_compute_target_declines_gpu_for_a_measured_task(monkeypatch):
     assert t["target"] == "local-cpu" and "measured" in t["reason"]
 
 
-def test_pick_compute_target_keeps_legacy_rule_without_a_task(monkeypatch):
-    """Callers that pass no task must behave exactly as before.
-
-    Integration's GPU benefit has never been measured; flipping it on an
-    assumption would repeat the bug this layer exists to fix.
-    """
+def test_pick_compute_target_does_not_assume_unmeasured_gpu_benefit(monkeypatch):
+    """Unknown workloads stay on CPU until a measured profile establishes benefit."""
     import midas_comprehensive_server as M
     monkeypatch.setattr(M, "_local_accelerator", lambda: (True, "cuda"))
-    assert M._pick_compute_target(43, 8.3)["target"] == "local-gpu"
+    assert M._pick_compute_target(43, 8.3)["target"] == "local-cpu"
 
 
 def test_calibration_device_resolution(monkeypatch):

@@ -54,6 +54,11 @@ import json
 import math
 import os
 import shlex
+import subprocess
+import csv
+import io
+from contextlib import contextmanager
+from contextvars import ContextVar
 import sys
 import time
 from dataclasses import dataclass, asdict, field, replace
@@ -88,6 +93,7 @@ class GPU:
     mem_total_gb: float
     mem_free_gb: float
     util_pct: float = 0.0
+    uuid: str = ""
 
 
 @dataclass
@@ -102,13 +108,13 @@ class Resources:
 
     @property
     def free_cores(self) -> float:
-        """Cores not already busy, floored at 1.
+        """Cores not already busy; zero means no capacity can be admitted.
 
         Uses the 1-minute load average rather than a snapshot of CPU percent:
         load is what the other users on this host are actually costing us, and
         it is the number a human looks at before launching work on a shared box.
         """
-        return max(1.0, float(self.cores) - max(0.0, self.load1))
+        return max(0.0, float(self.cores) - max(0.0, self.load1))
 
     def describe(self) -> str:
         g = f", {len(self.gpus)} GPU" + ("s" if len(self.gpus) != 1 else "") if self.gpus else ", no GPU"
@@ -117,56 +123,120 @@ class Resources:
                 f"{self.mem_free_gb:.0f}/{self.mem_total_gb:.0f} GB free{g}")
 
 
-#: Emitted on the remote host and parsed back as JSON. Kept dependency-free
-#: (stdlib + an optional torch import) so it runs under whatever interpreter the
-#: remote MIDAS environment happens to be.
+#: Dependency-free inventory for data hosts. NVIDIA telemetry uses nvidia-smi,
+#: not importing a heavyweight tensor runtime just to populate a resource badge.
 _PROBE_SRC = r'''
-import json, os
+import csv, io, json, os, subprocess
 d = {"cores": os.cpu_count() or 1, "load1": os.getloadavg()[0], "gpus": []}
 try:
-    mt = mf = 0
+    d["cores"] = min(d["cores"], len(os.sched_getaffinity(0)))
+except (AttributeError, OSError):
+    pass
+try:
     for line in open("/proc/meminfo"):
         k, v = line.split(":")[0], line.split()[1]
-        if k == "MemTotal":     mt = int(v) / 1048576
-        elif k == "MemAvailable": mf = int(v) / 1048576
-    d["mem_total_gb"], d["mem_free_gb"] = mt, mf
-except Exception:
-    d["mem_total_gb"] = d["mem_free_gb"] = 0.0
-try:
-    import torch
-    for i in range(torch.cuda.device_count()):
-        free, total = torch.cuda.mem_get_info(i)
-        d["gpus"].append({"index": i, "name": torch.cuda.get_device_name(i),
-                          "mem_total_gb": total / 2**30, "mem_free_gb": free / 2**30,
-                          "util_pct": 0.0})
-except Exception:
+        if k == "MemTotal": d["mem_total_gb"] = int(v) / 1048576
+        elif k == "MemAvailable": d["mem_free_gb"] = int(v) / 1048576
+except OSError:
     pass
+try:
+    r = subprocess.run(["nvidia-smi", "--query-gpu=index,name,memory.total,memory.free,utilization.gpu,uuid",
+                        "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=2)
+    if r.returncode == 0:
+        for row in csv.reader(io.StringIO(r.stdout)):
+            i, name, total, free, util, uuid = [v.strip() for v in row]
+            d["gpus"].append({"index": int(i), "name": name,
+                              "mem_total_gb": float(total) / 1024,
+                              "mem_free_gb": float(free) / 1024, "util_pct": float(util), "uuid": uuid})
+except (OSError, ValueError, subprocess.SubprocessError):
+    pass
+visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+if visible is None:
+    visible = os.environ.get("SLURM_STEP_GPUS", os.environ.get("SLURM_JOB_GPUS"))
+if visible is not None:
+    selected = []
+    for logical, token in enumerate(visible.split(",")):
+        token = token.strip()
+        matches = [g for g in d["gpus"] if (token.isdigit() and g["index"] == int(token))
+                   or (token.startswith("GPU-") and g["uuid"].startswith(token))]
+        if len(matches) != 1:
+            selected = []
+            break
+        selected.append(dict(matches[0], index=logical))
+    d["gpus"] = selected
 print(json.dumps(d))
 '''
 
 
+def _visible_gpus(gpus: List[GPU]) -> List[GPU]:
+    """Respect scheduler/CUDA visibility and return CUDA logical device indices."""
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        visible = os.environ.get("SLURM_STEP_GPUS", os.environ.get("SLURM_JOB_GPUS"))
+    if visible is None:
+        return gpus
+    if not visible.strip() or visible.strip() == "-1":
+        return []
+    selected = []
+    for logical, token in enumerate(visible.split(",")):
+        token = token.strip()
+        matches = [g for g in gpus if (token.isdigit() and g.index == int(token))
+                   or (token.startswith("GPU-") and g.uuid and g.uuid.startswith(token))]
+        if len(matches) != 1:
+            # MIG/unknown identifiers need qualified telemetry; never expose
+            # an unrelated physical GPU just because the query found it.
+            return []
+        selected.append(replace(matches[0], index=logical))
+    return selected
+
+
 def _local_inventory() -> Resources:
     cores = os.cpu_count() or 1
+    try:
+        cores = min(cores, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        pass
+    try:
+        allocation = int(os.environ.get("SLURM_CPUS_PER_TASK", "0"))
+        if allocation > 0:
+            cores = min(cores, allocation)
+    except ValueError:
+        pass
+    try:
+        quota, period = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if quota != "max":
+            cores = min(cores, max(1, math.floor(int(quota) / int(period))))
+    except (OSError, ValueError, ZeroDivisionError):
+        pass
     try:
         load1 = os.getloadavg()[0]
     except (OSError, AttributeError):
         load1 = 0.0
     mem_total = mem_free = 0.0
     try:
-        import psutil                       # already a dependency (pyproject.toml)
+        import psutil
         vm = psutil.virtual_memory()
         mem_total, mem_free = vm.total / 2**30, vm.available / 2**30
-    except Exception:
+        limit = Path("/sys/fs/cgroup/memory.max").read_text().strip()
+        if limit != "max":
+            usage = int(Path("/sys/fs/cgroup/memory.current").read_text())
+            mem_total = min(mem_total, int(limit) / 2**30)
+            mem_free = min(mem_free, max(0, int(limit) - usage) / 2**30)
+    except (OSError, ValueError, ImportError):
         pass
     gpus: List[GPU] = []
     try:
-        import torch
-        for i in range(torch.cuda.device_count()):
-            free, total = torch.cuda.mem_get_info(i)
-            gpus.append(GPU(i, torch.cuda.get_device_name(i),
-                            total / 2**30, free / 2**30))
-    except Exception:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,name,memory.total,memory.free,utilization.gpu,uuid",
+             "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=2)
+        if r.returncode == 0:
+            for row in csv.reader(io.StringIO(r.stdout)):
+                i, name, total, free, util, uuid = [v.strip() for v in row]
+                gpus.append(GPU(int(i), name, float(total) / 1024,
+                                float(free) / 1024, float(util), uuid))
+    except (OSError, ValueError, subprocess.SubprocessError):
         pass
+    gpus = _visible_gpus(gpus)
     return Resources("", cores, load1, mem_total, mem_free, gpus, "local")
 
 
@@ -222,7 +292,7 @@ def inventory(host: str = "", *, force: bool = False,
             pass
     res = (_remote_inventory(host) if host else _local_inventory())
     if res is None:                     # unreachable: a conservative stand-in,
-        res = Resources(host=host, cores=1, source="unreachable")   # 1 worker
+        res = Resources(host=host, cores=1, source="unreachable")   # not admissible
     try:
         APEXA_DIR.mkdir(parents=True, exist_ok=True)
         blob = {}
@@ -258,6 +328,8 @@ class TaskProfile:
     #: DEFAULT for anything unmeasured, and what calibration actually measured
     #: (224.7 s GPU vs 230.0 s CPU).
     gpu_speedup: float = 1.0
+    #: Measured peak GPU memory, distinct from host RSS. Zero means unknown.
+    vram_gb: float = 0.0
     #: True for tasks that already shard internally (FF/NF via parsl/OMP). The
     #: planner then returns ONE worker with many threads instead of fanning out.
     internally_parallel: bool = False
@@ -345,16 +417,97 @@ class ExecutionPlan:
     task: str = ""
     n_items: int = 0
     resources: str = ""
+    # Admission bounds are shared by cooperating processes on this controller
+    # host. A facility scheduler is still needed for other users/remote hosts.
+    cpu_budget: int = 0
+    memory_budget_gb: float = 0.0
+    worker_rss_gb: float = 0.0
+    worker_vram_gb: float = 0.0
+    gpu_budget_gb: float = 0.0
+    admission_scope: str = "same_host_registry"
+    gpu_uuid: str = ""
+
+    @property
+    def child_device(self) -> str:
+        return "cuda:0" if self.device.startswith("cuda:") and self.gpu_uuid else self.device
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+class ResourceUnavailable(RuntimeError):
+    """Shared admission refused or the local reservation registry unavailable."""
+
+
+_current_resource_lease = ContextVar("apexa_resource_lease", default=None)
+
+
+def attach_current_child(pid: int, process_group=None):
+    """Attach a spawned local child to the task's reservation, if one exists.
+
+    The subprocess owner must stop/reap its child if this fails. Every attached
+    child/group is retained; a later spawn never overwrites earlier ownership.
+    """
+    lease = _current_resource_lease.get()
+    if lease is not None:
+        lease.attach_child(pid, process_group=process_group)
+
+
+def resource_registry():
+    """Shared by independent processes using the same local registry path."""
+    from apexa_resource_leases import ResourceRegistry
+    return ResourceRegistry(os.environ.get("APEXA_RESOURCE_DB", str(APEXA_DIR / "runtime" / "resources.sqlite3")))
+
+
+def _reserved(host: str) -> dict:
+    try:
+        return resource_registry().reserved(host)
+    except (OSError, RuntimeError) as exc:
+        raise ResourceUnavailable(f"shared resource registry unavailable: {type(exc).__name__}") from exc
+    except Exception as exc:
+        # Database errors must fail closed, not silently revert to a private pool.
+        raise ResourceUnavailable(f"shared resource registry unavailable: {type(exc).__name__}") from exc
+
+
+@contextmanager
+def reserve_worker(execution_plan: ExecutionPlan):
+    """Atomically reserve one worker across cooperating same-host processes.
+
+    Keep this context around the awaited owned child and all cleanup. The yielded
+    lease optionally records child ownership. Process death retains capacity as
+    uncertain until explicit stopped-execution evidence releases it. Remote
+    targets are coordinated only among processes on this controller, not against
+    other remote services or controllers.
+    """
+    p = execution_plan
+    if p.n_workers <= 0:
+        raise ResourceUnavailable("execution plan admits no workers")
+    if p.device.startswith("cuda:") and not p.gpu_uuid:
+        raise ResourceUnavailable("shared GPU admission requires a physical GPU UUID")
+    try:
+        lease = resource_registry().reserve(
+            target=p.host, cpu=p.threads_per_worker, ram=p.worker_rss_gb,
+            cpu_limit=p.cpu_budget, ram_limit=p.memory_budget_gb,
+            gpu=p.gpu_uuid if p.device.startswith("cuda:") else None,
+            vram=p.worker_vram_gb if p.device.startswith("cuda:") else 0.0,
+            gpu_limit=p.gpu_budget_gb if p.device.startswith("cuda:") else 0.0)
+    except Exception as exc:
+        raise ResourceUnavailable(str(exc)) from exc
+    token = _current_resource_lease.set(lease)
+    try:
+        yield lease
+    finally:
+        _current_resource_lease.reset(token)
+        # Normal exception/cancellation paths must finish process cleanup before
+        # leaving this context. If cleanup was uncertain, call mark_uncertain.
+        lease.release()
 
 
 def plan(n_items: int, task: str = "", *, host: str = "",
          profile: Optional[TaskProfile] = None,
          resources: Optional[Resources] = None,
          reserve: float = DEFAULT_RESERVE,
-         max_workers: int = 0) -> ExecutionPlan:
+         max_workers: int = 0, device: str = "") -> ExecutionPlan:
     """Decide concurrency, threads, and device for ``n_items`` of ``task``.
 
     Three caps, and the binding one is named in ``reason`` so a surprising plan
@@ -366,33 +519,86 @@ def plan(n_items: int, task: str = "", *, host: str = "",
     if n_items == 0:
         return ExecutionPlan(0, 1, "cpu", host, "no work items", task, 0, res.describe())
 
-    device = _choose_device(prof, res)
+    reserve = max(0.0, min(0.9, float(reserve)))
+    if not math.isfinite(prof.rss_gb) or prof.rss_gb < 0:
+        raise ValueError("profile rss_gb must be finite and nonnegative")
+    if not math.isfinite(prof.vram_gb) or prof.vram_gb < 0:
+        raise ValueError("profile vram_gb must be finite and nonnegative")
+    if res.source == "unreachable":
+        return ExecutionPlan(0, 1, "cpu", host, "host inventory unavailable; nothing admitted",
+                             task, n_items, res.describe())
+    try:
+        held = _reserved(host)
+    except ResourceUnavailable as exc:
+        return ExecutionPlan(0, 1, "cpu", host, str(exc), task, n_items, res.describe())
+    requested_device = (device or "auto").lower().strip()
+    available = replace(res, gpus=[replace(g, mem_free_gb=max(
+        0.0, g.mem_free_gb - held["gpu"].get(g.uuid or f"cuda:{g.index}", 0.0) / (1.0 - reserve)))
+        for g in res.gpus])
+    device = _choose_device(prof, available)
+    if requested_device not in ("", "auto"):
+        if requested_device == "cpu":
+            device = "cpu"
+        elif requested_device == "cuda" or requested_device.startswith("cuda:"):
+            gpu = (max(res.gpus, key=lambda g: g.mem_free_gb) if res.gpus else None)
+            if requested_device.startswith("cuda:"):
+                gpu = next((g for g in res.gpus if f"cuda:{g.index}" == requested_device), None)
+            if gpu is None or prof.vram_gb <= 0:
+                return ExecutionPlan(0, 1, requested_device, host,
+                                     "requested GPU unavailable or peak VRAM profile unknown; nothing admitted",
+                                     task, n_items, res.describe())
+            device = f"cuda:{gpu.index}"
+        elif requested_device == "mps":
+            return ExecutionPlan(0, 1, requested_device, host,
+                                 "MPS resource admission is not qualified; select CPU",
+                                 task, n_items, res.describe())
+        else:
+            raise ValueError(f"unsupported compute device: {requested_device}")
+    total_cores = max(0, int(res.free_cores * (1.0 - reserve)))
+    budget_cores = max(0, total_cores - held["cpu"])
+    memory_known = math.isfinite(res.mem_free_gb) and res.mem_total_gb > 0
+    total_mem = max(0.0, res.mem_free_gb * (1.0 - reserve)) if memory_known else 0.0
+    budget_mem = max(0.0, total_mem - held["ram"])
+    # Missing memory telemetry must not be interpreted as unlimited capacity.
+    by_mem = int(budget_mem // prof.rss_gb) if prof.rss_gb > 0 else n_items
+    if not memory_known and prof.rss_gb > 0:
+        by_mem = 0
 
-    # A task that already shards internally must not be fanned out: two of them
-    # would simply fight over the same cores.
+    by_vram = n_items
+    total_vram = 0.0
+    if device.startswith("cuda:"):
+        gpu = next(g for g in res.gpus if f"cuda:{g.index}" == device)
+        total_vram = gpu.mem_free_gb * (1.0 - reserve)
+        by_vram = int(max(0.0, total_vram - held["gpu"].get(gpu.uuid or device, 0.0)) // prof.vram_gb)
+    from apexa_resource_leases import target_key
+    allocation = dict(admission_scope="same_host_registry" if target_key(host) == "local" else "controller_host_only",
+                      cpu_budget=total_cores, memory_budget_gb=total_mem,
+                      worker_rss_gb=prof.rss_gb, worker_vram_gb=prof.vram_gb,
+                      gpu_budget_gb=total_vram,
+                      gpu_uuid=gpu.uuid if device.startswith("cuda:") else "")
+
+    # An internally parallel engine still needs RAM admission and a CPU budget.
     if prof.internally_parallel:
-        thr = max(1, int(res.free_cores * (1.0 - reserve)))
-        return ExecutionPlan(
-            1, thr, device, host,
-            f"{task or 'task'} parallelises internally — 1 worker with {thr} threads "
-            f"(not fanned out)", task, n_items, res.describe())
+        thr = max(1, budget_cores)
+        n = int(budget_cores > 0 and by_mem > 0 and by_vram > 0)
+        reason = (f"{task or 'task'} parallelises internally — {n} worker with {thr} threads"
+                  if n else "insufficient CPU/RAM capacity; nothing admitted")
+        return ExecutionPlan(n, thr, device, host, reason, task, n_items, res.describe(), **allocation)
 
-    thr = max(1, int(prof.threads_per_worker or 1))
-
-    budget_cores = max(1.0, res.free_cores * (1.0 - max(0.0, min(0.9, reserve))))
-    by_cores = max(1, int(budget_cores // thr))
-    by_mem = (max(1, int(res.mem_free_gb // prof.rss_gb))
-              if (prof.rss_gb > 0 and res.mem_free_gb > 0) else 10**6)
+    thr = max(1, min(int(prof.threads_per_worker or 1), max(1, budget_cores)))
+    by_cores = budget_cores // thr
     caps = {"cores": by_cores, "memory": by_mem, "items": n_items}
+    if device.startswith("cuda:"):
+        caps["vram"] = by_vram
     if max_workers and max_workers > 0:
         caps["max_workers"] = int(max_workers)
-
-    n = max(1, min(caps.values()))
+    n = max(0, min(caps.values()))
     binding = min(caps, key=lambda k: caps[k])
     reason = (f"{n} worker(s) x {thr} thread(s) on {host or 'local'} "
-              f"[{binding}-bound: cores {by_cores}, memory {by_mem}, items {n_items}"
-              + (f", cap {max_workers}" if max_workers else "") + "]")
-    return ExecutionPlan(n, thr, device, host, reason, task, n_items, res.describe())
+              f"[{binding}-bound: " + ", ".join(f"{k} {v}" for k, v in caps.items()) + "]")
+    if not n:
+        reason += "; insufficient capacity, nothing admitted — retry after resources free up"
+    return ExecutionPlan(n, thr, device, host, reason, task, n_items, res.describe(), **allocation)
 
 
 def _choose_device(prof: TaskProfile, res: Resources) -> str:
@@ -407,7 +613,7 @@ def _choose_device(prof: TaskProfile, res: Resources) -> str:
     if not res.gpus:
         return "cpu"
     best = max(res.gpus, key=lambda g: g.mem_free_gb)
-    if prof.rss_gb and best.mem_free_gb < prof.rss_gb:
+    if prof.vram_gb <= 0 or best.mem_free_gb < prof.vram_gb:
         return "cpu"                    # would not fit; silently thrashing is worse
     return f"cuda:{best.index}"
 
@@ -444,6 +650,12 @@ def run_batch(items: Sequence[Any], fn: Callable[[Any], Any],
     n = len(items)
     if n == 0:
         return BatchResult([], execution_plan, 0.0, 0, 0)
+
+    if execution_plan.n_workers <= 0:
+        records = [{"status": "resource_unavailable", "success": False, "nothing_was_run": True,
+                    "error": execution_plan.reason or "execution plan admits zero workers",
+                    "item": label(it)} for it in items]
+        return BatchResult(records, execution_plan, time.monotonic() - t0, 0, n)
 
     results: Dict[int, Any] = {}
     done = 0
@@ -506,6 +718,12 @@ async def run_batch_async(items: Sequence[Any], fn: Callable[[Any], Any],
         return BatchResult([], execution_plan, 0.0, 0, 0)
 
     sem = asyncio.Semaphore(max(1, execution_plan.n_workers))
+    if execution_plan.n_workers <= 0:
+        records = [{"status": "resource_unavailable", "success": False, "nothing_was_run": True,
+                    "error": execution_plan.reason or "execution plan admits zero workers",
+                    "item": label(it)} for it in items]
+        return BatchResult(records, execution_plan, time.monotonic() - t0, 0, n)
+
     results: Dict[int, Any] = {}
     done = 0
 
@@ -523,7 +741,23 @@ async def run_batch_async(items: Sequence[Any], fn: Callable[[Any], Any],
                 state = "ok " if ok(rec) else "FAIL"
                 print(f"  [{state}] ({done}/{n}) {label(it)}", file=sys.stderr)
 
-    await asyncio.gather(*(_one(i, it) for i, it in enumerate(items)))
+    tasks = [asyncio.create_task(_one(i, it)) for i, it in enumerate(items)]
+    group = asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        outcomes = await asyncio.shield(group)
+    except BaseException:
+        for child in tasks:
+            if not child.done() and not child.cancelling():
+                child.cancel()
+        while not group.done():
+            try:
+                await asyncio.shield(group)
+            except asyncio.CancelledError:
+                continue  # repeated cancellation must not interrupt child cleanup
+        raise
+    for outcome in outcomes:
+        if isinstance(outcome, BaseException):
+            raise outcome
     ordered = [results[i] for i in range(n)]
     n_ok = sum(1 for r in ordered if ok(r))
     return BatchResult(ordered, execution_plan, time.monotonic() - t0, n_ok, n - n_ok)
@@ -541,4 +775,10 @@ def worker_env(execution_plan: ExecutionPlan, base: Optional[Dict[str, str]] = N
     for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                 "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
         env[var] = t
+    env["OMP_DYNAMIC"] = "FALSE"
+    env["MKL_DYNAMIC"] = "FALSE"
+    if execution_plan.gpu_uuid and execution_plan.device.startswith("cuda:"):
+        # Pin the admitted physical device, independently of CUDA ordinal order.
+        # The worker sees only that GPU and must receive child_device (cuda:0).
+        env["CUDA_VISIBLE_DEVICES"] = execution_plan.gpu_uuid
     return env

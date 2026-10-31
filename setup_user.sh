@@ -34,22 +34,26 @@ fi
 # Step 2: AI Model
 echo ""
 echo "  2. Default AI Model"
-echo "     1) gpt55        - GPT-5.5 (1M context, DEFAULT, most reliable tool calls)"
-echo "     2) gpt54        - GPT-5.4 (1M context, strong all-round, lower cost)"
-echo "     3) claudeopus48 - Claude Opus 4.8 (1M context, best planning)"
-echo "     4) gpt4o        - GPT-4o (fastest, cheapest)"
-echo "     5) gemini35flash - Gemini 3.5 Flash"
+echo "     1) gpt55          - GPT-5.5 (default)"
+echo "     2) gpt56sol       - GPT-5.6 frontier"
+echo "     3) gpt54          - GPT-5.4"
+echo "     4) claudeopus5    - Claude Opus 5"
+echo "     5) gpt4o          - GPT-4o"
+echo "     6) claudesonnet5  - Claude Sonnet 5"
+echo "     7) gemini35flash  - Gemini 3.5 Flash"
 echo ""
-echo "     Enter a number, or type any model name directly (e.g. gpt51, claudesonnet46)."
+echo "     Enter a number or type a model alias; run 'models' for the current gateway catalog."
 read -p "     Select [1]: " model_choice
 model_choice=${model_choice:-1}
 
 case $model_choice in
     1) ARGO_MODEL="gpt55" ;;
-    2) ARGO_MODEL="gpt54" ;;
-    3) ARGO_MODEL="claudeopus48" ;;
-    4) ARGO_MODEL="gpt4o" ;;
-    5) ARGO_MODEL="gemini35flash" ;;
+    2) ARGO_MODEL="gpt56sol" ;;
+    3) ARGO_MODEL="gpt54" ;;
+    4) ARGO_MODEL="claudeopus5" ;;
+    5) ARGO_MODEL="gpt4o" ;;
+    6) ARGO_MODEL="claudesonnet5" ;;
+    7) ARGO_MODEL="gemini35flash" ;;
     ""|*[!a-zA-Z0-9]*)
         # empty or contains punctuation → not a valid model token; fall back
         echo "     Unrecognized selection '$model_choice' — using default gpt55"
@@ -57,32 +61,59 @@ case $model_choice in
     *)
         # any other bare alphanumeric token → treat as a typed model name
         ARGO_MODEL="$model_choice"
-        _KNOWN_MODELS=" gpt4o gpt41 gpt41mini gpt41nano gpto3mini gpto4mini gpt5 gpt5mini gpt5nano gpt51 gpt52 gpt54 gpt55 claudeopus48 claudeopus47 claudeopus46 claudeopus45 claudeopus41 claudesonnet46 claudesonnet45 claudehaiku45 gemini35flash gemini31flashlite gemini25pro gemini25flash "
+        _KNOWN_MODELS=" gpt4o gpt54 gpt55 gpt56sol claudeopus5 claudesonnet5 gemini35flash "
         if [[ "$_KNOWN_MODELS" != *" $ARGO_MODEL "* ]]; then
             echo "     Note: '$ARGO_MODEL' is not in the known model list — saving it anyway."
         fi
         ;;
 esac
 
-# Step 3: MIDAS path
-# Single full-line prompt with a default (Enter to accept). A leading ~ is
-# expanded here so a literal tilde never reaches .env.
+# Step 3: MIDAS pip runtime (primary route)
 echo ""
-echo "  3. MIDAS Installation"
-DEFAULT_MIDAS="$HOME/opt/MIDAS_canonical"
-echo "     Default: ~/opt/MIDAS_canonical"
-echo "     (Enter to accept the default, type another path, or '-' to auto-detect)"
-read -p "     Path: " -r MIDAS_INPUT
-MIDAS_INPUT="${MIDAS_INPUT:-$DEFAULT_MIDAS}"
-
-if [ "$MIDAS_INPUT" = "-" ] || [ "$MIDAS_INPUT" = "auto" ]; then
-    MIDAS_LINE="# MIDAS_PATH auto-detected"
-    MIDAS_PATH=""
+echo "  3. MIDAS Runtime"
+echo "     APEXA uses the pip midas-suite environment when available."
+APEXA_MIDAS_BIN=""
+_mp="$(command -v midas-pipeline 2>/dev/null || true)"
+if [ -n "$_mp" ]; then
+    APEXA_MIDAS_BIN="$(cd "$(dirname "$_mp")" && pwd)"
 else
-    MIDAS_PATH="${MIDAS_INPUT/#\~/$HOME}"   # expand a leading ~
-    MIDAS_LINE="MIDAS_PATH=$MIDAS_PATH"
-    if [ ! -d "$MIDAS_PATH" ]; then
-        echo "     Note: $MIDAS_PATH does not exist yet — saved anyway (create it or edit .env later)."
+    for _cand in \
+        /home/beams*/*/opt/envs/midas/bin \
+        "$HOME"/opt/envs/midas/bin \
+        "$HOME"/miniconda3/envs/midas*/bin \
+        "$HOME"/anaconda3/envs/midas*/bin \
+        /opt/conda/envs/midas*/bin ; do
+        if [ -x "$_cand/midas-pipeline" ]; then
+            APEXA_MIDAS_BIN="$_cand"
+            break
+        fi
+    done
+fi
+
+if [ -n "$APEXA_MIDAS_BIN" ]; then
+    echo "     Found MIDAS tools in: $APEXA_MIDAS_BIN"
+else
+    echo "     No midas-pipeline found on PATH or in standard locations."
+    read -p "     MIDAS environment bin path (Enter to skip): " -r APEXA_MIDAS_BIN
+    APEXA_MIDAS_BIN="${APEXA_MIDAS_BIN/#\~/$HOME}"
+fi
+if [ -n "$APEXA_MIDAS_BIN" ] && [ ! -x "$APEXA_MIDAS_BIN/midas-pipeline" ]; then
+    echo "     Note: $APEXA_MIDAS_BIN/midas-pipeline was not found; check this path in .env."
+fi
+if [ -z "$APEXA_MIDAS_BIN" ]; then
+    echo "     You can later set APEXA_MIDAS_BIN or run: uv sync --extra midas"
+fi
+
+# MIDAS_PATH is a repository clone for forward simulation and legacy C tools,
+# not the primary MIDAS runtime.
+echo ""
+read -p "     MIDAS repo clone for forward simulation / legacy tools? (y/N): " -r HAS_MIDAS_CLONE
+MIDAS_PATH=""
+if [[ "$HAS_MIDAS_CLONE" =~ ^[Yy]$ ]]; then
+    read -p "     MIDAS clone path: " -r MIDAS_PATH
+    MIDAS_PATH="${MIDAS_PATH/#\~/$HOME}"
+    if [ -n "$MIDAS_PATH" ] && [ ! -d "$MIDAS_PATH" ]; then
+        echo "     Note: $MIDAS_PATH does not exist yet — saved anyway; edit .env when available."
     fi
 fi
 
@@ -101,7 +132,8 @@ fi
 cat > .env << EOF
 ANL_USERNAME=$ANL_USERNAME
 ARGO_MODEL=$ARGO_MODEL
-$MIDAS_LINE
+$([ -n "$APEXA_MIDAS_BIN" ] && echo "APEXA_MIDAS_BIN=$APEXA_MIDAS_BIN" || echo "# APEXA_MIDAS_BIN=path/to/midas-suite/bin")
+$([ -n "$MIDAS_PATH" ] && echo "MIDAS_PATH=$MIDAS_PATH" || echo "# MIDAS_PATH is only needed for forward simulation / legacy tools")
 $MP_LINE
 EOF
 
@@ -145,7 +177,8 @@ echo ""
 echo "  Setup complete!"
 echo "    Username: $ANL_USERNAME"
 echo "    Model:    $ARGO_MODEL"
-echo "    MIDAS:    ${MIDAS_PATH:-auto-detect}"
+echo "    MIDAS tools: ${APEXA_MIDAS_BIN:-not detected}"
+echo "    MIDAS clone: ${MIDAS_PATH:-not configured (optional)}"
 echo ""
 echo "  Start APEXA:"
 echo "    ./start_beamline_assistant.sh    # CLI"

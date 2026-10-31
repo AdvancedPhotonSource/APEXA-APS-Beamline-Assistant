@@ -144,6 +144,11 @@ class Compute:
 
 @dataclass
 class PowderRefinement:
+    recipe: dict = field(default_factory=dict)
+    refine_atoms: bool = False
+    bkg_terms: int = 6
+    max_wall_seconds: float = 900.0
+    run_lebail_companion: bool = True
     mode: str = "independent"
     observations: list[dict] = field(default_factory=list)
     max_steps: int = 100
@@ -255,6 +260,9 @@ class APEXAPlan:
     def to_powder_refine_kwargs(self) -> dict:
         return {"observations": self.refinement.observations, "mode": self.refinement.mode,
                 "max_steps": self.refinement.max_steps, "workers": self.refinement.workers,
+                "recipe": self.refinement.recipe, "refine_atoms": self.refinement.refine_atoms,
+                "bkg_terms": self.refinement.bkg_terms, "max_wall_seconds": self.refinement.max_wall_seconds,
+                "run_lebail_companion": self.refinement.run_lebail_companion,
                 "output_dir": self.result_folder or "powder_refinement"}
 
     def to_integrate_series_kwargs(self) -> dict:

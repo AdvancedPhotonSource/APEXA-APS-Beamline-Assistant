@@ -1,7 +1,12 @@
 # Maximize a diode reading by scanning a single motor (the "hotspot finder").
 # Simplest case — 1D grid scan + Gaussian fit, no BO needed.
 name: diode_max_1d_scan
-description: "1D scan: maximize diode current by scanning one motor; fit a Gaussian to the trace; move to the fitted peak."
+description: "Bounded 1D diode scan in simulation, replay or read-only shadow; quality-gated Gaussian peak recommendation."
+implementation:
+  recipe: bounded_grid_gaussian_v1
+  modes: [simulation, replay, shadow]
+  hardware_execution: false
+  contract: docs/ALIGNMENT_RUNTIME.md
 beamline: "1-ID-E"
 technique: beam_steering
 scope:
@@ -24,12 +29,13 @@ algorithm:
   fit_model: gaussian_plus_offset
   convergence:
     peak_fit_r2: 0.90            # Gaussian fit must explain >=90% variance
-    peak_width_fraction_of_range: 0.25  # peak must be <25% of scan range (not just drift)
-prior_source: history
+    peak_width_fraction_of_range: 0.25  # Gaussian FWHM / full scan span
+prior_source: exact_recipe_configuration_revision_and_mode
 success_criteria:
   - "fitted peak position within scan range"
   - "fit R^2 >= 0.90"
 notes:
-  - "This is the dumbest-possible-that-works pattern for the 'move slit until diode peaks' step. For 2D (slit H + V), use the slit_tune_for_ic_target task."
+  - "One implemented scan recipe; the 2D slit_tune_for_ic_target task remains a specification."
   - "The Gaussian + offset model (not pure Gaussian) handles the dark-current / background floor correctly."
-  - "If the fit fails (R^2 < 0.90 or peak at a boundary), the task reports status='partial' and leaves the motor at the sample-max position, not the fitted peak."
+  - "If quality checks fail, status='partial' includes a provisional sampled-maximum recommendation. No mode commands a motor or moves to a recommendation."
+  - "Legacy ingested history never automatically seeds this runtime. Matching accepted runtime fits may initialize the mathematical fit only."

@@ -125,27 +125,13 @@ def _watch_args(tmp_path):
     )
 
 
-@pytest.mark.parametrize("failure", [RuntimeError("worker lost"),
-    '{"status":"error"}', {"status":"partial", "failed":1},
-    {"status":"dispatch_recommended"}, "unparseable", None])
-def test_failed_job_can_retry(tmp_path, monkeypatch, failure):
+def test_quiet_file_execution_is_review_only(tmp_path, monkeypatch):
     (tmp_path / "scan_000001.h5").write_bytes(b"data")
-    args = _watch_args(tmp_path)
-    outcomes = iter([failure, '{"status":"success", "failed":0}'])
-    calls = []
-    def execute(plan):
-        calls.append(plan)
-        out = next(outcomes)
-        if isinstance(out, Exception):
-            raise out
-        return out
-    monkeypatch.setattr(watcher, "execute_plan", execute)
-    fired = watcher.scan_once(args, set())
-    assert not fired
-    fired = watcher.scan_once(args, fired)
+    monkeypatch.setattr(watcher, "execute_plan", lambda plan: pytest.fail("quiet files cannot authorize execution"))
+    fired = watcher.scan_once(_watch_args(tmp_path), set())
     assert len(fired) == 1
-    watcher.scan_once(args, fired)
-    assert len(calls) == 2
+    plan = APEXAPlan.from_yaml(str(tmp_path / "APEXA_plan_scan.yaml"))
+    assert plan.perform_execution is False
 
 
 def test_scan_isolates_directories_and_exact_inputs(tmp_path, monkeypatch):
@@ -155,12 +141,10 @@ def test_scan_isolates_directories_and_exact_inputs(tmp_path, monkeypatch):
         (d / "scan_000001.h5").write_bytes(b"data")
         (d / "scan_notes.txt").write_text("not detector data")
     (tmp_path / "directory.h5").mkdir()
-    calls = []
-    def execute(plan):
-        calls.append(plan)
-        return {"status": "success"}
-    monkeypatch.setattr(watcher, "execute_plan", execute)
+    monkeypatch.setattr(watcher, "execute_plan", lambda plan: pytest.fail("review only"))
     fired = watcher.scan_once(_watch_args(tmp_path), set())
+    calls = [APEXAPlan.from_yaml(str(tmp_path / folder / "APEXA_plan_scan.yaml"))
+             for folder in ("first", "second")]
     assert len(fired) == len(calls) == 2
     assert len({p.result_folder for p in calls}) == 2
     for plan in calls:

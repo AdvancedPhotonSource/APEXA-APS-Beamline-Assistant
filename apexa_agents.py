@@ -2811,6 +2811,11 @@ class AgentRunner:
                   preloaded_techniques: Optional[set] = None) -> str:
 
         tools = self._filter_tools(agent.tool_names, all_tools)
+        from apexa_workflow_client import WORKFLOW_TOOL_NAMES
+        existing_names = {tool.get('function', tool).get('name') for tool in tools}
+        tools.extend(tool for tool in all_tools
+                     if tool.get('function', tool).get('name') in WORKFLOW_TOOL_NAMES
+                     and tool.get('function', tool).get('name') not in existing_names)
 
         # Structured transport (argo-proxy / OpenAI-compatible): tool intent and
         # tool results travel as real `tool_calls` / `role:"tool"` messages on
@@ -2847,6 +2852,12 @@ class AgentRunner:
         # only invite the model to emulate a protocol we no longer parse.
         cwd = str(Path.cwd())
         plan_pre = _PLAN_FIRST_PREAMBLE if getattr(agent, "use_planning", False) else ""
+        if os.environ.get("APEXA_WORKFLOW_MODE", "").lower() == "graph":
+            plan_pre += ("\nFor multi-stage scientific processing, use list_scientific_workflows and "
+                         "prepare_scientific_workflow with explicit dataset identity and validated tool arguments. "
+                         "The operator advances its persisted review gates in Active workflows or the CLI. "
+                         "Never treat chat text or a model tool call as approval; never bypass a pending gate "
+                         "by calling its scientific stages directly. Keep single read-only inspection tools direct.\n")
         preamble = _STRUCTURED_PREAMBLE if structured else _TOOL_PREAMBLE
 
         # Tell the model what it actually IS. Asked "what model are you using?",
@@ -4714,34 +4725,10 @@ class OrchestratorAgent:
     async def process(self, query: str, provider: ArgoProvider,
                       use_history: bool = True,
                       on_tool_result: OnToolResultFn = None) -> str:
-        # FF-HEDM workflow graph: deterministic ordering + human-in-the-loop gates.
-        # Routes when the flag is on AND (a run is already paused on a gate → any
-        # input resumes it, OR this query asks to start an FF-HEDM run). Everything
-        # else falls through to the modes below untouched.
-        if self._workflow_mode == "graph":
-            wf = self._ensure_ffhedm()
-            if wf is not None:
-                session = getattr(self.context, "active_session", None) or "_ffhedm"
-                if wf.is_active(session) or self._is_ff_hedm_workflow(query):
-                    execute = wf._execute
-                    recorded = []
-                    async def graph_tool(tool, args):
-                        result = await execute(tool, args)
-                        text = result if isinstance(result, str) else json.dumps(result, default=str)
-                        recorded.append({"role": "user", "content": f"[Tool Result for {tool}]\n{text}"})
-                        if on_tool_result:
-                            await on_tool_result(tool, args, text)
-                        return result
-                    wf._execute = graph_tool
-                    try:
-                        response = await wf.astep(query, provider, session)
-                        self.conversation_history.extend([
-                            {"role": "user", "content": query}, *recorded,
-                            {"role": "assistant", "content": response},
-                        ])
-                        return response
-                    finally:
-                        wf._execute = execute
+        # Durable workflows use explicit prepare/status tools and typed operator
+        # actions. Ordinary chat, including planning requests and unrelated
+        # questions, must never resume a persisted approval gate. The legacy
+        # FF-HEDM graph/checkpoints remain readable for migration only.
 
         # Modern single-loop mode (flag) — persistent full-context reasoning.
         if self._mode == "single":

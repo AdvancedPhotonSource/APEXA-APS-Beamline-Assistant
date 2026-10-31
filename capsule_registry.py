@@ -107,7 +107,7 @@ def _canon(name: str) -> str:
 # Raw file access (cached)
 # --------------------------------------------------------------------------- #
 @lru_cache(maxsize=256)
-def _read(technique: str, filename: str) -> str:
+def _read_cached(technique: str, filename: str) -> str:
     t = _canon(technique)
     if not t:
         return ""
@@ -116,6 +116,19 @@ def _read(technique: str, filename: str) -> str:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return ""
+
+
+def _read(technique: str, filename: str) -> str:
+    from apexa_knowledge_policy import current_policy, read_knowledge_text
+    if current_policy() is None:
+        return _read_cached(technique, filename)
+    t = _canon(technique)
+    if not t:
+        return ""
+    return read_knowledge_text(CAPSULES_DIR / t / filename)
+
+
+_read.cache_clear = _read_cached.cache_clear
 
 
 def spine(technique: str) -> str:
@@ -390,10 +403,7 @@ def hard_rules(technique: str) -> List[Dict]:
     t = _canon(technique)
     if not t:
         return []
-    try:
-        doc = (CAPSULES_DIR / t / "HARD_RULES.md").read_text(encoding="utf-8")
-    except OSError:
-        return []
+    doc = _read(t, "HARD_RULES.md")
     # The whole file is the rules list; prefer a 'hard rules' section if it has one.
     return _numbered_items(_section(doc, "hard rules") or doc)
 
@@ -651,12 +661,23 @@ def halt_checklist(technique: str) -> str:
 # Manifest + provenance (for list_techniques / learn_technique meta-tools)
 # --------------------------------------------------------------------------- #
 @lru_cache(maxsize=1)
-def pin_info() -> Dict:
+def _pin_info_cached() -> Dict:
     """Provenance of the vendored snapshot (MIDAS commit, sync time). {} if absent."""
     try:
         return json.loads(PIN_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+
+
+def pin_info() -> Dict:
+    from apexa_knowledge_policy import current_policy, read_knowledge_text
+    if current_policy() is None:
+        return _pin_info_cached()
+    raw = read_knowledge_text(PIN_FILE)
+    return json.loads(raw) if raw else {}
+
+
+pin_info.cache_clear = _pin_info_cached.cache_clear
 
 
 def manifest() -> List[Dict]:

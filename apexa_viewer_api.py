@@ -2,10 +2,13 @@
 from collections import OrderedDict
 import hashlib
 import json
+from pathlib import Path
 import threading
 import uuid
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+from apexa_web_security import authorize_data_path
 from pydantic import BaseModel, Field
 
 from apexa_viewer_data import (inspect_sequence, inspect_image, read_frame,
@@ -51,7 +54,9 @@ class RingRequest(BaseModel):
 @router.get("/structure")
 def structure(path: str):
     try:
-        return structure_payload(path)
+        return structure_payload(str(authorize_data_path(path)))
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -60,7 +65,75 @@ def structure(path: str):
 def report(path: str):
     try:
         from apexa_report_viewer import report_payload
-        return report_payload(path)
+        return report_payload(str(authorize_data_path(path)))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/image")
+def scientific_image(path: str):
+    """Serve a generated scientific PNG to the canvas.
+
+    Refinement engines save diagnostic plots beside their project files. The
+    canvas references those paths rather than copying large base64 images into
+    session history. Restrict this route to raster PNGs and bounded files.
+    """
+    try:
+        image_path = authorize_data_path(path).resolve(strict=True)
+        if not image_path.is_file() or image_path.suffix.lower() != ".png":
+            raise ValueError("Only existing PNG diagnostics can be opened here")
+        if image_path.stat().st_size > 50 * 1024 * 1024:
+            raise ValueError("Scientific image exceeds the 50 MB viewer limit")
+        return FileResponse(image_path, media_type="image/png",
+                            headers={"Cache-Control": "private, max-age=60"})
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/gsas2/figures")
+def gsas2_figures(path: str):
+    """Load full numerical figure arrays independently of chat/session records."""
+    import json
+    try:
+        source = authorize_data_path(path).resolve(strict=True)
+        if source.name != "figures.json" or source.stat().st_size > 100 * 1024 * 1024:
+            raise ValueError("Expected a bounded GSAS-II figures.json artifact")
+        value = json.loads(source.read_text())
+        if value.get("schema") != "gsas2-figures-1" or not isinstance(value.get("figures"), list):
+            raise ValueError("Unsupported GSAS-II figure schema")
+        return value
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/refinement/status")
+def refinement_live_status(job_id: str):
+    from apexa_refinement_live import refinement_snapshot
+    try:
+        return refinement_snapshot(job_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/refinement/evidence")
+def refinement_decision_evidence(job_id: str, snapshot: str):
+    from apexa_refinement_live import decision_snapshot
+    try:
+        return decision_snapshot(job_id, snapshot)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -68,6 +141,7 @@ def report(path: str):
 @router.post("/sequence")
 def sequence(request: SequenceRequest):
     try:
+        request = request.model_copy(update={"path": str(authorize_data_path(request.path))})
         manifest = inspect_sequence(**request.model_dump())
         sid = uuid.uuid4().hex
         with _lock:
@@ -75,6 +149,8 @@ def sequence(request: SequenceRequest):
             while len(_sequences) > 32:
                 _sequences.popitem(last=False)
         return {**manifest, "sequence_id": sid}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -97,15 +173,16 @@ def frame(request: FrameRequest):
             if index < source["frames"]:
                 break
             index -= source["frames"]
+        authorize_data_path(source["path"])
         raw = read_frame(source, index)
         dark = mask = None
         correction_sources = {}
         if request.corrected and request.dark_path:
-            info = inspect_image(request.dark_path, request.dark_dataset)
+            info = inspect_image(str(authorize_data_path(request.dark_path)), request.dark_dataset)
             dark = read_frame(info, request.dark_frame)
             correction_sources["dark"] = {**info, "frame": request.dark_frame}
         if request.corrected and request.mask_path:
-            info = inspect_image(request.mask_path, request.mask_dataset)
+            info = inspect_image(str(authorize_data_path(request.mask_path)), request.mask_dataset)
             if info["frames"] != 1:
                 raise ValueError("Mask must contain exactly one frame")
             mask = read_frame(info, 0)
@@ -121,6 +198,8 @@ def frame(request: FrameRequest):
                    "display_limits": [result["vmin"], result["vmax"]]}
         key = hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()[:20]
         return {**result, "context": context, "analysis_key": key, "filename": source["path"]}
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -128,6 +207,9 @@ def frame(request: FrameRequest):
 @router.post("/rings")
 def rings(request: RingRequest):
     try:
+        request = request.model_copy(update={"path": str(authorize_data_path(request.path))})
         return simulated_rings(**request.model_dump())
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(422, str(exc)) from exc

@@ -390,7 +390,7 @@ def test_a_missing_legacy_script_does_not_block_the_pip_engines():
     body = src[body_start:src.index("\n@mcp.tool()", body_start)]
 
     check = body.index("if not autocal_script.exists():")
-    engine = body.index('_eng = _choose_calibration_engine(')
+    engine = body.index('_eng = await asyncio.to_thread(_choose_calibration_engine,')
     assert check > engine, (
         "the legacy-script precondition runs before the engine is chosen, so a "
         "missing clone blocks the pip engines too")

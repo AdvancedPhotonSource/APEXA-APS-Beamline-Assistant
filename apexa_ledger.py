@@ -63,7 +63,7 @@ class LedgerEntry:
 
     @property
     def executed(self) -> bool:
-        return self.status in ("ok", "error", "denied")
+        return self.status != "dispatched"
 
     @property
     def succeeded(self) -> bool:
@@ -175,12 +175,11 @@ class ToolLedger:
 
     @staticmethod
     def _infer_status(text: str) -> str:
-        head = (text or "")[:400].lower()
-        if "⛔" in head or "deletion not run" in head:
-            return "denied"
-        if head.startswith("error") or '"status": "error"' in head or "traceback" in head:
-            return "error"
-        return "ok"
+        from apexa_outcomes import classify_result
+        outcome = classify_result(text)
+        if outcome.execution == "completed":
+            return {"rejected": "error", "provisional": "warning"}.get(outcome.scientific_verdict, "ok")
+        return "error" if outcome.execution == "failed" else outcome.execution
 
     def add_grounding(self, text: str) -> None:
         """Register text that legitimately grounds a claim but isn't a tool result

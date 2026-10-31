@@ -66,6 +66,13 @@ SKILL_FOR_TOOL = {
     # tomography (tomo_server.py, TomoPy backend) — survey + reconstruct
     "survey_tomo_stack": "tomo-reconstruct",
     "run_tomo_reconstruction": "tomo-reconstruct",
+    # in-situ synthesis XRD (synthesis_server.py) — batch phase evolution vs T
+    "synth_inspect_series": "insitu-synthesis",
+    "synth_pca_map": "insitu-synthesis",
+    "synth_fit_series": "insitu-synthesis",
+    "synth_recommend_step": "insitu-synthesis",
+    "synth_fit_kinetics": "insitu-synthesis",
+    "synth_report": "insitu-synthesis",
     # phase / refinement
     "run_gsas_refinement": "midas-gsasii",
     # autonomous refinement (gsas2_server.py) -- a separate skill from
@@ -84,6 +91,19 @@ SKILL_FOR_TOOL = {
     "powder_evidence": "gsas2-agentic",
     "powder_advise": "gsas2-agentic",
     "powder_trial": "gsas2-agentic",
+    "powder_session_create": "gsas2-agentic",
+    "powder_session_status": "gsas2-agentic",
+    "powder_session_evidence": "gsas2-agentic",
+    "powder_session_control": "gsas2-agentic",
+    "powder_adopt": "gsas2-agentic",
+    "powder_improve": "gsas2-agentic",
+    "powder_strategy_sweep_submit": "gsas2-agentic",
+    "powder_compare": "gsas2-agentic",
+    "gsas2_tutorials": "gsas2-agentic",
+    "gsas2_capabilities": "gsas2-agentic",
+    "gsas2_workflow_submit": "gsas2-agentic",
+    "gsas2_workflow_status": "gsas2-agentic",
+    "gsas2_workflow_cancel": "gsas2-agentic",
     # inspect / validate
     "recommend_workflow": "midas-validate",
     "inspect_dataset_file": "midas-validate",
@@ -120,7 +140,7 @@ def _strip_frontmatter(text: str) -> str:
 
 
 @lru_cache(maxsize=None)
-def load_skill_text(skill_name: str) -> str:
+def _load_skill_text_cached(skill_name: str) -> str:
     """Return a skill's SKILL.md body (frontmatter stripped), or "" if missing.
 
     Cached per process — each SKILL.md is read at most once. Never raises into
@@ -134,6 +154,20 @@ def load_skill_text(skill_name: str) -> str:
     except (OSError, UnicodeDecodeError):
         return ""
     return _strip_frontmatter(raw).strip()
+
+
+def load_skill_text(skill_name: str) -> str:
+    """Check study policy before any warm cache; approved bytes are hash-checked."""
+    from apexa_knowledge_policy import current_policy, read_knowledge_text
+    if current_policy() is None:
+        return _load_skill_text_cached(skill_name)
+    if not skill_name:
+        return ""
+    raw = read_knowledge_text(SKILLS_DIR / skill_name / "SKILL.md")
+    return _strip_frontmatter(raw).strip()
+
+
+load_skill_text.cache_clear = _load_skill_text_cached.cache_clear
 
 
 def skills_for_tools(tool_names) -> List[str]:

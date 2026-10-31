@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 import web_server as web
 from apexa_canvas import science_view
 
-CIF = str(Path(__file__).resolve().parents[1] / "Ni_mp-23.cif")
+CIF = str(Path(__file__).resolve().parent / "data/nickel_fcc.cif")
 
 
 @pytest.fixture
@@ -145,7 +145,7 @@ def test_slow_image_read_does_not_block_status(client, monkeypatch, tmp_path):
     monkeypatch.setattr(web, "load_diffraction_image", slow_read)
 
     async def run():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=web.app), base_url="http://test") as http:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=web.app), base_url="http://127.0.0.1") as http:
             task = asyncio.create_task(http.post("/api/viewer/load_path", data={"path": str(path)}))
             try:
                 assert await asyncio.to_thread(started.wait, 2)

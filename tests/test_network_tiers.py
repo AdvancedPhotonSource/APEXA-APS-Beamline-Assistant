@@ -258,8 +258,15 @@ def _rrc(monkeypatch, host_env, **kw):
     import beamline_core_server as S
 
     calls = {}
-    monkeypatch.setattr(S, "remote_run", lambda *a, **k: calls.setdefault(
-        "ssh", {"return_code": 0, "stdout": "via-ssh", "success": True}))
+    import subprocess
+    original = S.run_subprocess
+    async def stub_ssh(command, **kwargs):
+        if isinstance(command, list) and command[0] == "ssh":
+            calls["ssh"] = True
+            return subprocess.CompletedProcess(command, 0, "via-ssh", "")
+        return await original(command, **kwargs)
+    monkeypatch.setattr(S, "run_subprocess", stub_ssh)
+    monkeypatch.setenv("APEXA_ALLOW_UNSANDBOXED_COMMANDS", "1")
     monkeypatch.setenv("APEXA_ANALYSIS_HOST", host_env)
     fn = getattr(S.run_remote_command, "fn", S.run_remote_command)
     out = json.loads(asyncio.run(fn(command="echo hi", **kw)))

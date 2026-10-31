@@ -22,7 +22,9 @@ import shlex
 import asyncio
 import logging
 import traceback
-from mcp.server.mcpserver import MCPServer  # mcp>=2: FastMCP was renamed
+from apexa_mcp import TracedMCPServer as MCPServer
+from apexa_subprocess import run as run_subprocess
+from apexa_compute import ResourceUnavailable
 from _idempotency import idempotent  # skip-if-done guard for heavy tools (Phase 0)
 from apexa_remote_exec import (
     decide_exec_host, remote_run, remote_exists, remote_read_text,
@@ -982,67 +984,41 @@ def _local_accelerator():
 
 def _pick_compute_target(n_frames: int = 1, megapixels: float = 8.3, prefer: str = "auto",
                          task: str = "") -> dict:
-    """Decide where a job runs: local-cpu / local-gpu / remote-gpu.
+    """Explain placement without equating GPU availability with useful speedup.
 
-    prefer: 'auto' (default) | 'local' | 'remote' | 'cpu' | 'cuda' | 'mps'.
-    Endpoint config via env: APEXA_GPU_MACHINE (parsl machine name for
-    midas-pipeline --machine, e.g. 'polaris') and/or APEXA_GPU_ENDPOINT
-    (ssh user@host or globus-compute endpoint id). Returns a dict with
-    target, device, cost, reason, and (remote) machine/endpoint.
-
-    ``task`` opts a caller into the **measured** device gate in
-    ``apexa_compute``. Rule 2 below ("a local accelerator exists, so use it") is
-    an assumption, and for calibration it is measurably wrong: on copland a
-    four-stage fit took 224.7 s on an RTX A6000 versus 230.0 s on CPU, and that
-    GPU's float64 rate (0.56 TFLOP/s) is 4x *below* the host's own CPUs (2.33).
-    So when a task has a measured profile saying the GPU does not help, we stay
-    on CPU.
-
-    Deliberately scoped: callers that pass no ``task`` keep the legacy rule
-    byte-for-byte. Integration's GPU benefit has NOT been measured, and flipping
-    it on an assumption would repeat the mistake this fixes.
+    Automatic selection stays near the local data unless a task-specific measured
+    profile supports a GPU. Remote execution is an explicit recommendation, not
+    an assumption that an endpoint can see the input files or run this engine.
     """
     cost = max(1.0, float(n_frames)) * max(0.1, float(megapixels))
-    accel, name = _local_accelerator()
-
-    if task and prefer in ("auto", ""):
-        try:
-            import apexa_compute as _AC
-            _prof = _AC.profile_for(task)
-            if accel and _prof.gpu_speedup < _AC.GPU_MIN_SPEEDUP:
-                return {"target": "local-cpu", "device": "cpu", "cost": cost,
-                        "reason": (f"{task}: GPU measured at {_prof.gpu_speedup:.2f}x "
-                                   f"(< {_AC.GPU_MIN_SPEEDUP:.2f}x) — staying on CPU "
-                                   f"despite a local {name}")}
-        except Exception:
-            pass        # profile layer unavailable → fall through to the legacy rule
-
-    machine = os.environ.get("APEXA_GPU_MACHINE") or None
-    endpoint = os.environ.get("APEXA_GPU_ENDPOINT") or None
-    prefer = (prefer or "auto").lower()
-
-    if prefer == "cpu":
-        return {"target": "local-cpu", "device": "cpu", "cost": cost, "reason": "forced cpu"}
-    if prefer in ("cuda", "mps"):
-        return {"target": "local-gpu", "device": prefer, "cost": cost, "reason": f"forced {prefer}"}
-    if prefer == "local":
-        return {"target": "local-gpu" if accel else "local-cpu",
-                "device": name if accel else "cpu", "cost": cost, "reason": "forced local"}
-
-    if accel and prefer != "remote":
-        return {"target": "local-gpu", "device": name, "cost": cost,
-                "reason": f"local {name} available"}
-    if cost <= _COST_LOCAL_CPU and prefer != "remote":
+    prefer = (prefer or "auto").strip().lower()
+    if prefer == "remote":
+        return {"target": "remote-requested", "device": None, "cost": cost,
+                "machine": os.environ.get("APEXA_GPU_MACHINE"),
+                "endpoint": os.environ.get("APEXA_GPU_ENDPOINT"),
+                "reason": "remote placement requested; data access and engine capability require preflight"}
+    if prefer in ("cpu", "local"):
         return {"target": "local-cpu", "device": "cpu", "cost": cost,
-                "reason": "small job; local CPU is fine"}
-    if machine or endpoint:
-        return {"target": "remote-gpu", "device": "cuda", "cost": cost,
-                "machine": machine, "endpoint": endpoint,
-                "reason": f"large job (cost {cost:.0f}) on CPU-only host → GPU endpoint"}
-    return {"target": "local-cpu", "device": "cpu", "cost": cost,
-            "reason": (f"large job (cost {cost:.0f}) on a CPU-only host and no GPU endpoint "
-                       "configured (set APEXA_GPU_MACHINE or APEXA_GPU_ENDPOINT) — running "
-                       "on CPU, which will be slow")}
+                "reason": f"explicit {prefer}; keep computation with locally accessible data"}
+    if prefer in ("cuda", "mps") or prefer.startswith("cuda:"):
+        return {"target": "local-gpu", "device": prefer, "cost": cost,
+                "reason": "explicit accelerator request; executor must validate capacity and engine support"}
+    import apexa_compute as _AC
+    prof = _AC.profile_for(task or "unknown")
+    if prof.gpu_speedup < _AC.GPU_MIN_SPEEDUP:
+        return {"target": "local-cpu", "device": "cpu", "cost": cost,
+                "reason": f"{task or 'unmeasured task'}: measured GPU benefit not established "
+                          f"(profile {prof.gpu_speedup:.2f}x); keep computation near data"}
+    selected = _AC.plan(1, task, profile=prof)
+    return {"target": "local-gpu" if selected.device.startswith("cuda:") else "local-cpu",
+            "device": selected.device, "cost": cost, "reason": selected.reason}
+
+
+async def _run_planned_subprocess(execution_plan, command, **kwargs):
+    """Keep resource leases until process exit, including cancellation cleanup."""
+    import apexa_compute as _AC
+    with _AC.reserve_worker(execution_plan):
+        return await run_subprocess(command, **kwargs)
 
 
 def _resolve_calib_device(device: str = "") -> str:
@@ -1096,6 +1072,7 @@ def _announce_output(tool: str, out_path, **extras) -> None:
 
 @mcp.tool()
 @idempotent(
+    engine_identity=lambda kw: None,  # external engine build is not yet fingerprinted
     tool="run_ff_hedm_full_workflow",
     anchor=lambda kw: kw.get("result_folder") or "",
     salient=lambda kw: {k: kw.get(k) for k in (
@@ -2079,6 +2056,7 @@ async def match_grains(
 
 @mcp.tool()
 @idempotent(
+    engine_identity=lambda kw: None,  # external engine build is not yet fingerprinted
     tool="run_nf_hedm_reconstruction",
     anchor=lambda kw: kw.get("result_folder") or "",
     salient=lambda kw: {k: kw.get(k) for k in (
@@ -4571,7 +4549,146 @@ def _probe_dark_dataset(h5_path, explicit=None, data_location=None):
 
 
 @mcp.tool()
+async def combine_detector_backgrounds(
+    images: list = None,
+    input_dir: str = "",
+    pattern: str = "*.tiff",
+    method: str = "mean",
+    output_file: str = "",
+    acquisition_context: str = "",
+) -> str:
+    """Combine a verified group of same-shape TIFF background frames.
+
+    Writes a float32 TIFF plus a JSON provenance manifest. This computes a
+    pixelwise mean or median only; it does not establish whether those frames
+    are a detector dark, empty-beam background, or suitable for a sample with
+    different exposure, attenuation, gain, or beam conditions.
+
+    Supply either an explicit image list (kept in the supplied order) or a
+    directory and glob. Review acquisition metadata and group matching frames
+    before calling. The output may be passed as dark_file to
+    midas_integrate_series only after confirming that the MIDAS runtime reads
+    the generated TIFF and that pixelwise subtraction is the intended correction.
+    """
+    try:
+        import hashlib as _hashlib
+        import tifffile as _tifffile
+        from datetime import datetime as _datetime, timezone as _timezone
+
+        if method not in ("mean", "median"):
+            raise ValueError("method must be 'mean' or 'median'")
+        if images and input_dir:
+            raise ValueError("provide images or input_dir, not both")
+        if images:
+            files = [Path(p).expanduser().absolute() for p in images]
+            missing = [str(path) for path in files if not path.is_file()]
+            if missing:
+                raise ValueError(f"input TIFF not found: {missing[0]}")
+        elif input_dir:
+            directory = Path(input_dir).expanduser().absolute()
+            if not directory.is_dir():
+                raise ValueError(f"input_dir not found: {directory}")
+            files = sorted(p for p in directory.glob(pattern) if p.is_file())
+        else:
+            raise ValueError("provide images=[...] or input_dir=...")
+        if len(files) < 2:
+            raise ValueError("at least two background frames are required")
+        if len(files) > 100:
+            raise ValueError("combine at most 100 TIFF frames per call")
+        if len({p.resolve() for p in files}) != len(files):
+            raise ValueError("images contains duplicate paths")
+        non_tiff = [p.name for p in files if p.suffix.lower() not in (".tif", ".tiff")]
+        if non_tiff:
+            raise ValueError(f"expected TIFF input frames; got {non_tiff[0]}")
+
+        if not output_file:
+            raise ValueError("output_file is required; choose a derived-data path outside the raw input folder")
+        destination = Path(output_file).expanduser().absolute()
+        if destination.suffix.lower() not in (".tif", ".tiff"):
+            raise ValueError("output_file must use .tif or .tiff")
+        if destination.resolve() in {p.resolve() for p in files}:
+            raise ValueError("output_file must not replace an input image")
+        if destination.exists() or destination.with_suffix(destination.suffix + ".json").exists():
+            raise ValueError(f"output already exists; choose a new output_file: {destination}")
+
+        def _combine():
+            reference_shape = None
+            reference_dtype = None
+            running_mean = None
+            stack = [] if method == "median" else None
+            input_records = []
+            for index, path in enumerate(files):
+                frame = np.asarray(_tifffile.imread(str(path)))
+                if frame.ndim != 2:
+                    raise ValueError(
+                        f"{path.name} has {frame.ndim} dimensions; expected one 2D frame per TIFF")
+                if frame.size == 0:
+                    raise ValueError(f"{path.name} contains no pixels")
+                if not np.all(np.isfinite(frame)):
+                    raise ValueError(f"{path.name} contains non-finite pixel values")
+                if reference_shape is None:
+                    reference_shape, reference_dtype = frame.shape, str(frame.dtype)
+                elif frame.shape != reference_shape:
+                    raise ValueError(
+                        f"shape mismatch: {path.name} is {frame.shape}, expected {reference_shape}")
+                values = frame.astype(np.float64, copy=False)
+                if method == "mean":
+                    if running_mean is None:
+                        running_mean = values.copy()
+                    else:
+                        running_mean += (values - running_mean) / (index + 1)
+                else:
+                    stack.append(frame.copy())
+                stat = path.stat()
+                input_records.append({
+                    "path": str(path), "size_bytes": stat.st_size,
+                    "mtime": _datetime.fromtimestamp(stat.st_mtime, _timezone.utc).isoformat(),
+                })
+            combined = running_mean if method == "mean" else np.median(np.stack(stack), axis=0)
+            result = np.asarray(combined, dtype=np.float32)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            _tifffile.imwrite(str(destination), result, photometric="minisblack")
+            digest = _hashlib.sha256(destination.read_bytes()).hexdigest()
+            manifest = {
+                "tool": "combine_detector_backgrounds",
+                "status": "success",
+                "method": method,
+                "input_count": len(files),
+                "input_images": input_records,
+                "input_shape": list(reference_shape),
+                "input_dtype": reference_dtype,
+                "output_file": str(destination),
+                "output_dtype": str(result.dtype),
+                "output_sha256": digest,
+                "acquisition_context": acquisition_context or None,
+                "correction_suitability": (
+                    "not assessed; verify exposure, attenuation, detector settings, "
+                    "beam conditions, and intended subtraction method"),
+            }
+            manifest_path = destination.with_suffix(destination.suffix + ".json")
+            manifest_path.write_text(json.dumps(manifest, indent=2))
+            return {
+                **manifest,
+                "manifest": str(manifest_path),
+                "pixel_mean": float(np.mean(result)),
+                "pixel_min": float(np.min(result)),
+                "pixel_max": float(np.max(result)),
+                "warning": (
+                    "This is a pixelwise image combine, not a correction-suitability "
+                    "check. Do not subtract it unless acquisition conditions match and "
+                    "the experiment's reduction method calls for that subtraction."),
+            }
+
+        result = await asyncio.to_thread(_combine)
+        return format_result(result)
+    except Exception as e:
+        return format_result({"tool": "combine_detector_backgrounds",
+                              "status": "error", "error": str(e)})
+
+
+@mcp.tool()
 @idempotent(
+    engine_identity=lambda kw: None,  # external engine build is not yet fingerprinted
     tool="midas_integrate_series",
     anchor=lambda kw: kw.get("result_folder") or kw.get("image_dir") or "",
     salient=lambda kw: {k: kw.get(k) for k in (
@@ -4649,8 +4766,8 @@ async def midas_integrate_series(
 
     Performance:
       • ``n_parallel``: how many files integrate CONCURRENTLY (they're independent).
-        Default (omit) auto-fills the host without oversubscribing:
-        ``cores // n_cpus`` workers, capped at 16. This is the main speed lever for
+        Default (omit) uses the common CPU/RAM planner, capped at 16 workers.
+        Insufficient capacity returns resource_unavailable before execution. This is the main speed lever for
         a large CPU series — the old path ran strictly one file at a time. Pass
         ``n_parallel=1`` to force serial (e.g. to leave cores free during live
         acquisition). ``n_cpus`` stays the per-file thread count.
@@ -4708,24 +4825,31 @@ async def midas_integrate_series(
         if not files:
             return format_result({"tool": "midas_integrate_series", "status": "error",
                                   "error": f"no sample image files matched (excluded {n_darks_excluded} darks)"})
+        if len({p.stem for p in files}) != len(files):
+            return format_result({"tool": "midas_integrate_series", "status": "error",
+                                  "nothing_was_run": True,
+                                  "error": "input filenames collide in per-frame output directories; select unique stems"})
         n_matched = len(files)
-        # 1b) compute-dispatch tiering (docs/COMPUTE_DISPATCH.md). This tool runs
-        # the CPU integrator.py engine; for a large sweep on a CPU-only host with a
-        # GPU endpoint configured, recommend offloading rather than grinding.
-        plan = _pick_compute_target(n_frames=n_matched, megapixels=8.3, prefer=compute_target)
-        if compute_target == "remote" or (
-                plan["target"] == "remote-gpu" and os.environ.get("APEXA_GPU_AUTO_DISPATCH")):
-            tgt = plan.get("machine") or plan.get("endpoint") or "the configured GPU endpoint"
-            return format_result({
-                "tool": "midas_integrate_series", "status": "dispatch_recommended",
-                "compute": plan, "matched_files": n_matched,
-                "recommendation": (
-                    f"Large batch ({n_matched} frames) — run on {tgt}: on a GPU host with a "
-                    "shared view of the data, invoke this same midas_integrate_series call (it "
-                    "will use the GPU engines there), or midas-pipeline --machine "
-                    f"{plan.get('machine','<machine>')} --device cuda. "
-                    "Pass compute_target='local' to force CPU integration here (slow)."),
-            })
+        # This adapter executes the CPU integrator.py backend. Never advertise a
+        # GPU merely because the workstation has one, or run against remote-blind data.
+        locality = await asyncio.to_thread(decide_exec_host, str(files[0]), str(param_path), dark_file or "")
+        if locality.get("error") or locality.get("is_remote"):
+            return format_result({"tool": "midas_integrate_series", "status": "needs_input",
+                                  "nothing_was_run": True, "host": locality.get("host"),
+                                  "error": locality.get("reason"),
+                                  "recommendation": "Run this CPU series adapter on the data host or stage a complete local copy."})
+        if compute_target not in ("auto", "", "cpu", "local", "remote"):
+            return format_result({"tool": "midas_integrate_series", "status": "error",
+                                  "nothing_was_run": True,
+                                  "error": "This series adapter supports CPU execution only; a GPU requires a separately qualified backend."})
+        plan = await asyncio.to_thread(_pick_compute_target, n_frames=n_matched,
+                                       megapixels=8.3, prefer=compute_target, task="integration")
+        if compute_target == "remote":
+            return format_result({"tool": "midas_integrate_series", "status": "dispatch_recommended",
+                                  "nothing_was_run": True, "compute": plan, "matched_files": n_matched,
+                                  "recommendation": "Run this CPU adapter on a qualified host with the complete inputs; remote execution is not submitted by this call."})
+        plan["target"], plan["device"] = "local-cpu", "cpu"
+        plan["reason"] = "CPU integrator.py backend; execution stays with local data"
         # 2) representative, evenly-spaced subset when capped
         subset_note = None
         if max_files and max_files < n_matched:
@@ -4784,7 +4908,7 @@ async def midas_integrate_series(
             return format_result({"tool": "midas_integrate_series", "status": "error",
                                   "error": f"integrator.py not found at {integrator_script}"})
         _warn_deprecated_cpp("integration series: integrator.py")
-        midas_python = find_midas_python()
+        midas_python = await asyncio.to_thread(find_midas_python)
         out_root = (Path(result_folder).expanduser().absolute() if result_folder
                     else files[0].parent / "integration_series")
         out_root.mkdir(parents=True, exist_ok=True)
@@ -4850,18 +4974,19 @@ async def midas_integrate_series(
                          "wavelength_A": _wl, "r_min_px": r_min, "r_max_px": r_max,
                          "r_bin_px": r_bin_size}
 
-        # Resolve file-level parallelism. Separate input files are INDEPENDENT
-        # (own out_root/<stem>/ dir, read-only shared darks), so the series is
-        # embarrassingly parallel. Default (None) fills the box WITHOUT
-        # oversubscribing: cores // n_cpus workers (each worker still uses n_cpus
-        # threads inside the integrator), capped at 16 and at the file count. This
-        # replaces the old strictly-serial loop that spawned one cold integrator.py
-        # process per file back-to-back and left most cores idle. Pass n_parallel=1
-        # to force the old serial behavior (e.g. during live acquisition).
-        _cores = os.cpu_count() or 8
-        if n_parallel is None or n_parallel < 1:
-            n_parallel = max(1, min(16, _cores // max(1, n_cpus)))
-        n_parallel = max(1, min(n_parallel, len(files)))
+        import apexa_compute as _AC
+        _profile = _AC.replace(_AC.profile_for("integration"), threads_per_worker=max(1, n_cpus))
+        _exec_plan = await asyncio.to_thread(_AC.plan, len(files), "integration", profile=_profile,
+                                            max_workers=n_parallel if n_parallel and n_parallel > 0 else 16,
+                                            device="cpu")
+        if _exec_plan.n_workers == 0:
+            return format_result({"tool": "midas_integrate_series", "status": "resource_unavailable", "success": False,
+                                  "nothing_was_run": True, "error": _exec_plan.reason,
+                                  "compute": _exec_plan.as_dict()})
+        n_parallel, n_cpus = _exec_plan.n_workers, _exec_plan.threads_per_worker
+        env = _AC.worker_env(_exec_plan, base=env)
+        plan["allocation"] = _exec_plan.as_dict()
+        _cores = _exec_plan.resources
 
         # Announce BEFORE running (Claude-Code style: say what + where up front).
         _dscheme = (f"{dark_source}/{dark_kind}" if dark_source == "file" else dark_source)
@@ -4928,8 +5053,8 @@ async def midas_integrate_series(
                     "dark_first_frame_mean": None, "dark_applied": False,
                 })
             if _rep_dark and Path(_rep_dark).exists():
-                _dkloc_resolved, _dmean = _probe_dark_dataset(
-                    _rep_dark, explicit=_explicit, data_location=data_location)
+                _dkloc_resolved, _dmean = await asyncio.to_thread(
+                    _probe_dark_dataset, _rep_dark, explicit=_explicit, data_location=data_location)
                 print(f"[integrate_series] dark dataset: {_dkloc_resolved} "
                       f"(first-frame mean={_dmean}) from {Path(_rep_dark).name}",
                       file=sys.stderr)
@@ -4949,11 +5074,9 @@ async def midas_integrate_series(
                         "dark_first_frame_mean": _dmean,
                     })
 
-        # Integrate ONE file → its result record. Pulled out of the loop so it can
-        # run in a worker thread: each call only blocks on subprocess.run (the work
-        # is in the child integrator.py process, which releases the GIL), so a thread
-        # pool yields full process-level parallelism with no pickling.
-        def _integrate_one(img):
+        # Integrate one file in an owned subprocess; event-loop status and cancellation
+        # remain responsive while the numerical engine runs.
+        async def _integrate_one(img):
             out_dir = out_root / img.stem
             out_dir.mkdir(parents=True, exist_ok=True)
             if dark_source == "none":
@@ -4995,10 +5118,12 @@ async def midas_integrate_series(
                 if val is not None:
                     cmd += [key, str(val)]
             try:
-                res = subprocess.run(cmd, cwd=str(img.parent), capture_output=True,
-                                     text=True, timeout=600, env=env)
+                started = time.time_ns()
+                res = await _run_planned_subprocess(_exec_plan, cmd, cwd=str(img.parent), capture_output=True,
+                                           text=True, timeout=600, env=env)
                 lineout = sorted(out_dir.glob("*_lineout.xy"),
                                  key=lambda p: p.stat().st_mtime, reverse=True)
+                lineout = [p for p in lineout if p.stat().st_mtime_ns >= started]
                 if res.returncode == 0 and lineout:
                     rec["status"] = "success"
                     rec["lineout_xy"] = str(lineout[0])
@@ -5007,41 +5132,18 @@ async def midas_integrate_series(
                     rec["error"] = (f"integrator.py exit {res.returncode}"
                                     if res.returncode != 0 else "no *_lineout.xy produced")
                     rec["stderr_tail"] = "\n".join(res.stderr.strip().splitlines()[-5:])
+            except ResourceUnavailable as exc:
+                rec.update(status="resource_unavailable", success=False, nothing_was_run=True, error=str(exc))
             except subprocess.TimeoutExpired:
                 rec["status"] = "error"; rec["error"] = "timeout (>10 min)"
             except Exception as _e:
                 rec["status"] = "error"; rec["error"] = str(_e)
             return rec
 
-        # Run the series: serial when n_parallel==1 (deterministic, matches the old
-        # path), else a bounded thread pool of n_parallel concurrent files. Manifest
-        # order is restored to input order afterwards (as_completed finishes out of
-        # order), so results/xye/fxye stay deterministic regardless of scheduling.
-        _rec_by_img, _done = {}, 0
-        if n_parallel == 1:
-            for img in files:
-                rec = _integrate_one(img)
-                _rec_by_img[str(img)] = rec
-                _done += 1
-                print(f"  [{rec['status']:7s}] ({_done}/{len(files)}) {img.name}",
-                      file=sys.stderr)
-        else:
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            with ThreadPoolExecutor(max_workers=n_parallel) as _ex:
-                _futs = {_ex.submit(_integrate_one, img): img for img in files}
-                for _fut in as_completed(_futs):
-                    img = _futs[_fut]
-                    try:
-                        rec = _fut.result()
-                    except Exception as _e:   # worker crash: record, never abort the batch
-                        rec = {"input_image": str(img),
-                               "result_folder": str(out_root / img.stem),
-                               "status": "error", "error": f"worker crashed: {_e}"}
-                    _rec_by_img[str(img)] = rec
-                    _done += 1
-                    print(f"  [{rec['status']:7s}] ({_done}/{len(files)}) {img.name}",
-                          file=sys.stderr)
-        per_file = [_rec_by_img[str(img)] for img in files]     # deterministic order
+        # Each coroutine owns an asynchronous subprocess and cancellation drains
+        # every sibling. The shared batch executor bounds fan-out and restores order.
+        batch = await _AC.run_batch_async(files, _integrate_one, _exec_plan, label=lambda p: p.name)
+        per_file = batch.records
         n_ok = sum(1 for r in per_file if r.get("status") == "success")
 
         n_fail = len(per_file) - n_ok
@@ -5092,7 +5194,10 @@ async def midas_integrate_series(
                     rec["xye"] = str(xye_p); rec["fxye"] = str(fxye_p)
                     consolidated.append(stem)
                 except Exception as _e:
-                    rec["consolidate_error"] = str(_e)
+                    rec.update(status="error", success=False, failed_stage="export",
+                               consolidate_error=str(_e), error=f"pattern export failed: {_e}")
+        n_ok = sum(rec.get("status") == "success" for rec in per_file)
+        n_fail = len(per_file) - n_ok
         summary = {
             "tool": "midas_integrate_series",
             "status": "success" if n_fail == 0 else ("partial" if n_ok else "error"),
@@ -5642,6 +5747,37 @@ _CANONICAL_V2_PROBE = (
 _CALIB_INTERP_CACHE = None
 
 
+def _suggest_midas_bin(limit: int = 5) -> list:
+    """Bounded, glob-only hunt for an env that could run the canonical recipe.
+
+    Returns candidate ``bin/`` directories for a HUMAN to choose from. It never
+    executes a candidate, deliberately: the thing an agent reaches for when the
+    engine is missing is ``find /home/beams* -path '*/bin/python' | <run each>``,
+    which walks every user's home on a shared beamline host and executes up to a
+    couple of hundred interpreters. That is slow, noisy, and not something that
+    should happen unprompted — a short list of paths answers the same question.
+    """
+    import glob as _g
+    pats = []
+    mp = (os.environ.get("MIDAS_PATH") or "").strip()
+    if mp:
+        pats.append(str(Path(mp) / "bin"))
+    pats += ["/home/beams*/*/opt/envs/midas/bin",
+             "/home/beams*/*/opt/*/envs/midas/bin",
+             str(Path.home() / "opt" / "envs" / "*" / "bin")]
+    out = []
+    for p in pats:
+        try:
+            for d in sorted(_g.glob(p)):
+                if (Path(d) / "python").exists() and d not in out:
+                    out.append(d)
+                if len(out) >= limit:
+                    return out
+        except Exception:
+            continue
+    return out
+
+
 def _calibration_interpreter():
     """Pick the interpreter that can run the canonical four-stage recipe.
 
@@ -5941,6 +6077,7 @@ def _write_integration_outcome(out_dir, payload: dict,
 
 @mcp.tool()
 @idempotent(
+    engine_identity=lambda kw: None,  # external engine build is not yet fingerprinted
     tool="midas_auto_calibrate",
     anchor=lambda kw: (kw.get("output_dir")
                        or os.path.dirname(os.path.expanduser(kw.get("image_file") or ""))),
@@ -5987,6 +6124,7 @@ async def midas_auto_calibrate(
     trust_seed_lsd: bool = False,      # take the seeder's distance even if it contradicts the recorded one
     strain_gate_ue: float = 100.0,     # held-out strain cap, µε (handbook §4)
     ignore_calibration_gate: bool = False,  # accept a result that fails the strain gate
+    threads_per_worker: int = 0,       # 0 = task profile; series supplies its admitted budget
 ) -> str:
     """🔧 PRIMARY TOOL FOR FF-HEDM DETECTOR CALIBRATION (MIDAS Official)
 
@@ -6186,56 +6324,6 @@ async def midas_auto_calibrate(
                 return format_result({"tool": "midas_auto_calibrate", "status": "error",
                                       "error": f"could not parse seed_from_params {_sp}: {_e}"})
 
-        # ── Native engine attempt ──────────────────────────────────────────
-        # Native-first: if midas_calibrate is pip-installed (midas-suite),
-        # run the pure-Python engine. Fall back to AutoCalibrateZarr.py
-        # when the package is missing or the hardware gate fails (CPU-only).
-        # Set APEXA_USE_NATIVE_MIDAS=0 to force the subprocess path.
-        # Gated on the RESOLVED engine. This branch used to run whenever a
-        # parameters_file was present, ignoring calibration_engine entirely — so
-        # calibration_engine="v2" silently executed the v1 native engine, and
-        # returned before output_dir handling, wavelength resolution and the
-        # outcome manifest were ever reached.
-        _native_disabled = os.environ.get("APEXA_USE_NATIVE_MIDAS") == "0"
-        _req_engine = str(calibration_engine).strip().lower()
-        if _req_engine in ("v1", "native"):
-            _allow_native = True
-        elif _req_engine == "auto":
-            # Under "auto" the canonical recipe wins when it can run; native is the
-            # first fallback, so only try it here when canonical-v2 is ruled out.
-            # _calibration_interpreter() is cached, so this costs one probe.
-            _allow_native = not (
-                _calibration_interpreter()[2]
-                and Path(image_file).suffix.lower() not in _CALIB_ZARR_SUFFIXES)
-        else:
-            _allow_native = False   # "v2" / "legacy" never take this path
-        if (not _native_disabled and _allow_native
-                and parameters_file and not image_transform):
-            try:
-                from apexa_midas_native import (
-                    native_autocalibrate, MidasEngineUnavailable,
-                )
-                print("[engine] trying native midas_calibrate first…",
-                      file=sys.stderr)
-                result_dict = native_autocalibrate(
-                    image_file=image_file,
-                    parameters_file=parameters_file,
-                    dark_file=dark_file,
-                    n_iterations=n_iterations,
-                )
-                return format_result(result_dict)
-            except MidasEngineUnavailable as e:
-                print(f"[engine] native unavailable: {e.install_hint}",
-                      file=sys.stderr)
-                print("[engine] falling back to subprocess (AutoCalibrateZarr.py)",
-                      file=sys.stderr)
-            except Exception as e:
-                # Any other native failure → fall back; don't lose the user.
-                print(f"[engine] native call raised {type(e).__name__}: {e}",
-                      file=sys.stderr)
-                print("[engine] falling back to subprocess (AutoCalibrateZarr.py)",
-                      file=sys.stderr)
-
         # AutoCalibrateZarr.py is the LEGACY engine's driver and needs a MIDAS
         # repo clone. Only the legacy path uses it -- canonical v2, the in-process
         # native engine and the pip console script all run from the pip midas-suite
@@ -6372,63 +6460,6 @@ async def midas_auto_calibrate(
         if image_path.is_symlink():
             original_filename = image_path.resolve().name
 
-        # WORKAROUND for MIDAS filename parsing bug:
-        # MIDAS ffGenerateZipRefactor.py has trouble when TIF files have complex names
-        # because it converts filename.tif -> filename.tif.ge, then tries to parse
-        # the stem which still contains ".tif", confusing the numeric parser.
-        #
-        # Solution: Create a simple symlink without dots in the basename
-        # Example: CeO2_650mm_61p332keV_2DFocused_0p1s_att200_004018.tif
-        #       -> CeO2_calib_000001.tif
-
-        # Always create a simple symlink for TIFF files to avoid parsing issues
-        if suffix in ['.tif', '.tiff']:
-            # Extract just the first part of filename before any numbers
-            # Find the first meaningful word (usually material name)
-            # Preserve material name including trailing digit (e.g. CeO2, LaB6)
-            # so AutoCalibrateZarr.py can auto-detect calibrant from symlink name
-            match = re.match(r'^([A-Za-z]+[0-9]*)', image_path.stem)
-            prefix = match.group(1) if match else "calib"
-
-            # Create simple MIDAS-friendly name WITHOUT extension
-            # MIDAS will add .ge to it, and needs numbers at the END of the stem
-            # So: calib_000001 -> calib_000001.ge (stem: calib_000001, ends with numbers ✓)
-            # NOT: calib_000001.tif -> calib_000001.tif.ge (stem: calib_000001.tif, ends with .tif ✗)
-            midas_friendly_name = f"{prefix}_000001{image_path.suffix}"
-            midas_friendly_path = image_path.parent / midas_friendly_name
-
-            # Skip symlink if the friendly name is already the same as the input
-            # (would create a self-referential symlink CeO2_000001.tif -> CeO2_000001.tif)
-            if midas_friendly_name == image_path.name:
-                print(f"  Input already has a MIDAS-friendly name: {image_path.name}", file=sys.stderr)
-                # Resolve the real target if the input is itself a symlink
-                if image_path.is_symlink():
-                    real_target = image_path.resolve()
-                    print(f"  Symlink target: {real_target.name}", file=sys.stderr)
-                    # Rebuild the symlink to point to the real file
-                    image_path.unlink()
-                    image_path.symlink_to(real_target)
-                    print(f"  ✓ Refreshed symlink: {image_path.name} -> {real_target}", file=sys.stderr)
-            else:
-                # Remove old symlink if it exists
-                if midas_friendly_path.is_symlink():
-                    midas_friendly_path.unlink()
-                elif midas_friendly_path.exists():
-                    # Don't overwrite real files, use different name
-                    midas_friendly_name = f"{prefix}_calibration_000001{image_path.suffix}"
-                    midas_friendly_path = image_path.parent / midas_friendly_name
-                    if midas_friendly_path.is_symlink():
-                        midas_friendly_path.unlink()
-
-                # Create symlink
-                try:
-                    midas_friendly_path.symlink_to(image_path.resolve())  # Absolute symlink
-                    print(f"✓ Created MIDAS-friendly symlink: {midas_friendly_name} -> {image_path.resolve()}", file=sys.stderr)
-                    image_path = midas_friendly_path
-                except Exception as e:
-                    print(f"⚠ Could not create symlink: {e}. Using original filename.", file=sys.stderr)
-                    # Continue with original filename
-
         # ── Resolve X-ray wavelength (Å) from the best available source ──────
         # Priority: explicit arg > filename keV token > HDF5 instrument metadata.
         # A param file carries its own Wavelength, so we only inject --wavelength
@@ -6463,7 +6494,7 @@ async def midas_auto_calibrate(
         #    APEXA-vs-expert benchmark — it reads the scan's own recorded energy,
         #    not the expert's analysis output. Only when no param file supplies it.
         if _resolved_wl is None and not param_path:
-            _wl_probe, _probe_src = _probe_wavelength_from_hdf5(image_path)
+            _wl_probe, _probe_src = await asyncio.to_thread(_probe_wavelength_from_hdf5, image_path)
             if _wl_probe:
                 _resolved_wl = _wl_probe
                 _wl_source = _probe_src
@@ -6569,7 +6600,7 @@ async def midas_auto_calibrate(
                 })
 
         if not (dark_file and Path(dark_file).expanduser().exists()):
-            _auto_dark = _find_dark_for_image(image_path)
+            _auto_dark = await asyncio.to_thread(_find_dark_for_image, image_path)
             if _auto_dark:
                 dark_file = _auto_dark
                 print(f"✓ Auto-resolved dark frame (none passed): {dark_file}",
@@ -6595,7 +6626,7 @@ async def midas_auto_calibrate(
         # Previously four branches were tried in sequence and the FIRST (the
         # in-process native engine, below) ignored calibration_engine entirely, so
         # calibration_engine="v2" could silently run the v1 native engine instead.
-        _eng = _choose_calibration_engine(calibration_engine, image_path, _resolved_wl)
+        _eng = await asyncio.to_thread(_choose_calibration_engine, calibration_engine, image_path, _resolved_wl)
         print(f"[engine] {_eng['engine']} — {_eng['reason']}", file=sys.stderr)
         for _fb in _eng["fallbacks"]:
             print(f"[engine]   {_fb}", file=sys.stderr)
@@ -6623,12 +6654,80 @@ async def midas_auto_calibrate(
 
         # ── Canonical v2: the four-stage recipe from the calibrate-integrate ──
         # capsule (phase-4-calibrate.md §4), run via _calibrate_runner.py.
+        import apexa_compute as _AC
+        _prof = _AC.profile_for("calibration")
+        if threads_per_worker > 0:
+            _prof = _AC.replace(_prof, threads_per_worker=threads_per_worker)
+        _exec_plan = await asyncio.to_thread(
+            _AC.plan, 1, "calibration", profile=_prof,
+            device=device or os.environ.get("APEXA_MIDAS_DEVICE", ""))
+        if _exec_plan.n_workers == 0:
+            return format_result({"tool": "midas_auto_calibrate",
+                                  "status": "resource_unavailable", "success": False, "nothing_was_run": True,
+                                  "error": _exec_plan.reason, "compute": _exec_plan.as_dict()})
+        _worker_env = _AC.worker_env(_exec_plan)
+        device = _exec_plan.device
+
+        # ── Native engine attempt ──────────────────────────────────────────
+        # Native-first: if midas_calibrate is pip-installed (midas-suite),
+        # run the pure-Python engine. Fall back to AutoCalibrateZarr.py
+        # when the package is missing or the hardware gate fails (CPU-only).
+        # Set APEXA_USE_NATIVE_MIDAS=0 to force the subprocess path.
+        # Gated on the RESOLVED engine. This branch used to run whenever a
+        # parameters_file was present, ignoring calibration_engine entirely — so
+        # calibration_engine="v2" silently executed the v1 native engine, and
+        # returned before output_dir handling, wavelength resolution and the
+        # outcome manifest were ever reached.
+        _native_disabled = os.environ.get("APEXA_USE_NATIVE_MIDAS") == "0"
+        _req_engine = str(calibration_engine).strip().lower()
+        if _req_engine in ("v1", "native"):
+            _allow_native = True
+        elif _req_engine == "auto":
+            # Under "auto" the canonical recipe wins when it can run; native is the
+            # first fallback, so only try it here when canonical-v2 is ruled out.
+            # _calibration_interpreter() is cached, so this costs one probe.
+            _allow_native = not (
+                (await asyncio.to_thread(_calibration_interpreter))[2]
+                and Path(image_file).suffix.lower() not in _CALIB_ZARR_SUFFIXES)
+        else:
+            _allow_native = False   # "v2" / "legacy" never take this path
+        if (not _native_disabled and _allow_native and device != "cpu"
+                and parameters_file and not image_transform):
+            try:
+                _native_out = Path(output_dir).expanduser().absolute() if output_dir else Path(image_file).expanduser().absolute().parent
+                _native_out.mkdir(parents=True, exist_ok=True)
+                _native_request = {"image_file": image_file, "parameters_file": parameters_file,
+                                   "dark_file": dark_file, "n_iterations": n_iterations,
+                                   "output_file": str(_native_out / "refined_MIDAS_params_native.txt")}
+                print("[engine] trying native midas_calibrate in an owned worker…", file=sys.stderr)
+                _native = await _run_planned_subprocess(_exec_plan,
+                    [sys.executable, str(Path(__file__).with_name("_native_calibration_runner.py"))],
+                    input=json.dumps(_native_request),
+                    env=_worker_env,
+                    timeout=int(os.environ.get("APEXA_CALIB_TIMEOUT", "7200")))
+                result_dict = json.loads(_native.stdout)
+                if _native.returncode == 0:
+                    return format_result(result_dict)
+                print(f"[engine] native unavailable/failed: {result_dict.get('error')}", file=sys.stderr)
+            except subprocess.TimeoutExpired:
+                return format_result({"tool": "midas_auto_calibrate", "status": "timeout",
+                                      "error": "native calibration worker timed out and was stopped",
+                                      "nothing_was_run": False})
+            except ResourceUnavailable:
+                raise
+            except Exception as e:
+                # Any other native failure → fall back; don't lose the user.
+                print(f"[engine] native call raised {type(e).__name__}: {e}",
+                      file=sys.stderr)
+                print("[engine] falling back to subprocess (AutoCalibrateZarr.py)",
+                      file=sys.stderr)
+
         if _eng["engine"] == "canonical-v2":
             _v2_out = (Path(output_dir).expanduser().absolute()
                        if output_dir else image_path.parent)
             _v2_out.mkdir(parents=True, exist_ok=True)
             _calib_v2 = _detect_calibrant_from_name(original_stem)
-            _ny2, _nz2, _px2 = _detector_shape_and_px(image_path)
+            _ny2, _nz2, _px2 = await asyncio.to_thread(_detector_shape_and_px, image_path)
 
             # Template: explicit -> caller's parameters_file -> synthesized from the
             # sourced detector registry. It supplies detector size, pixel size,
@@ -6707,7 +6806,7 @@ async def midas_auto_calibrate(
                        "--calibrant", _calib_v2,
                        "--wavelength", f"{float(_resolved_wl):.8f}",
                        "--strain-gate-ue", str(float(strain_gate_ue)),
-                       "--device", _resolve_calib_device(device)]
+                       "--device", _exec_plan.child_device]
             if _px_use > 0:
                 _cmd_v2 += ["--px-um", f"{_px_use:.4f}"]
 
@@ -6757,10 +6856,10 @@ async def midas_auto_calibrate(
             # get_midas_env() applies (h5py/libhdf5 symbol mismatch).
             _pv2 = None
             try:
-                _pv2 = subprocess.run(
+                _pv2 = await _run_planned_subprocess(_exec_plan,
                     _cmd_v2, capture_output=True, text=True,
                     timeout=int(os.environ.get("APEXA_CALIB_TIMEOUT", "7200")),
-                    env=dict(os.environ))
+                    env=_worker_env)
             except subprocess.TimeoutExpired:
                 _out_t = {"tool": "midas_auto_calibrate", "status": "timeout",
                           "engine": f"canonical-v2:{_eng['v2_version']}",
@@ -6906,7 +7005,29 @@ async def midas_auto_calibrate(
                         "and use calibration_engine=\"auto\" (or \"v2\"). To keep "
                         "using the legacy path, set MIDAS_PATH to a MIDAS checkout."),
             })
-        midas_python = find_midas_python()
+        # Only legacy drivers need a simplified numeric filename. Canonical v2
+        # reads the original path. A shared CeO2_000001.tif alias in the input
+        # directory was unsafe when two calibrations ran concurrently.
+        if suffix in (".tif", ".tiff"):
+            import hashlib
+            prefix_match = re.match(r"^([A-Za-z]+[0-9]*)", image_path.stem)
+            prefix = prefix_match.group(1) if prefix_match else "calib"
+            token = int(hashlib.sha256(str(image_path.resolve()).encode()).hexdigest()[:12], 16)
+            alias_dir = Path(output_dir).expanduser().absolute() if output_dir else image_path.parent
+            alias_dir.mkdir(parents=True, exist_ok=True)
+            alias = alias_dir / f"{prefix}_{token:015d}{suffix}"
+            if alias.is_symlink():
+                if alias.resolve() != image_path.resolve():
+                    return format_result({"tool": "midas_auto_calibrate", "status": "error",
+                                          "nothing_was_run": True, "error": "calibration alias points at another input"})
+            elif alias.exists():
+                return format_result({"tool": "midas_auto_calibrate", "status": "error",
+                                      "nothing_was_run": True, "error": "calibration alias would overwrite a real file"})
+            else:
+                alias.symlink_to(image_path.resolve())
+            image_path = alias
+
+        midas_python = await asyncio.to_thread(find_midas_python)
         cmd = [
             midas_python,
             str(autocal_script),
@@ -6949,8 +7070,8 @@ async def midas_auto_calibrate(
                 # the dark file for the dataset that actually holds nonzero counts
                 # and pass it as -darkLoc so the read targets real dark data.
                 if dark_path.suffix.lower() in (".h5", ".hdf5", ".hdf", ".nxs"):
-                    _dkloc, _dkmean = _probe_dark_dataset(
-                        dark_path, data_location=(data_loc or None))
+                    _dkloc, _dkmean = await asyncio.to_thread(
+                        _probe_dark_dataset, dark_path, data_location=(data_loc or None))
                     if _dkmean is not None:   # a real, readable dataset was found
                         _dkloc = _dkloc.lstrip("/")
                         cmd.extend(["-darkLoc", _dkloc])
@@ -7150,9 +7271,9 @@ async def midas_auto_calibrate(
                 print("="*70, file=sys.stderr)
                 # PyTorch calibration on CPU is slow — generous timeout (user
                 # accepted the CPU cost when choosing force-pip).
-                result = subprocess.run(_pip_cmd, cwd=str(work_dir),
+                result = await _run_planned_subprocess(_exec_plan, _pip_cmd, cwd=str(work_dir),
                                         capture_output=True, text=True,
-                                        timeout=3600, env=get_midas_env())
+                                        timeout=3600, env=_AC.worker_env(_exec_plan, base=get_midas_env()))
                 if result.returncode == 0:
                     engine_used = "pip-console:midas-autocalibrate"
                 else:
@@ -7161,6 +7282,12 @@ async def midas_auto_calibrate(
                     for line in (result.stderr or "").strip().splitlines()[-12:]:
                         print(f"  {line}", file=sys.stderr)
                     result = None
+            except subprocess.TimeoutExpired:
+                return format_result({"tool": "midas_auto_calibrate", "status": "timeout",
+                                      "error": "pip calibration worker timed out and was stopped",
+                                      "nothing_was_run": False})
+            except ResourceUnavailable:
+                raise
             except Exception as e:
                 print(f"[engine] pip console path error: {type(e).__name__}: {e};"
                       " falling back to legacy", file=sys.stderr)
@@ -7179,7 +7306,7 @@ async def midas_auto_calibrate(
                 if i+1 < len(cmd) and cmd[i].startswith("-"):
                     print(f"      {cmd[i]} {cmd[i+1]}", file=sys.stderr)
             print("="*70, file=sys.stderr)
-            result = subprocess.run(
+            result = await _run_planned_subprocess(_exec_plan,
                 cmd,
                 cwd=str(work_dir),
                 capture_output=True,
@@ -7189,7 +7316,7 @@ async def midas_auto_calibrate(
                 # CPU beamline routinely exceeds 10 min. The old 600 s ceiling is
                 # exactly why the deployed run "produced no outputs": it timed out.
                 timeout=int(os.environ.get("APEXA_CALIB_TIMEOUT", "1800")),
-                env=get_midas_env()
+                env=_AC.worker_env(_exec_plan, base=get_midas_env())
             )
             engine_used = "legacy-cpp:AutoCalibrateZarr.py"
             _warn_deprecated_cpp("calibration: AutoCalibrateZarr.py")
@@ -7431,6 +7558,11 @@ async def midas_auto_calibrate(
         _to["outcome_manifest"] = _write_calibration_outcome(
             locals().get("work_dir", image_path.parent), _to)
         return format_result(_to)
+    except ResourceUnavailable as e:
+        # A prior engine attempt may already have failed before a fallback loses
+        # admission. Do not claim the entire invocation executed nothing.
+        return format_result({"tool": "midas_auto_calibrate", "status": "resource_unavailable", "success": False,
+                              "new_worker_was_started": False, "error": str(e)})
     except Exception as e:
         return format_result({
             "tool": "midas_auto_calibrate",
@@ -7530,7 +7662,8 @@ async def _benchmark_calibration(files, plan, _AC, run_one, resolved_device: str
                                      i.e. no benefit, despite two idle A6000s)
       * a small concurrent sweep  -> that fan-out actually scales here
 
-    Writes ``~/.apexa/task_profiles.json``. Nothing is calibrated for real.
+    Writes ``~/.apexa/task_profiles.json``. This opt-in mode performs real
+    calibrations in isolated trial directories; it is not a dry run.
     """
     import time as _t
     from datetime import datetime, timezone
@@ -7540,7 +7673,7 @@ async def _benchmark_calibration(files, plan, _AC, run_one, resolved_device: str
                  "resources": plan.resources}
 
     t0 = _t.monotonic()
-    rec_cpu = await run_one(img)
+    rec_cpu = await run_one(img, device_override="cpu", trial_id="benchmark_cpu")
     t_cpu = round(_t.monotonic() - t0, 1)
     out["cpu_s"] = t_cpu
     out["cpu_status"] = rec_cpu.get("status")
@@ -7553,26 +7686,18 @@ async def _benchmark_calibration(files, plan, _AC, run_one, resolved_device: str
     # GPU trial, only if the host has one at all.
     gpu_speedup = 1.0
     try:
-        res = _AC.inventory()
+        res = await asyncio.to_thread(_AC.inventory)
         if res.gpus:
-            import os as _os
-            _prev = _os.environ.get("APEXA_MIDAS_DEVICE")
-            _os.environ["APEXA_MIDAS_DEVICE"] = f"cuda:{res.gpus[0].index}"
-            try:
-                t0 = _t.monotonic()
-                rec_gpu = await run_one(img)
-                t_gpu = round(_t.monotonic() - t0, 1)
-                out["gpu_s"] = t_gpu
-                out["gpu_name"] = res.gpus[0].name
-                if rec_gpu.get("status") in ("success", "warning") and t_gpu > 0:
-                    gpu_speedup = round(t_cpu / t_gpu, 2)
-                else:
-                    out["gpu_note"] = "GPU run did not produce a usable result"
-            finally:
-                if _prev is None:
-                    _os.environ.pop("APEXA_MIDAS_DEVICE", None)
-                else:
-                    _os.environ["APEXA_MIDAS_DEVICE"] = _prev
+            t0 = _t.monotonic()
+            rec_gpu = await run_one(img, device_override=f"cuda:{res.gpus[0].index}",
+                                    trial_id="benchmark_gpu")
+            t_gpu = round(_t.monotonic() - t0, 1)
+            out["gpu_s"] = t_gpu
+            out["gpu_name"] = res.gpus[0].name
+            if rec_gpu.get("status") in ("success", "warning") and t_gpu > 0:
+                gpu_speedup = round(t_cpu / t_gpu, 2)
+            else:
+                out["gpu_note"] = "GPU trial did not produce a usable result: " + str(rec_gpu.get("error", ""))
         else:
             out["gpu_note"] = "no GPU on this host"
     except Exception as e:                                   # noqa: BLE001
@@ -7580,12 +7705,14 @@ async def _benchmark_calibration(files, plan, _AC, run_one, resolved_device: str
     out["gpu_speedup"] = gpu_speedup
 
     # Concurrency sweep: does fan-out actually scale on THIS host?
-    k = min(4, len(files))
+    k = min(4, len(files), plan.n_workers)
     if k > 1:
         sweep_plan = _AC.ExecutionPlan(n_workers=k,
                                        threads_per_worker=plan.threads_per_worker)
         t0 = _t.monotonic()
-        b = await _AC.run_batch_async(files[:k], run_one, sweep_plan,
+        async def sweep_one(frame):
+            return await run_one(frame, device_override="cpu", trial_id="benchmark_sweep")
+        b = await _AC.run_batch_async(files[:k], sweep_one, sweep_plan,
                                       label=lambda p: p.name, progress=False)
         t_k = round(_t.monotonic() - t0, 1)
         out["sweep_n"] = k
@@ -7688,6 +7815,41 @@ async def midas_calibrate_series(
                               "nothing_was_run": True,
                               "error": f"no calibrant frames matched {pat!r}"})
 
+    if output_root and len({p.stem for p in files}) != len(files):
+        return format_result({"tool": "midas_calibrate_series", "status": "error",
+                              "nothing_was_run": True,
+                              "error": "input filenames collide under output_root; select unique stems"})
+
+    # ---- engine preflight: ASK ONCE, never grind --------------------------------
+    # Without this the series fans out and every frame fails identically at engine
+    # selection — 86 consecutive failures on 2026-10-19, all reading
+    # "No module named 'skimage'  [APEXA_MIDAS_BIN is not set]". The information
+    # needed to stop was available before the first frame, so the batch should ask
+    # for it instead of proving it 86 times. Same rule as the locality guard below.
+    _exe, _ver, _ok, _why = await asyncio.to_thread(_calibration_interpreter)
+    if not _ok:
+        _cands = _suggest_midas_bin()
+        return format_result({
+            "tool": "midas_calibrate_series",
+            "status": "needs_input",
+            "nothing_was_run": True,
+            "n_frames": len(files),
+            "question": (
+                "Which MIDAS environment should run the canonical four-stage recipe? "
+                "APEXA cannot reach one, so NOTHING was run — all "
+                f"{len(files)} frames would have failed identically."),
+            "why": _why,
+            "fix": ("Set APEXA_MIDAS_BIN to a MIDAS pip environment's bin/ directory "
+                    "in APEXA's .env (NOT a shell export — the MCP servers are spawned "
+                    "by the client and do not inherit your shell), then restart APEXA."),
+            "candidates": _cands,
+            "suggested_env_line": (f"APEXA_MIDAS_BIN={_cands[0]}" if _cands else
+                                   "APEXA_MIDAS_BIN=<path to a midas env's bin/>"),
+            "note": ("The environment must provide BOTH midas_calibrate_v2 and "
+                     "scikit-image — make_seed hard-requires skimage, and an env "
+                     "missing it installs cleanly then dies mid-fit."),
+        })
+
     # ---- locality: refuse ONCE, not once per frame ------------------------------
     # midas_auto_calibrate fails closed on remote data (its driver is
     # local-FS-coupled). Fanning out first would turn one comprehensible refusal
@@ -7712,8 +7874,13 @@ async def midas_calibrate_series(
         pass            # locality is advisory here; the per-frame guard still applies
 
     # ---- plan ------------------------------------------------------------------
-    plan = _AC.plan(len(files), "calibration", host=host, max_workers=n_parallel)
-    _dev = device or plan.device
+    plan = await asyncio.to_thread(_AC.plan, len(files), "calibration", host="",
+                                   max_workers=n_parallel, device=device or os.environ.get("APEXA_MIDAS_DEVICE", ""))
+    if plan.n_workers == 0:
+        return format_result({"tool": "midas_calibrate_series", "status": "resource_unavailable", "success": False,
+                              "nothing_was_run": True, "n_frames": len(files),
+                              "error": plan.reason, "compute": plan.as_dict()})
+    _dev = plan.device
     print(f"[midas_calibrate_series] {len(files)} frames  |  {plan.reason}  |  "
           f"device={_dev}", file=sys.stderr)
     print(f"[midas_calibrate_series] resources: {plan.resources}", file=sys.stderr)
@@ -7723,8 +7890,9 @@ async def midas_calibrate_series(
         out_root.mkdir(parents=True, exist_ok=True)
 
 
-    async def _one(img: Path):
-        od = str((out_root / img.stem) if out_root else (img.parent / f"{img.stem}_calib"))
+    async def _one(img: Path, *, device_override: str = "", trial_id: str = ""):
+        od_path = (out_root / img.stem) if out_root else (img.parent / f"{img.stem}_calib")
+        od = str(od_path / trial_id if trial_id else od_path)
         raw = await midas_auto_calibrate(
             image_file=str(img), output_dir=od,
             template_param_file=template_param_file, dark_file=dark_file,
@@ -7732,7 +7900,8 @@ async def midas_calibrate_series(
             px_um=px_um, lsd_guess=lsd_guess, lsd_tol_um=lsd_tol_um,
             refine_distortion=refine_distortion, strain_gate_ue=strain_gate_ue,
             image_transform=image_transform, data_loc=data_loc, detector=detector,
-            seed_from_params=seed_from_params, device=_dev, host=host)
+            seed_from_params=seed_from_params, device=device_override or _dev, host=host,
+            threads_per_worker=plan.threads_per_worker)
         try:
             rec = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
         except Exception:
@@ -7759,10 +7928,10 @@ async def midas_calibrate_series(
             "image": Path(rec.get("input_image", "")).name,
             "status": rec.get("status"),
             "elapsed_s": rec.get("elapsed_s"),
-            "lsd_um": cp.get("lsd_um") or rec.get("lsd"),
+            "lsd_um": cp.get("lsd_um", cp.get("lsd", rec.get("lsd"))),
             "bc_x": cp.get("bc_x"), "bc_y": cp.get("bc_y"),
-            "ty_deg": cp.get("ty_deg"), "tz_deg": cp.get("tz_deg"),
-            "heldout_uE": cm.get("stage4_strain_uE_test"),
+            "ty_deg": cp.get("ty_deg", cp.get("ty")), "tz_deg": cp.get("tz_deg", cp.get("tz")),
+            "heldout_uE": cm.get("stage4_strain_uE_test", cm.get("strain_uE_test")),
             "gate_passed": gate.get("passed"),
             # Full-turn phases (+-180 is one point) are not bounds; older
             # manifests list them, so filter rather than trust the list length.
@@ -7770,7 +7939,7 @@ async def midas_calibrate_series(
                               if not (isinstance(b, dict) and len(b.get("bounds") or []) == 2
                                       and (b["bounds"][1] - b["bounds"][0]) >= 359.999)]) or None,
             "param_file": rec.get("refined_param_file"),
-            "manifest": rec.get("manifest"),
+            "manifest": rec.get("outcome_manifest", rec.get("manifest")),
             "error": rec.get("error"),
         })
 
@@ -7781,7 +7950,8 @@ async def midas_calibrate_series(
 
     payload = {
         "tool": "midas_calibrate_series",
-        "status": "success" if batch.n_ok else "error",
+        "status": "success" if batch.n_fail == 0 else ("partial" if batch.n_ok else "error"),
+        "success": batch.n_fail == 0,
         "n_frames": len(files), "n_ok": batch.n_ok, "n_failed": batch.n_fail,
         "n_gate_passed": n_gate,
         # A railed parameter and a converged fit have the same residual, so a
@@ -8186,98 +8356,11 @@ async def midas_batch_integrate(
 # KNOWLEDGE BASE & DOMAIN EXPERTISE
 # =============================================================================
 
-# Initialize knowledge base (lazy loading)
-_knowledge_base = None
+# Canonical retrieval service; public MCP schema remains below.
+from apexa_knowledge_service import get_knowledge_base, _apply_offline_hf_env
+
 _materials_db = None
 _typical_params = None
-
-def _apply_offline_hf_env() -> bool:
-    """Force HuggingFace fully offline when APEXA offline mode is requested, so the
-    embedder loads ONLY from the local cache and never reaches the network.
-
-    This is the hard requirement for air-gapped beamline machines: the embed model
-    must already be pre-staged in ~/.cache/huggingface, and with these flags set a
-    missing-network machine loads it from cache instead of hanging/failing on an HF
-    HEAD request. Enable with APEXA_OFFLINE=1 (or set HF_HUB_OFFLINE=1 directly).
-    Idempotent; safe to call before every model load. Returns True if offline."""
-    # Network tier is authoritative: anything below `web` must never reach HF.
-    # APEXA_OFFLINE stays supported as the legacy switch.
-    try:
-        from apexa_network import apply_offline_env
-        if apply_offline_env():
-            return True
-    except Exception:
-        pass
-    truthy = ("1", "true", "yes", "on")
-    if (os.environ.get("APEXA_OFFLINE", "").lower() in truthy
-            or os.environ.get("HF_HUB_OFFLINE", "").lower() in truthy):
-        os.environ["HF_HUB_OFFLINE"] = "1"
-        os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        return True
-    return False
-
-
-def get_knowledge_base():
-    """Get or initialize the knowledge base (RAG with ChromaDB)"""
-    global _knowledge_base
-    if _knowledge_base is None:
-        try:
-            offline = _apply_offline_hf_env()  # must run before SentenceTransformer import
-            # No third-party telemetry from a beamline host, at any tier, and no
-            # model-loading INFO spam in the operator's terminal. Both must be set
-            # BEFORE the imports below.
-            os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
-            os.environ.setdefault("CHROMA_TELEMETRY_ENABLED", "False")
-            # HuggingFace tokenizers spawns worker threads on first use. Every
-            # MIDAS tool then fork()s via subprocess.run, and forking a process
-            # that already has tokenizer threads risks a DEADLOCK — the library
-            # warns and silently disables parallelism when it detects this. In
-            # APEXA that ordering is guaranteed: a RAG query warms the embedder,
-            # then a calibration/integration forks. Set it explicitly BEFORE the
-            # tokenizer is ever created so behaviour is deterministic rather than
-            # rescued after the fact.
-            os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-            for _noisy in ("sentence_transformers", "chromadb", "chromadb.telemetry",
-                           "transformers", "posthog", "httpx"):
-                logging.getLogger(_noisy).setLevel(logging.WARNING)
-            import chromadb
-            from sentence_transformers import SentenceTransformer
-            from pathlib import Path
-
-            kb_path = Path(__file__).parent / "knowledge_base"
-            chroma_path = kb_path / "chroma_db"
-
-            if chroma_path.exists():
-                model_name = os.environ.get("APEXA_EMBED_MODEL",
-                                            "nomic-ai/nomic-embed-text-v1.5")
-                # Provenance policy. This is the LIVE retrieval path and builds
-                # its own embedder, so guarding only the indexer would leave it
-                # open to whatever APEXA_EMBED_MODEL names.
-                from apexa_model_policy import assert_allowed as _assert_model_ok
-                _assert_model_ok(model_name, role="embedder")
-                st_kwargs = {"trust_remote_code": True}
-                if offline:
-                    st_kwargs["local_files_only"] = True
-                try:
-                    embedder = SentenceTransformer(model_name, **st_kwargs)
-                except TypeError:
-                    # older sentence-transformers lacks local_files_only kwarg;
-                    # the env vars above still force offline loading.
-                    st_kwargs.pop("local_files_only", None)
-                    embedder = SentenceTransformer(model_name, **st_kwargs)
-                _knowledge_base = {
-                    "client": chromadb.PersistentClient(path=str(chroma_path)),
-                    "embedder": embedder,
-                    "model_name": model_name,
-                    "offline": offline,
-                    "available": True
-                }
-            else:
-                _knowledge_base = {"available": False, "error": "Knowledge base not indexed"}
-        except Exception as e:
-            _knowledge_base = {"available": False, "error": str(e)}
-
-    return _knowledge_base
 
 
 def get_materials_db():
@@ -8361,157 +8444,9 @@ async def query_hedm_knowledge(
     Returns:
         JSON string with relevant excerpts, sources, and confidence scores
     """
-    try:
-        kb = get_knowledge_base()
-
-        if not kb.get("available"):
-            return json.dumps({
-                "status": "error",
-                "error": "Knowledge base not available",
-                "details": kb.get("error", "Not indexed"),
-                "suggestion": "Run: python knowledge_base/index_knowledge.py"
-            }, indent=2)
-
-        # Encode the question. Some embedders (Nomic) require a task prefix;
-        # most others don't. Keep this in sync with EMBED_PREFIXES in
-        # knowledge_base/index_knowledge.py.
-        _query_prefix_map = {
-            "nomic-ai/nomic-embed-text-v1.5": "search_query: ",
-            "nomic-ai/nomic-embed-text-v1":   "search_query: ",
-        }
-        q_pfx = _query_prefix_map.get(kb.get("model_name", ""), "")
-        query_embedding = kb["embedder"].encode(f"{q_pfx}{question}").tolist()
-
-        # Get collection
-        collection = kb["client"].get_collection(name="hedm_knowledge")
-
-        # Build filter. source_type and technique compose; ChromaDB requires an
-        # explicit $and to combine two equality clauses. Neither set → None (the
-        # exact contract that shipped before technique existed — additive proof).
-        _clauses = []
-        if source_type:
-            _clauses.append({"type": source_type})
-        if technique:
-            _clauses.append({"technique": technique})
-        if len(_clauses) == 2:
-            where_filter = {"$and": _clauses}
-        elif len(_clauses) == 1:
-            where_filter = _clauses[0]
-        else:
-            where_filter = None
-
-        # Retrieve. "dense" is the original path, preserved byte-for-byte so the
-        # default contract is unchanged. "hybrid" fuses dense + sparse BM25 and
-        # falls back to dense on any error (fail-open).
-        _mode = (retrieval_mode or "dense").strip().lower()
-        retrieval_meta = {"mode": "dense"}
-        hits = None  # list of (doc, meta, dist_or_None, extra_dict)
-
-        if _mode == "hybrid":
-            try:
-                import sys as _sys
-                _kbdir = str(Path(__file__).parent / "knowledge_base")
-                if _kbdir not in _sys.path:
-                    _sys.path.insert(0, _kbdir)
-                import hybrid_retrieval as _hybrid
-                fused = _hybrid.hybrid_search(
-                    collection=collection,
-                    query_embedding=query_embedding,
-                    query_text=question,
-                    n_results=max_results,
-                    where_filter=where_filter,
-                )
-                hits = [
-                    (r["document"], r["metadata"], r["distance"], {
-                        "dense_rank": r["dense_rank"],
-                        "sparse_rank": r["sparse_rank"],
-                        "rrf": round(r["rrf"], 6),
-                    })
-                    for r in fused
-                ]
-                retrieval_meta = {"mode": "hybrid", "rrf_k": _hybrid.RRF_K}
-            except Exception as _he:
-                # Fail-open to dense; record why so a beamline operator can see it.
-                hits = None
-                retrieval_meta = {"mode": "dense", "requested_mode": "hybrid",
-                                  "hybrid_fallback_reason": str(_he)}
-
-        if hits is None:
-            # Dense path (default, and hybrid fallback) — unchanged query.
-            results = collection.query(
-                query_embeddings=[query_embedding],
-                n_results=max_results,
-                where=where_filter
-            )
-            hits = [
-                (doc, meta, dist, {})
-                for doc, meta, dist in zip(
-                    results['documents'][0],
-                    results['metadatas'][0],
-                    results['distances'][0],
-                )
-            ]
-
-        # Format results — include citation, page, DOI for proper referencing
-        excerpts = []
-        for i, (doc, meta, dist, extra) in enumerate(hits, 1):
-            ex = {
-                "rank": i,
-                "source": meta['source'],
-                "type": meta['type'],
-                "technique": meta.get('technique', ''),
-                "citation": meta.get('citation', meta['source']),
-                "bibkey": meta.get('bibkey', ''),
-                "title": meta.get('title', ''),
-                "authors": meta.get('authors', ''),
-                "year": meta.get('year', ''),
-                "journal": meta.get('journal', ''),
-                "doi": meta.get('doi', ''),
-                "page": meta.get('page', 0),
-                # Sparse-only hybrid hits have no embedding distance → null, never
-                # a fabricated score.
-                "similarity": (round(max(0.0, 1 - dist), 3) if dist is not None else None),
-                "excerpt": doc,
-                "chunk_index": meta.get('chunk_index', 0)
-            }
-            ex.update(extra)
-            excerpts.append(ex)
-
-        # Compact reference list (deduped by source) for the LLM to cite cleanly
-        seen = set()
-        references = []
-        for ex in excerpts:
-            if ex['source'] in seen:
-                continue
-            seen.add(ex['source'])
-            references.append({
-                "source": ex['source'],
-                "citation": ex['citation'],
-                "bibkey": ex['bibkey'],
-                "doi": ex['doi'],
-            })
-
-        return json.dumps({
-            "status": "success",
-            "question": question,
-            "results_count": len(excerpts),
-            "retrieval": retrieval_meta,
-            "references": references,
-            "excerpts": excerpts,
-            "instruction_to_assistant": (
-                "When answering, cite each excerpt inline using the 'citation' field "
-                "(e.g. 'Sharma et al. (2012). J. Appl. Cryst. 45:693–704. DOI:...') and, "
-                "when available, reference the page number. Use get_bibtex(source) to "
-                "retrieve the BibTeX entry for any cited source."
-            )
-        }, indent=2)
-
-    except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }, indent=2)
+    from apexa_knowledge_service import query_knowledge
+    return await asyncio.to_thread(query_knowledge, question, max_results,
+                                   source_type, technique, retrieval_mode)
 
 
 @mcp.tool()
@@ -8932,6 +8867,210 @@ def _build_viewer_cmd(viewer: str, script_path: Path,
     return cmd
 
 
+def _lineout_frame_number(path: Path) -> int:
+    import re as _re
+    values = _re.findall(r"\d+", path.stem)
+    return int(values[-1]) if values else -1
+
+
+def _resolve_lineout_series(input_dir: str, images: list, pattern: str) -> list[Path]:
+    if images:
+        files = [Path(p).expanduser().absolute() for p in images]
+        # An explicit list is an acquisition-order contract supplied by the
+        # caller; never reorder it using filename tokens.
+        missing = [str(p) for p in files if not p.is_file()]
+        if missing:
+            raise ValueError(f"lineout file not found: {missing[0]}")
+    elif input_dir:
+        directory = Path(input_dir).expanduser().absolute()
+        if not directory.is_dir():
+            raise ValueError(f"input_dir not found: {directory}")
+        files = [p for p in directory.glob(pattern) if p.is_file()]
+        # Directory discovery has no caller-supplied order, so use the numeric
+        # suffix and stable lexical tie-break for a repeatable scan sequence.
+        files = sorted(
+            files,
+            key=lambda p: (
+                _lineout_frame_number(p) < 0,
+                _lineout_frame_number(p) if _lineout_frame_number(p) >= 0 else 0,
+                p.name.casefold(),
+            ),
+        )
+    else:
+        raise ValueError("provide input_dir=... or images=[...]")
+    if not files:
+        raise ValueError(f"no lineout files matched {pattern!r}")
+    return files
+
+
+def _read_lineout_columns(path: Path, x_col: int, y_col: int,
+                          sigma_col: int | None = None):
+    import numpy as _np
+    x_values, y_values, sigmas = [], [], []
+    for raw in path.read_text(errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line[0] in "#;Bb":
+            continue
+        parts = line.replace(",", " ").split()
+        if len(parts) <= max(x_col, y_col):
+            continue
+        try:
+            x_values.append(float(parts[x_col]))
+            y_values.append(float(parts[y_col]))
+        except ValueError:
+            continue
+        if sigma_col is not None:
+            try:
+                sigmas.append(float(parts[sigma_col]) if len(parts) > sigma_col else float("nan"))
+            except ValueError:
+                sigmas.append(float("nan"))
+    x = _np.asarray(x_values, dtype=float)
+    y = _np.asarray(y_values, dtype=float)
+    sigma = _np.asarray(sigmas, dtype=float) if sigma_col is not None else None
+    finite = _np.isfinite(x) & _np.isfinite(y)
+    if sigma is not None:
+        sigma = sigma[finite]
+    return x[finite], y[finite], sigma
+
+
+def _lineout_axis(files: list[Path], axis_values: list = None,
+                  axis_csv: str = "", axis_key_column: str = "filename",
+                  axis_value_column: str = "position_mm",
+                  axis_label: str = "") -> tuple[list[float], str, str]:
+    import csv as _csv
+    import io as _io
+    import math as _math
+
+    if axis_values is not None and axis_csv:
+        raise ValueError("provide axis_values or axis_csv, not both")
+    label = axis_label.strip()
+    if axis_values is not None:
+        if len(axis_values) != len(files):
+            raise ValueError(f"axis_values has {len(axis_values)} values for {len(files)} patterns")
+        values = [float(v) for v in axis_values]
+        if not all(_math.isfinite(v) for v in values):
+            raise ValueError("axis_values must all be finite numbers")
+        return values, label or "scan coordinate", "explicit axis_values in resolved file order"
+
+    if axis_csv:
+        csv_path = Path(axis_csv).expanduser().absolute()
+        if not csv_path.is_file():
+            raise ValueError(f"axis_csv not found: {csv_path}")
+        text = csv_path.read_text(encoding="utf-8-sig", errors="replace")
+        try:
+            dialect = _csv.Sniffer().sniff(text[:4096], delimiters=",\t;")
+        except _csv.Error:
+            dialect = _csv.excel
+        reader = _csv.DictReader(_io.StringIO(text), dialect=dialect)
+        if not reader.fieldnames or axis_key_column not in reader.fieldnames:
+            raise ValueError(f"axis_csv needs key column {axis_key_column!r}")
+        if axis_value_column not in reader.fieldnames:
+            raise ValueError(f"axis_csv needs value column {axis_value_column!r}")
+        mapping = {}
+        for row in reader:
+            key = (row.get(axis_key_column) or "").strip()
+            if not key:
+                continue
+            try:
+                value = float(row[axis_value_column])
+            except (TypeError, ValueError):
+                continue
+            if not _math.isfinite(value):
+                continue
+            if key in mapping:
+                raise ValueError(f"axis_csv has duplicate key {key!r}")
+            mapping[key] = value
+        key_name = axis_key_column.strip().lower()
+        ordinal_key = key_name in {"index", "sequence_index", "pattern_index"}
+        frame_key = key_name == "frame_index"
+        # Ordinal maps are either zero-based (contain key 0) or one-based.
+        # Trying both index and index+1 per row aliases adjacent frames.
+        ordinal_base = 0 if "0" in mapping else 1
+        values = []
+        missing = []
+        for index, path in enumerate(files):
+            if ordinal_key:
+                candidates = [path.name, path.stem, str(index + ordinal_base)]
+            elif frame_key:
+                candidates = [path.name, path.stem, str(_lineout_frame_number(path))]
+            else:
+                candidates = [path.name, path.stem, str(_lineout_frame_number(path))]
+            match = next((mapping[key] for key in candidates if key in mapping), None)
+            if match is None:
+                missing.append(path.name)
+            else:
+                values.append(match)
+        if missing:
+            raise ValueError(
+                f"axis_csv did not map {len(missing)} patterns; first missing: "
+                f"{', '.join(missing[:5])}. Match by filename/frame number or use "
+                "axis_key_column='sequence_index' for ordinal rows.")
+        return values, label or axis_value_column, str(csv_path)
+
+    numbers = [_lineout_frame_number(path) for path in files]
+    if all(value >= 0 for value in numbers) and len(set(numbers)) == len(numbers):
+        return [float(value) for value in numbers], label or "frame number", "numeric filename suffix"
+    return [float(index) for index in range(len(files))], label or "pattern index", "sorted file order"
+
+
+def _robust_profile_noise(y):
+    import numpy as _np
+    if len(y) < 3:
+        return 0.0
+    delta = _np.diff(y)
+    center = _np.median(delta)
+    return float(_np.median(_np.abs(delta - center)) / 0.67448975 / _np.sqrt(2.0))
+
+
+def _fit_local_gaussian(x, y, sigma, index: int, half_width_bins: int):
+    import numpy as _np
+    from scipy.optimize import curve_fit
+
+    lo = max(0, index - half_width_bins)
+    hi = min(len(x), index + half_width_bins + 1)
+    if hi - lo < 5:
+        return {"position": float(x[index]), "position_sigma": None,
+                "height": float(y[index]), "fit_status": "too few local bins"}
+    xx = x[lo:hi] - x[index]
+    yy = y[lo:hi]
+    dx = float(_np.median(_np.diff(x)))
+    if not _np.isfinite(dx) or dx <= 0:
+        return {"position": float(x[index]), "position_sigma": None,
+                "height": float(y[index]), "fit_status": "non-increasing x grid"}
+    edge = _np.r_[yy[:2], yy[-2:]]
+    baseline = float(_np.median(edge))
+    amplitude = max(float(y[index]) - baseline, _np.finfo(float).eps)
+    width0 = max(1.5 * dx, 0.51 * dx)
+
+    def model(x_local, b0, slope, height, center, width):
+        return b0 + slope * x_local + height * _np.exp(
+            -0.5 * ((x_local - center) / width) ** 2)
+
+    local_sigma = sigma[lo:hi] if sigma is not None else None
+    if local_sigma is None or not _np.all(_np.isfinite(local_sigma) & (local_sigma > 0)):
+        noise = max(_robust_profile_noise(yy), _np.finfo(float).eps)
+        local_sigma = _np.full(yy.shape, noise, dtype=float)
+    try:
+        fit, covariance = curve_fit(
+            model, xx, yy,
+            p0=[baseline, 0.0, amplitude, 0.0, width0],
+            sigma=local_sigma, absolute_sigma=True,
+            bounds=([-_np.inf, -_np.inf, 0.0, float(xx[0]), dx * 0.25],
+                    [_np.inf, _np.inf, _np.inf, float(xx[-1]),
+                     max(float(xx[-1] - xx[0]), dx)]),
+            maxfev=3000,
+        )
+        center = float(fit[3] + x[index])
+        center_sigma = (float(_np.sqrt(covariance[3, 3]))
+                        if covariance.shape == (5, 5) and covariance[3, 3] >= 0
+                        and _np.isfinite(covariance[3, 3]) else None)
+        return {"position": center, "position_sigma": center_sigma,
+                "height": float(fit[2]), "fit_status": "weighted local Gaussian"}
+    except Exception as exc:
+        return {"position": float(x[index]), "position_sigma": None,
+                "height": float(y[index]), "fit_status": f"fit failed: {type(exc).__name__}"}
+
+
 @mcp.tool()
 async def plot_lineout_series_contour(
     input_dir: str = "",
@@ -8943,6 +9082,12 @@ async def plot_lineout_series_contour(
     x_label: str = "2θ (deg)",
     title: str = "",
     log_scale: bool = False,
+    axis_values: list = None,
+    axis_csv: str = "",
+    axis_key_column: str = "filename",
+    axis_value_column: str = "position_mm",
+    axis_label: str = "",
+    web_preview: bool = True,
     interactive: bool = True,
     open_it: bool = True,
 ) -> str:
@@ -8954,9 +9099,11 @@ async def plot_lineout_series_contour(
     run_midas_viewer and do NOT hand-roll a matplotlib script via run_command.
 
     Builds a 2D map across all files — x = radial axis (column ``x_col``), y =
-    frame/scan order (from the number in each filename), colour = intensity (column
-    ``y_col``) — writes a PNG and, by default, an interactive Plotly HTML that
-    actually renders these files (zoom/pan/hover) and is opened in your browser.
+    acquisition order or a supplied physical coordinate (``axis_values`` or
+    ``axis_csv``), colour = intensity (column ``y_col``) — writes a PNG and, by
+    default, an interactive Plotly HTML (zoom/pan/hover). Without scan metadata,
+    the y axis is the numeric filename suffix or sorted pattern index; it is not
+    physical time or position.
     Convention-agnostic: point x_col/y_col at whatever columns your files use
     (default col0 = x, col1 = intensity).
 
@@ -8968,6 +9115,9 @@ async def plot_lineout_series_contour(
         x_col/y_col: 0-based columns for the radial axis and intensity.
         x_label:    axis label for the radial axis.
         log_scale:  log-scale the intensity colour (log1p) for weak features.
+        axis_values: physical scan coordinate for each file in sorted file order.
+        axis_csv: CSV mapping filenames/frame numbers to physical scan coordinates.
+        web_preview: include a downsampled Plotly payload for APEXA's canvas.
         interactive: also write an interactive Plotly HTML alongside the PNG.
         open_it:    best-effort open the result in the OS default app/browser.
     """
@@ -8976,60 +9126,63 @@ async def plot_lineout_series_contour(
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as _plt
-        import re as _re
-
-        # 1) resolve + order the files by the number in the filename (scan order)
-        if images:
-            files = [Path(p).expanduser().absolute() for p in images]
-        elif input_dir:
-            d = Path(input_dir).expanduser().absolute()
-            if not d.is_dir():
-                return format_result({"tool": "plot_lineout_series_contour",
-                                      "status": "error", "error": f"input_dir not found: {d}"})
-            files = [p for p in d.glob(pattern) if p.is_file()]
-        else:
-            return format_result({"tool": "plot_lineout_series_contour", "status": "error",
-                                  "error": "provide input_dir=... or images=[...]"})
-        def _fnum(p):
-            m = _re.findall(r"\d+", p.stem)
-            return int(m[-1]) if m else -1
-        files = sorted([p for p in files if p.exists()], key=_fnum)
+        files = _resolve_lineout_series(input_dir, images, pattern)
+        y_values, y_axis_label, y_axis_source = _lineout_axis(
+            files, axis_values, axis_csv, axis_key_column,
+            axis_value_column, axis_label)
         if not files:
             return format_result({"tool": "plot_lineout_series_contour", "status": "error",
                                   "error": f"no files matched {pattern!r}"})
 
-        # 2) read each pattern (first numeric x_col/y_col); interpolate onto the
-        #    reference x-grid when grids differ slightly across frames.
-        def _read(p):
-            xs, ys = [], []
-            for ln in p.read_text().splitlines():
-                ln = ln.strip()
-                if not ln or ln[0] in "#;Bb":
-                    continue
-                t = ln.replace(",", " ").split()
-                if len(t) > max(x_col, y_col):
-                    try:
-                        xs.append(float(t[x_col])); ys.append(float(t[y_col]))
-                    except ValueError:
-                        continue
-            return _np.asarray(xs), _np.asarray(ys)
-
-        x_ref, y0 = _read(files[0])
-        if x_ref.size == 0:
-            return format_result({"tool": "plot_lineout_series_contour", "status": "error",
-                                  "error": f"no numeric data in {files[0].name} "
-                                           f"(x_col={x_col}, y_col={y_col})"})
-        rows, frames, skipped = [], [], []
-        for p in files:
-            xs, ys = _read(p)
+        # 2) Read each pattern and interpolate onto the first usable x grid.
+        #    Values outside a frame's measured range remain missing, not clamped.
+        x_ref = None
+        rows, frames, skipped, used_files = [], [], [], []
+        used_y = []
+        for index, p in enumerate(files):
+            xs, ys, _ = _read_lineout_columns(p, x_col, y_col)
             if xs.size == 0:
-                skipped.append(p.name); continue
-            rows.append(ys if (xs.shape == x_ref.shape and _np.allclose(xs, x_ref))
-                        else _np.interp(x_ref, xs, ys))
-            frames.append(_fnum(p))
+                skipped.append(f"{p.name}: no numeric data")
+                continue
+            if _np.any(_np.diff(xs) <= 0):
+                skipped.append(f"{p.name}: x axis is not strictly increasing")
+                continue
+            if x_ref is None:
+                x_ref = xs
+            row = (ys if (xs.shape == x_ref.shape and _np.allclose(xs, x_ref))
+                   else _np.interp(x_ref, xs, ys, left=_np.nan, right=_np.nan))
+            if not _np.any(_np.isfinite(row)):
+                skipped.append(f"{p.name}: x range does not overlap reference grid")
+                continue
+            rows.append(row)
+            frames.append(y_values[index])
+            used_y.append(y_values[index])
+            used_files.append(p)
+        if not rows or x_ref is None:
+            return format_result({"tool": "plot_lineout_series_contour", "status": "error",
+                                  "error": "no usable patterns with increasing, overlapping x grids",
+                                  "skipped": skipped})
         Z = _np.vstack(rows)
         if log_scale:
             Z = _np.log1p(_np.clip(Z, 0, None))
+        physical_y = _np.asarray(used_y, dtype=float)
+        y_steps = _np.diff(physical_y)
+        monotonic_y = (len(y_steps) == 0 or _np.all(y_steps > 0)
+                       or _np.all(y_steps < 0))
+        if monotonic_y:
+            plot_y = physical_y
+            plot_y_label = y_axis_label
+            y_ticks = y_tick_labels = None
+        else:
+            # Repeated or reversing coordinates do not define a monotonic mesh.
+            # Keep acquisition order on the axis and label ticks with the
+            # measured coordinates instead of drawing crossed/zero-height cells.
+            plot_y = _np.arange(len(rows), dtype=float)
+            plot_y_label = f"pattern order ({y_axis_label} at ticks)"
+            y_tick_indices = _np.unique(_np.linspace(
+                0, len(rows) - 1, min(len(rows), 12), dtype=int))
+            y_ticks = plot_y[y_tick_indices].tolist()
+            y_tick_labels = [f"{physical_y[i]:.6g}" for i in y_tick_indices]
 
         # 3) output paths
         base_dir = Path(input_dir).expanduser().absolute() if input_dir else files[0].parent
@@ -9041,7 +9194,7 @@ async def plot_lineout_series_contour(
         _announce_output("plot_lineout_series_contour", png_path,
                          files=len(rows), interactive=interactive)
 
-        # 4) static PNG (always). A contour needs ≥2 frames (Y = frame index); a
+        # 4) static PNG (always). A contour needs ≥2 frames; a
         #    single pattern renders as a blank mesh, so fall back to a 1D line plot
         #    (2θ vs intensity) — same as MIDAS's own plot_lineout_results.py viewer.
         single = len(rows) == 1
@@ -9050,12 +9203,14 @@ async def plot_lineout_series_contour(
             ax.plot(x_ref, Z[0], linewidth=0.9, color="#1f77b4")
             ax.set_xlabel(x_label)
             ax.set_ylabel("log(1+I)" if log_scale else "intensity")
-            ax.set_title(title or f"Lineout — {files[0].name}")
+            ax.set_title(title or f"Lineout — {used_files[0].name}")
             ax.margins(x=0.01)
         else:
-            mesh = ax.pcolormesh(x_ref, _np.arange(len(rows)), Z, shading="auto", cmap="viridis")
+            mesh = ax.pcolormesh(x_ref, plot_y, Z, shading="auto", cmap="viridis")
             ax.set_xlabel(x_label)
-            ax.set_ylabel("frame index (scan order)")
+            ax.set_ylabel(plot_y_label)
+            if y_ticks is not None:
+                ax.set_yticks(y_ticks, y_tick_labels)
             ax.set_title(title or f"Operando contour — {len(rows)} patterns "
                                   f"({frames[0]}–{frames[-1]})")
             fig.colorbar(mesh, ax=ax, label="log(1+I)" if log_scale else "intensity")
@@ -9072,19 +9227,21 @@ async def plot_lineout_series_contour(
                         x=x_ref.tolist(), y=Z[0].tolist(), mode="lines",
                         line=dict(width=1.3)))
                     figp.update_layout(
-                        title=title or f"Lineout — {files[0].name}",
+                        title=title or f"Lineout — {used_files[0].name}",
                         xaxis_title=x_label,
                         yaxis_title="log(1+I)" if log_scale else "intensity",
                         template="plotly_dark")
                 else:
                     figp = _go.Figure(data=_go.Heatmap(
-                        z=Z.tolist(), x=x_ref.tolist(), y=frames,
+                        z=Z.tolist(), x=x_ref.tolist(), y=plot_y.tolist(),
                         colorscale="Viridis",
                         colorbar=dict(title="log(1+I)" if log_scale else "intensity")))
                     figp.update_layout(
                         title=title or f"Operando contour — {len(rows)} patterns",
-                        xaxis_title=x_label, yaxis_title="frame / scan number",
+                        xaxis_title=x_label, yaxis_title=plot_y_label,
                         template="plotly_dark")
+                    if y_ticks is not None:
+                        figp.update_yaxes(tickmode="array", tickvals=y_ticks, ticktext=y_tick_labels)
                 # NOT "cdn": APEXA's default network tier is `internal` (the
                 # copland deployment has the ANL network and no public
                 # internet), so a CDN reference renders this as a blank page on
@@ -9111,14 +9268,68 @@ async def plot_lineout_series_contour(
             except Exception:
                 opened = None
 
+        plotly_preview = None
+        if web_preview:
+            row_indices = _np.linspace(0, len(rows) - 1, min(len(rows), 240), dtype=int)
+            col_indices = _np.linspace(0, len(x_ref) - 1, min(len(x_ref), 700), dtype=int)
+            x_preview = x_ref[col_indices]
+            z_preview = Z[_np.ix_(row_indices, col_indices)]
+            y_preview = plot_y[row_indices]
+            preview_y_axis = {"title": plot_y_label}
+            if y_ticks is not None:
+                tick_rows = _np.unique(_np.linspace(
+                    0, len(row_indices) - 1, min(len(row_indices), 12), dtype=int))
+                preview_y_axis.update({
+                    "tickmode": "array",
+                    "tickvals": y_preview[tick_rows].tolist(),
+                    "ticktext": [f"{physical_y[row_indices[i]]:.6g}" for i in tick_rows],
+                })
+            if single:
+                plotly_preview = {
+                    "data": [{"type": "scattergl", "mode": "lines",
+                              "x": x_preview.tolist(), "y": z_preview[0].tolist(),
+                              "line": {"width": 1.3}}],
+                    "layout": {"title": title or f"Lineout — {used_files[0].name}",
+                               "xaxis": {"title": x_label},
+                               "yaxis": {"title": "log(1+I)" if log_scale else "intensity"},
+                               "template": "plotly_dark"},
+                }
+            else:
+                plotly_preview = {
+                    "data": [{"type": "heatmap", "x": x_preview.tolist(),
+                              "y": y_preview.tolist(), "z": z_preview.tolist(),
+                              "colorscale": "Viridis",
+                              "colorbar": {"title": "log(1+I)" if log_scale else "intensity"},
+                              **({"customdata": _np.repeat(
+                                  physical_y[row_indices, None], len(col_indices), axis=1).tolist()}
+                                 if y_ticks is not None else {}),
+                              "hovertemplate": (f"{x_label}: %{{x:.5g}}<br>"
+                                                f"{y_axis_label}: %{{customdata:.5g}}<br>"
+                                                if y_ticks is not None else
+                                                f"{y_axis_label}: %{{y:.5g}}<br>") +
+                                                "intensity: %{z:.5g}<extra></extra>"}],
+                    "layout": {"title": title or f"Diffraction evolution — {len(rows)} patterns",
+                               "xaxis": {"title": x_label}, "yaxis": preview_y_axis,
+                               "template": "plotly_dark"},
+                }
+
+        frame_ids = [_lineout_frame_number(path) for path in used_files]
+        frame_range = ([frame_ids[0], frame_ids[-1]]
+                       if frame_ids and all(value >= 0 for value in frame_ids)
+                       else ([0, len(frame_ids) - 1] if frame_ids else None))
         return format_result({
             "tool": "plot_lineout_series_contour", "status": "success",
+            "title": title or f"Diffraction evolution — {len(rows)} patterns",
             "plot_kind": "line" if single else "contour",
             "n_patterns": len(rows), "n_x": int(x_ref.size),
-            "frame_range": [frames[0], frames[-1]] if frames else None,
+            "frame_range": frame_range,
+            "scan_axis_range": [frames[0], frames[-1]] if frames else None,
             "x_range": [float(x_ref.min()), float(x_ref.max())],
+            "axis_label": y_axis_label, "axis_source": y_axis_source,
+            "plot_axis_mode": "physical" if monotonic_y else "pattern order with physical-coordinate ticks",
             "outputs": outputs, "opened": opened,
-            "skipped_empty": skipped or None,
+            "plotly": plotly_preview,
+            "skipped_patterns": skipped or None,
             "note": ("Single pattern → a 1D line plot (2θ vs intensity); a contour "
                      "needs ≥2 frames. Open the .html for interactive zoom/pan/hover."
                      if single else
@@ -9128,6 +9339,235 @@ async def plot_lineout_series_contour(
         })
     except Exception as e:
         return format_result({"tool": "plot_lineout_series_contour", "status": "error", "error": str(e)})
+
+
+@mcp.tool()
+async def track_diffraction_peak_series(
+    input_dir: str = "",
+    images: list = None,
+    pattern: str = "*.xye",
+    x_col: int = 0,
+    y_col: int = 1,
+    sigma_col: int | None = 2,
+    axis_values: list = None,
+    axis_csv: str = "",
+    axis_key_column: str = "filename",
+    axis_value_column: str = "position_mm",
+    axis_label: str = "",
+    min_prominence: float = None,
+    max_shift: float = None,
+    max_gap: int = 0,
+    fit_half_width_bins: int = 5,
+    max_peaks_per_pattern: int = 300,
+    plot_track_limit: int = 60,
+    output_dir: str = "",
+) -> str:
+    """Detect and track diffraction peak candidates through an ordered series.
+
+    Local maxima are selected by prominence, refined by a local Gaussian fit,
+    and linked between patterns by one-to-one minimum-distance assignment.
+    Outputs are candidate trajectories, not phase identifications. Position
+    errors are local-fit covariance estimates and omit calibration, background,
+    overlap and model systematics.
+
+    Supply a scan-axis CSV or values when the x axis should represent time or
+    sample position. Otherwise numeric filename suffixes are used as frame IDs.
+    """
+    try:
+        import csv as _csv
+        import json as _json
+        import numpy as _np
+        from scipy.optimize import linear_sum_assignment as _assignment
+        from scipy.signal import find_peaks as _find_peaks
+
+        if max_gap < 0 or fit_half_width_bins < 2:
+            raise ValueError("max_gap must be >=0 and fit_half_width_bins >=2")
+        if max_peaks_per_pattern < 1 or plot_track_limit < 1:
+            raise ValueError("peak and plot limits must be positive")
+        if min_prominence is not None and min_prominence < 0:
+            raise ValueError("min_prominence must be non-negative")
+        if max_shift is not None and max_shift <= 0:
+            raise ValueError("max_shift must be positive when supplied")
+
+        files = _resolve_lineout_series(input_dir, images, pattern)
+        axis, axis_name, axis_source = _lineout_axis(
+            files, axis_values, axis_csv, axis_key_column,
+            axis_value_column, axis_label)
+        records = []
+        thresholds, bin_widths = [], []
+
+        for frame_index, path in enumerate(files):
+            x, y, sigma = _read_lineout_columns(path, x_col, y_col, sigma_col)
+            record = {"path": path, "frame_index": frame_index,
+                      "axis": axis[frame_index], "peaks": [], "error": None}
+            if len(x) < 5:
+                record["error"] = "fewer than five numeric profile points"
+                records.append(record)
+                continue
+            if _np.any(_np.diff(x) <= 0):
+                record["error"] = "x axis must be strictly increasing"
+                records.append(record)
+                continue
+
+            bin_widths.append(float(_np.median(_np.diff(x))))
+            noise = _robust_profile_noise(y)
+            threshold = (float(min_prominence) if min_prominence is not None
+                         else max(5.0 * noise, _np.finfo(float).eps))
+            indices, properties = _find_peaks(y, prominence=threshold)
+            prominences = properties.get("prominences", _np.zeros(len(indices)))
+            selected = _np.argsort(prominences)[::-1][:max_peaks_per_pattern]
+            for candidate in selected:
+                index = int(indices[candidate])
+                fit = _fit_local_gaussian(x, y, sigma, index, fit_half_width_bins)
+                record["peaks"].append({
+                    "pattern_index": frame_index,
+                    "frame": _lineout_frame_number(path),
+                    "axis": axis[frame_index],
+                    "filename": path.name,
+                    "bin_index": index,
+                    "position": fit["position"],
+                    "position_sigma": fit["position_sigma"],
+                    "height": fit["height"],
+                    "prominence": float(prominences[candidate]),
+                    "fit_status": fit["fit_status"],
+                    "track_id": None,
+                })
+            record["peaks"].sort(key=lambda peak: peak["position"])
+            thresholds.append(threshold)
+            records.append(record)
+
+        if not bin_widths:
+            raise ValueError("no usable patterns with a strictly increasing x axis")
+        link_radius = (float(max_shift) if max_shift is not None
+                       else 5.0 * float(_np.median(bin_widths)))
+        tracks = []
+        for record in records:
+            peaks = record["peaks"]
+            active = [track for track in tracks
+                      if record["frame_index"] - track["points"][-1]["pattern_index"]
+                      <= max_gap + 1]
+            if active and peaks:
+                raw_cost = _np.asarray([
+                    [abs(point["position"] - track["points"][-1]["position"])
+                     for point in peaks]
+                    for track in active
+                ], dtype=float)
+                cost = _np.where(raw_cost <= link_radius, raw_cost, link_radius * 1e6)
+                rows, cols = _assignment(cost)
+                for row, col in zip(rows, cols):
+                    if raw_cost[row, col] <= link_radius:
+                        track = active[int(row)]
+                        point = peaks[int(col)]
+                        point["track_id"] = track["track_id"]
+                        track["points"].append(point)
+            for point in peaks:
+                if point["track_id"] is None:
+                    track = {"track_id": len(tracks) + 1, "points": [point]}
+                    point["track_id"] = track["track_id"]
+                    tracks.append(track)
+
+        for track in tracks:
+            points = track["points"]
+            track["summary"] = {
+                "track_id": track["track_id"],
+                "observations": len(points),
+                "axis_start": points[0]["axis"],
+                "axis_end": points[-1]["axis"],
+                "position_start": points[0]["position"],
+                "position_end": points[-1]["position"],
+                "mean_prominence": float(_np.mean([p["prominence"] for p in points])),
+            }
+        tracks.sort(key=lambda track: (
+            -track["summary"]["observations"],
+            -track["summary"]["mean_prominence"],
+            track["track_id"],
+        ))
+        if not tracks:
+            raise ValueError("no peaks met the prominence threshold")
+
+        if output_dir:
+            out = Path(output_dir).expanduser().absolute()
+        else:
+            base = Path(input_dir).expanduser().absolute() if input_dir else files[0].parent
+            out = base / "peak_tracking"
+        out.mkdir(parents=True, exist_ok=True)
+        csv_path = out / "peak_trajectories.csv"
+        columns = ["track_id", "pattern_index", "frame", "axis", "filename",
+                   "position", "position_sigma", "height", "prominence", "fit_status"]
+        with csv_path.open("w", newline="") as stream:
+            writer = _csv.DictWriter(stream, fieldnames=columns)
+            writer.writeheader()
+            for record in records:
+                for point in record["peaks"]:
+                    writer.writerow({key: point.get(key) for key in columns})
+
+        plotted = tracks[:plot_track_limit]
+        traces = []
+        for track in plotted:
+            points = sorted(track["points"], key=lambda point: point["pattern_index"])
+            traces.append({
+                "type": "scattergl", "mode": "lines+markers",
+                "name": f"Feature {track['track_id']} ({len(points)} patterns)",
+                "x": [point["axis"] for point in points],
+                "y": [point["position"] for point in points],
+                "customdata": [[point["frame"], point["height"], point["prominence"],
+                                point["position_sigma"]] for point in points],
+                "connectgaps": False,
+                "hovertemplate": (
+                    f"{axis_name}: %{{x:.6g}}<br>peak position: %{{y:.6g}}<br>"
+                    "frame: %{customdata[0]}<br>height: %{customdata[1]:.5g}<br>"
+                    "prominence: %{customdata[2]:.5g}<br>"
+                    "fit position σ: %{customdata[3]:.4g}<extra></extra>"),
+            })
+        plotly = {
+            "data": traces,
+            "layout": {
+                "title": "Unassigned diffraction feature trajectories",
+                "xaxis": {"title": axis_name},
+                "yaxis": {"title": "Diffraction peak position"},
+                "template": "plotly_dark",
+            },
+        }
+        manifest = {
+            "tool": "track_diffraction_peak_series",
+            "status": "success",
+            "input_files": len(files),
+            "usable_patterns": sum(record["error"] is None for record in records),
+            "patterns_with_candidates": sum(bool(record["peaks"]) for record in records),
+            "candidate_peaks": sum(len(record["peaks"]) for record in records),
+            "tracks": len(tracks),
+            "axis_label": axis_name,
+            "axis_source": axis_source,
+            "link_radius": link_radius,
+            "min_prominence": min_prominence,
+            "prominence_threshold_range": (
+                [float(min(thresholds)), float(max(thresholds))] if thresholds else None),
+            "max_gap": max_gap,
+            "fit_method": "local Gaussian weighted by profile sigma when available",
+            "position_uncertainty_scope": (
+                "local-fit covariance only; excludes calibration, background, overlap "
+                "and model systematics"),
+            "phase_assignment": "not performed; feature tracks require phase interpretation",
+            "unusable_patterns": [
+                {"filename": record["path"].name, "reason": record["error"]}
+                for record in records if record["error"]
+            ],
+            "trajectory_csv": str(csv_path),
+            "plot_tracks_shown": len(plotted),
+        }
+        manifest_path = out / "peak_trajectory_manifest.json"
+        manifest_path.write_text(_json.dumps(manifest, indent=2))
+        return format_result({
+            **manifest,
+            "title": "Diffraction peak trajectories",
+            "tracks_preview": [track["summary"] for track in tracks[:100]],
+            "tracks_omitted_from_preview": max(0, len(tracks) - 100),
+            "plotly": plotly,
+            "manifest": str(manifest_path),
+        })
+    except Exception as e:
+        return format_result({"tool": "track_diffraction_peak_series",
+                              "status": "error", "error": str(e)})
 
 
 def _os_common_prefix(files) -> str:

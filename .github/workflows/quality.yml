@@ -1,0 +1,98 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Offline Python tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      APEXA_NETWORK: data
+      APEXA_OFFLINE: '1'
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+      APEXA_ALLOW_UNSANDBOXED_COMMANDS: '0'
+      APEXA_EPICS_WRITE_PVS: ''
+      APEXA_EPICS_STOP_PVS: ''
+      APEXA_EPICS_ALLOW_CONFIG_WRITES: '0'
+      APEXA_EPICS_ALLOW_HOMING: '0'
+      MPLBACKEND: Agg
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version-file: .python-version
+      - name: Set up locked dependency installer
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: '0.13.1'
+          enable-cache: true
+          cache-dependency-glob: |
+            uv.lock
+            pyproject.toml
+      - name: Install the committed base and development dependencies
+        # No MIDAS/alignment/online-service extras or external engine checkout.
+        # --locked fails if pyproject.toml and uv.lock disagree; it never fixes CI
+        # by resolving a different set of scientific packages.
+        run: uv sync --locked --group dev
+      - name: Run offline regression suite
+        env:
+          APEXA_SESSION_DIR: ${{ runner.temp }}/apexa-ci/sessions
+        run: .venv/bin/python -m pytest tests/ -q -ra --junitxml="$RUNNER_TEMP/pytest.xml"
+      - name: Retain test results including optional-environment skips
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: offline-python-results
+          path: ${{ runner.temp }}/pytest.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  frontend:
+    name: Frontend tests, types, lint and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          # Tests use Node's registerHooks and native TypeScript stripping.
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install the committed frontend dependencies
+        run: npm ci
+      - name: Run frontend state and transport tests
+        run: node --test tests/*.test.mjs
+      - name: Typecheck
+        run: ./node_modules/.bin/tsc -b --noEmit
+      - name: Lint
+        run: ./node_modules/.bin/eslint .
+      - name: Build a production frontend without changing tracked dist files
+        run: ./node_modules/.bin/vite build --outDir "$RUNNER_TEMP/apexa-frontend" --emptyOutDir

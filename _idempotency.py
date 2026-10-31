@@ -1,241 +1,259 @@
-"""Idempotency guard for the heavy MIDAS tools (Phase 0 of the FF-HEDM harness fix).
+"""Verified replay for successful local tool results.
 
-Prevents the "3× duplicate calibration" failure mode: an open-ended agent loop
-re-deciding from scratch each iteration and firing an identical expensive tool
-call two or three times on the same input.
-
-Mechanism — a stable content hash of ``(tool, resolved input paths, salient
-scientific params)`` is recorded in ``<anchor_dir>/.apexa_done.json`` together
-with the FULL prior result AND the concrete top-level output files that run
-produced. A later identical call returns the recorded result (``cached: true``)
-IFF every recorded output file still exists and is non-empty. If the outputs
-were deleted, or any salient input differs, the guard steps aside and the tool
-re-runs normally.
-
-Design rules (safety first — a false skip is worse than a redundant run):
-  * The guard NEVER raises into the tool. Any internal error → run the tool.
-  * A cache hit REPLAYS the exact prior result dict (plus ``cached``/``cached_at``
-    keys), so downstream steps still receive every semantic output key
-    (e.g. the refined-param-file path) they would from a fresh run.
-  * We only record when the tool reports success AND we can name concrete output
-    files it created/modified (top-level mtime diff of the anchor dir). No
-    verifiable output → no cache entry → next call re-runs.
-  * ``resume_from`` / ``force`` and ``APEXA_IDEMPOTENCY=0`` bypass the guard —
-    an intentional continue/re-run must never be swallowed.
-
-Escape hatches:
-  * env ``APEXA_IDEMPOTENCY=0``         — disable globally.
-  * a ``force=True`` kwarg on the call  — one-shot bypass (tools need not declare it).
-  * any ``resume_from`` kwarg non-empty — a deliberate resume, always runs.
+Inputs and nested outputs are fingerprinted; same-output-directory calls are
+serialized across processes. External engines must provide an identity callback;
+returning None disables reuse when the executing build cannot be established.
 """
-
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 import functools
 import hashlib
 import inspect
 import json
 import os
+from pathlib import Path
+import tempfile
 import time
-from typing import Callable, Dict, List, Optional
 
 MANIFEST = ".apexa_done.json"
-_STATUS_OK = ("ok", "success", "completed", "done")
+_SCHEMA = 2
 
 
-# --------------------------------------------------------------------------- #
-# path + hashing helpers
-# --------------------------------------------------------------------------- #
-def _rp(value):
-    """realpath a value that names an existing path; otherwise return it as-is.
+@functools.lru_cache(maxsize=4096)
+def _file_digest(path, device, inode, size, mtime_ns, ctime_ns):
+    h = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
-    Resolving to a canonical absolute path makes the hash stable across relative
-    vs absolute vs symlinked spellings of the same input file.
+
+def _fingerprint(path):
+    p = Path(path).expanduser().resolve(strict=True)
+    if not p.is_file():
+        raise ValueError(f"Not a regular file: {p}")
+    before = p.stat()
+    digest = _file_digest(str(p), before.st_dev, before.st_ino, before.st_size,
+                          before.st_mtime_ns, before.st_ctime_ns)
+    after = p.stat()
+    if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+        raise ValueError(f"File changed while fingerprinting: {p}")
+    return {"path": str(p), "bytes": after.st_size, "sha256": digest}
+
+
+def local_engine_identity(paths):
+    """Fingerprint actual engine executables/release manifests; unknown => None.
+
+    A Python executable alone does not identify packages installed into its env.
+    Include qualified package/build manifests in paths as well.
     """
     try:
-        if value and isinstance(value, str):
-            expanded = os.path.expanduser(value)
-            if os.path.exists(expanded):
-                return os.path.realpath(expanded)
-    except Exception:
-        pass
+        files = [_fingerprint(p) for p in paths]
+        return {"files": files} if files else None
+    except (OSError, ValueError):
+        return None
+
+
+def _normalize(value):
+    if isinstance(value, dict):
+        return {str(k): _normalize(v) for k, v in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_normalize(v) for v in value]
+    if isinstance(value, (str, os.PathLike)) and value:
+        p = Path(value).expanduser()
+        try:
+            if p.is_file():
+                return _fingerprint(p)
+            if p.is_dir():
+                # A directory may contain changing acquisitions or output written
+                # by this call. Without an immutable manifest, bypass reuse.
+                raise ValueError(f"Directory input requires an immutable manifest: {p}")
+        except OSError:
+            raise ValueError("Input identity unavailable") from None
     return value
 
 
-def compute_key(tool: str, salient: Dict) -> str:
-    """Stable 16-hex-char content hash of a tool call's identity."""
-    norm = {k: _rp(v) for k, v in sorted(salient.items()) if v not in ("", None)}
-    blob = json.dumps([tool, norm], sort_keys=True, default=str)
-    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+def compute_key(tool, salient):
+    blob = json.dumps([_SCHEMA, tool, _normalize(salient)], sort_keys=True, default=str, allow_nan=False)
+    return hashlib.sha256(blob.encode()).hexdigest()
 
 
-# --------------------------------------------------------------------------- #
-# manifest read / write (best-effort, atomic)
-# --------------------------------------------------------------------------- #
-def _manifest_path(anchor: str) -> str:
-    return os.path.join(os.path.expanduser(anchor), MANIFEST)
-
-
-def _load(anchor: str) -> Dict:
+def _load(anchor):
     try:
-        with open(_manifest_path(anchor)) as fh:
-            data = json.load(fh)
+        data = json.loads((Path(anchor) / MANIFEST).read_text())
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except (OSError, ValueError):
         return {}
 
 
-def _save(anchor: str, data: Dict) -> None:
+def _save(anchor, data):
+    base = Path(anchor)
+    fd, name = tempfile.mkstemp(prefix=".apexa_done.", suffix=".tmp", dir=base)
     try:
-        base = os.path.expanduser(anchor)
-        os.makedirs(base, exist_ok=True)
-        tmp = _manifest_path(anchor) + ".tmp"
-        with open(tmp, "w") as fh:
-            json.dump(data, fh, indent=2, default=str)
-        os.replace(tmp, _manifest_path(anchor))
-    except Exception:
-        pass
+        with os.fdopen(fd, "w") as stream:
+            json.dump(data, stream, indent=2, default=str, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, base / MANIFEST)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
-# --------------------------------------------------------------------------- #
-# output-file detection (tool-agnostic: top-level mtime diff of the anchor dir)
-# --------------------------------------------------------------------------- #
-def _snapshot(anchor: str) -> Dict[str, float]:
-    """Top-level ``{name: mtime}`` of the anchor dir; ``{}`` if it is missing.
-
-    Non-recursive on purpose: calibration writes ``refined_*.txt`` at the top
-    level, reconstruction writes a ``LayerNr_N/`` dir (its mtime changes when
-    populated), and integration writes ``APEXA_integration_series.json`` + per-
-    frame dirs at the top level. One scandir is cheap even for large runs.
-    """
-    out: Dict[str, float] = {}
-    try:
-        with os.scandir(os.path.expanduser(anchor)) as it:
-            for entry in it:
-                if entry.name == MANIFEST:
-                    continue
-                try:
-                    out[entry.name] = entry.stat().st_mtime
-                except Exception:
-                    pass
-    except Exception:
-        pass
+def _snapshot(anchor):
+    out = {}
+    base = Path(anchor)
+    if not base.exists():
+        return out
+    for folder, dirs, files in os.walk(base, followlinks=False):
+        dirs[:] = [d for d in dirs if not (Path(folder) / d).is_symlink()]
+        for name in files:
+            if name.startswith(".apexa_done"):
+                continue
+            p = Path(folder) / name
+            if p.is_symlink():
+                continue
+            st = p.stat()
+            out[str(p.relative_to(base))] = (st.st_size, st.st_mtime_ns, st.st_ctime_ns)
     return out
 
 
-def _created_or_modified(before: Dict[str, float], after: Dict[str, float]) -> List[str]:
-    return sorted(n for n, m in after.items() if before.get(n) != m)
-
-
-def _outputs_present(anchor: str, names: Optional[List[str]]) -> bool:
-    """True iff every recorded output still exists and no plain file is empty."""
-    if not names:
+def _outputs_present(anchor, outputs):
+    if not isinstance(outputs, dict) or not outputs:
         return False
-    base = os.path.expanduser(anchor)
-    for name in names:
-        path = os.path.join(base, name)
-        if not os.path.exists(path):
-            return False
-        try:
-            if os.path.isfile(path) and os.path.getsize(path) == 0:
+    base = Path(anchor).resolve()
+    try:
+        for name, recorded in outputs.items():
+            p = (base / name).resolve(strict=True)
+            if not p.is_relative_to(base) or not p.is_file():
                 return False
-        except Exception:
-            return False
-    return True
+            if _fingerprint(p) != recorded or p.stat().st_size == 0:
+                return False
+        return True
+    except (OSError, ValueError):
+        return False
 
 
-# --------------------------------------------------------------------------- #
-# the decorator
-# --------------------------------------------------------------------------- #
-def idempotent(
-    tool: str,
-    anchor: Callable[[Dict], str],
-    salient: Callable[[Dict], Dict],
-    resume_keys: tuple = ("resume_from",),
-):
-    """Wrap a heavy async MCP tool with a content-addressed skip-if-done guard.
+@asynccontextmanager
+async def _reservation(anchor):
+    """Advisory per-output-directory lock, serviced without blocking the loop.
 
-    Args:
-        tool:        stable tool name used in the hash + result annotations.
-        anchor:      ``bound_kwargs -> output_dir`` where the manifest + outputs
-                     live (e.g. ``result_folder`` or ``output_dir or dir(input)``).
-        salient:     ``bound_kwargs -> {param: value}`` — the scientifically
-                     meaningful inputs. Volatile knobs (n_cpus, plot flags) are
-                     deliberately excluded so they don't bust the cache.
-        resume_keys: kwargs whose non-empty value means "deliberate resume" →
-                     bypass the guard entirely.
-
-    Place BELOW ``@mcp.tool()`` so FastMCP registers the wrapper; ``functools.wraps``
-    exposes the wrapped signature via ``__wrapped__`` so schema introspection is
-    unaffected.
+    Not a distributed scheduler: place manifests/locks on a qualified local
+    filesystem. A process exit releases the OS lock; cancelled waiters close it.
     """
+    Path(anchor).mkdir(parents=True, exist_ok=True)
+    stream = open(Path(anchor) / ".apexa_done.lock", "a+b")
+    acquired = False
+    try:
+        if os.name == "nt":
+            import msvcrt
+            stream.write(b"0")
+            stream.flush()
+            def attempt():
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            def release():
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            def attempt():
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            def release():
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+        while not acquired:
+            try:
+                attempt()
+                acquired = True
+            except (BlockingIOError, PermissionError):
+                await asyncio.sleep(0.05)
+        yield
+    finally:
+        if acquired:
+            release()
+        stream.close()
 
+
+def idempotent(tool, anchor, salient, resume_keys=("resume_from",), engine_identity=None):
     def decorator(fn):
         sig = inspect.signature(fn)
+        source = inspect.getsourcefile(fn)
 
         @functools.wraps(fn)
         async def wrapper(*args, **kwargs):
-            # --- bind + derive identity; any failure → run the tool untouched ---
+            call_kwargs = dict(kwargs)
+            force = bool(call_kwargs.get("force"))
+            if "force" not in sig.parameters:
+                call_kwargs.pop("force", None)
+            bound = sig.bind(*args, **call_kwargs)
+            bound.apply_defaults()
+            kw = dict(bound.arguments)
+            bypass_reuse = os.environ.get("APEXA_IDEMPOTENCY", "1") == "0" or force or any(kw.get(k) for k in resume_keys)
+            key, facts, anchor_dir, reserve = None, None, "", True
             try:
-                bound = sig.bind_partial(*args, **kwargs)
-                bound.apply_defaults()
-                kw = dict(bound.arguments)
-            except Exception:
-                return await fn(*args, **kwargs)
-
-            # --- explicit bypasses -------------------------------------------
-            if os.environ.get("APEXA_IDEMPOTENCY", "1") == "0":
-                return await fn(*args, **kwargs)
-            if kw.get("force"):
-                return await fn(*args, **kwargs)
-            if any(kw.get(k) for k in resume_keys):
-                return await fn(*args, **kwargs)
-
-            try:
-                anchor_dir = anchor(kw)
-                key = compute_key(tool, salient(kw))
-            except Exception:
-                return await fn(*args, **kwargs)
-            if not anchor_dir:
-                return await fn(*args, **kwargs)
-
-            # --- cache hit? replay the exact prior result --------------------
-            manifest = _load(anchor_dir)
-            entry = manifest.get(key)
-            if entry and _outputs_present(anchor_dir, entry.get("outputs")):
-                prior = entry.get("result")
-                if isinstance(prior, dict):
-                    replay = dict(prior)
-                    replay["cached"] = True
-                    replay["cached_at"] = entry.get("ts")
-                    replay["idempotent_note"] = (
-                        f"Identical {tool} already completed for these inputs; "
-                        "returning the prior result (outputs verified on disk). "
-                        "Pass force=True to re-run."
-                    )
-                    return json.dumps(replay, indent=2, default=str)
-
-            # --- fresh run; capture outputs by top-level mtime diff ----------
-            before = _snapshot(anchor_dir)
-            result = await fn(*args, **kwargs)
-            try:
-                parsed = json.loads(result) if isinstance(result, str) else result
-                status = str(parsed.get("status", "")).lower() if isinstance(parsed, dict) else ""
-                if isinstance(parsed, dict) and status in _STATUS_OK:
-                    outputs = _created_or_modified(before, _snapshot(anchor_dir))
-                    if outputs:  # only cache when we can verify concrete outputs
-                        manifest[key] = {
-                            "tool": tool,
-                            "outputs": outputs,
-                            "result": parsed,
-                            "ts": time.time(),
-                            "status": status,
-                        }
-                        _save(anchor_dir, manifest)
-            except Exception:
-                pass
-            return result
-
+                anchor_dir = str(Path(anchor(kw)).expanduser().resolve()) if anchor(kw) else ""
+                if not anchor_dir:
+                    reserve = False
+                if kw.get("host"):
+                    from apexa_remote_exec import is_local_host
+                    if not is_local_host(kw["host"]):
+                        reserve = False
+                if reserve:
+                    # Routing can infer a remote host from the data registry
+                    # even without an explicit host argument. Never create a
+                    # local lock/output tree for those remote paths.
+                    from apexa_remote_exec import is_local_host, resolve_host_for_path
+                    paths = [anchor_dir] + [v for k, v in kw.items()
+                        if isinstance(v, str) and k in ("image_file", "data_file", "param_file", "parameter_file", "image_dir")]
+                    for path in paths:
+                        routed = resolve_host_for_path(path)
+                        if routed and not is_local_host(routed):
+                            reserve = False
+                            break
+                identity = (await asyncio.to_thread(engine_identity, kw) if engine_identity else {"source": _fingerprint(source)}) if reserve else None
+                if identity is not None and not bypass_reuse:
+                    inputs = {k: v for k, v in kw.items() if k not in ("output_dir", "result_folder", "force", *resume_keys)}
+                    inputs.update(salient(kw))
+                    facts = {"arguments": inputs, "engine": identity}
+                    key = await asyncio.to_thread(compute_key, tool, facts)
+            except (OSError, ValueError, TypeError):
+                reserve = bool(anchor_dir)
+            if not reserve:
+                return await fn(*args, **call_kwargs)
+            # Cache setup errors may bypass reuse, but never catch the tool's
+            # exception and execute it a second time.
+            async with _reservation(anchor_dir):
+                manifest = await asyncio.to_thread(_load, anchor_dir)
+                entry = manifest.get(key, {}) if key else {}
+                if not isinstance(entry, dict):
+                    entry = {}
+                if entry.get("schema_version") == _SCHEMA and isinstance(entry.get("result"), dict) and await asyncio.to_thread(_outputs_present, anchor_dir, entry.get("outputs")):
+                    prior = dict(entry["result"])
+                    prior.update(cached=True, cached_at=entry.get("ts"),
+                                 idempotent_note="Verified input/engine and output fingerprints match; pass force=True to rerun.")
+                    return json.dumps(prior, default=str, allow_nan=False)
+                try:
+                    before = await asyncio.to_thread(_snapshot, anchor_dir) if key else {}
+                except OSError:
+                    before = {}
+                result = await fn(*args, **call_kwargs)
+                try:
+                    from apexa_outcomes import classify_result, payload_dict
+                    parsed = payload_dict(result)
+                    # Only explicit terminal success is reusable; never prose,
+                    # queued jobs, failed gates or provisional results.
+                    explicit = parsed and (str(parsed.get("status", "")).lower() in ("ok", "success", "completed", "done") or parsed.get("success") is True)
+                    if key and explicit and classify_result(parsed).successful:
+                        after = await asyncio.to_thread(_snapshot, anchor_dir)
+                        changed = [name for name, stat in after.items() if before.get(name) != stat and stat[0] > 0]
+                        outputs = await asyncio.to_thread(lambda: {name: _fingerprint(Path(anchor_dir) / name) for name in changed})
+                        if outputs and key == await asyncio.to_thread(compute_key, tool, facts):
+                            manifest[key] = {"schema_version": _SCHEMA, "tool": tool, "outputs": outputs, "result": parsed, "ts": time.time()}
+                            manifest = dict(sorted(manifest.items(), key=lambda item: item[1].get("ts", 0))[-64:])
+                            await asyncio.to_thread(_save, anchor_dir, manifest)
+                except (OSError, ValueError, TypeError):
+                    pass  # Preserve the actual result, even if caching failed.
+                return result
         return wrapper
-
     return decorator

@@ -280,7 +280,7 @@ Do NOT skip this. The gate is enforced by APEXA's Analysis agent (`use_planning=
 | Symptom | Cause | Fix |
 |---|---|---|
 | `KeyError: RawFolder` during validation | validate_parameter_file called with zarr input | Skip validate_parameter_file when data_file is a zarr; midas-pipeline uses --skip-validation |
-| `Cannot access local variable 're'` on import | Stale .pyc cache from older midas_comprehensive_server.py | `find . -name "*.pyc" -delete && pkill -f midas_comprehensive_server && restart` |
+| `Cannot access local variable 're'` on import | Import/runtime error in the server code loaded by the running process; a stale bytecode cache is not established by this message alone | Keep the traceback, verify which checkout and Python process are active, fix the reported source issue, then restart the top-level APEXA process with its normal launcher. Do not blanket-delete `.pyc` files or kill a child server by process name. |
 | `process_grains` fails (`CalledProcessError` exit 1) with python refiner | python refiner writes no `FitBest.bin` → legacy fallback fails (still present 0.6.0) | Expected — APEXA auto-skips it; read IndexBest.bin, or use the c-omp backend pair for Grains.csv |
 | Model hallucinates `~/opt/MIDAS` path | Model uses training-data path not actual MIDAS_PATH | Anti-hallucination guard in run_ff_hedm_full_workflow blocks this; actual path from MIDAS_PATH env var |
 | `Grains.csv not found` after run | python refiner used | Normal — use IndexBest.bin for grain count |

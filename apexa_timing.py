@@ -32,6 +32,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from apexa_observability import span, current_ids, emit
 from typing import Any, Iterable, Iterator, Optional
 
 try:
@@ -186,6 +187,8 @@ def current_query_id() -> Optional[str]:
 def record_llm_call(elapsed_s: float, prompt_tok: int = 0,
                     response_tok: int = 0) -> None:
     """Called from within a provider after a completed LLM HTTP round-trip."""
+    emit("llm.completed", elapsed_ms=elapsed_s * 1000,
+         prompt_tokens=prompt_tok, response_tokens=response_tok)
     ctx = _current_query.get()
     if ctx is None:
         return
@@ -222,28 +225,32 @@ def query_scope(query: str = "", agent: str = "") -> Iterator[QueryContext]:
         # can still set .agent without effect.
         yield QueryContext(query_id="", started_ts=time.time())
         return
-    ctx = QueryContext(
-        query_id=uuid.uuid4().hex[:12],
-        started_ts=time.time(),
-        query_chars=len(query or ""),
-        agent=agent,
-    )
-    token = _current_query.set(ctx)
-    try:
-        yield ctx
-    finally:
-        _current_query.reset(token)
-        wall = time.time() - ctx.started_ts
-        log_llm_call({
-            "endpoint":          "query",
-            "query_id":          ctx.query_id,
-            "agent":             ctx.agent,
-            "query_chars":       ctx.query_chars,
-            "n_llm_calls":       ctx.n_llm_calls,
-            "sum_llm_elapsed_s": round(ctx.sum_llm_elapsed_s, 3),
-            "n_tools":           ctx.n_tools,
-            "tool_elapsed_s":    round(ctx.tool_elapsed_s, 3),
-            "wall_clock_s":      round(wall, 3),
-            "llm_prompt_tok":    ctx.llm_prompt_tok,
-            "llm_response_tok":  ctx.llm_response_tok,
-        })
+    with span("query", role="single_operator") as fields:
+        ctx = QueryContext(
+            query_id=current_ids()["trace_id"],
+            started_ts=time.time(),
+            query_chars=len(query or ""),
+            agent=agent,
+        )
+        token = _current_query.set(ctx)
+        try:
+            yield ctx
+        finally:
+            _current_query.reset(token)
+            wall = time.time() - ctx.started_ts
+            log_llm_call({
+                "endpoint":          "query",
+                "query_id":          ctx.query_id,
+                "agent":             ctx.agent,
+                "query_chars":       ctx.query_chars,
+                "n_llm_calls":       ctx.n_llm_calls,
+                "sum_llm_elapsed_s": round(ctx.sum_llm_elapsed_s, 3),
+                "n_tools":           ctx.n_tools,
+                "tool_elapsed_s":    round(ctx.tool_elapsed_s, 3),
+                "wall_clock_s":      round(wall, 3),
+                "llm_prompt_tok":    ctx.llm_prompt_tok,
+                "llm_response_tok":  ctx.llm_response_tok,
+            })
+            fields.update(query_chars=ctx.query_chars, agent=ctx.agent,
+                          llm_calls=ctx.n_llm_calls, tools=ctx.n_tools,
+                          prompt_tokens=ctx.llm_prompt_tok, response_tokens=ctx.llm_response_tok)

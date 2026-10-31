@@ -16,9 +16,9 @@ Two MCP tools depending on the use case:
 | | **Tool A — Standalone Refinement** | **Tool B — Combined Pipeline** |
 |---|---|---|
 | MCP tool | `run_gsas_refinement` | `run_live_analysis` |
-| Input | `.zarr.zip` (already integrated) | Raw data + params (or existing .zarr.zip) |
-| Script | `utils/gsas_ii_refine.py` | Stage 1: integrator.py, Stage 2: gsas_ii_refine.py |
-| Best for | Refining after integration is done | End-to-end: integrate → refine in one step |
+| Input | MIDAS `.zarr.zip` / `.MIDAS.zip` archive, or `.xy` / `.xye` pattern | Raw data + params (or an existing `.zarr.zip`) |
+| Driver | APEXA robust GSAS-II adapter by default; optional legacy MIDAS driver | Stage 1: integration, Stage 2: GSAS-II refinement |
+| Best for | Refining an integrated pattern or MIDAS caked archive | End-to-end: integrate → refine in one step |
 
 > **CIF files are required for refinement.** Use `fetch_cif_from_mp` (KnowledgeAgent) to download from Materials Project if the user doesn't have one.
 
@@ -34,7 +34,10 @@ GSAS-II Rietveld refinement computes a theoretical diffraction pattern from a cr
 3. **Profile** — Peak shapes: Gaussian (U, V, W) + Lorentzian (X, Y, SH/L)
 4. **Atoms** — Atomic coordinates + thermal parameters → peak intensities
 
-Quality metric: **Rwp** (weighted profile R-factor). Lower is better: <5% excellent, <15% acceptable.
+**Rwp** is the weighted profile residual. Lower can indicate a closer fit, but
+there is no universal acceptance threshold. Inspect residual shape, phase evidence,
+instrument/background assumptions, parameter stability, and uncertainty before
+qualifying a result.
 
 ### Data flow through MIDAS
 
@@ -126,22 +129,24 @@ run_gsas_refinement(
 
 ### Engine selection (`engine=` parameter)
 
-`run_gsas_refinement` accepts `engine="gsas2"` (default), `"maud"`, or `"both"`. The engines are
-independent Rietveld implementations dispatched through the same tool surface — output schema is
-identical so downstream scoring code (`benchmark/detector_zoo/refine_v2.py`) does not change.
+`run_gsas_refinement` accepts `engine="gsas2"` (default), `"maud"`, or `"both"`
+for MIDAS `.zarr.zip` and `.MIDAS.zip` archives. Plain `.xy` and `.xye` patterns
+use the GSAS-II path directly; the engine selector does not route those patterns
+to MAUD. Results have engine-specific fields, so callers should inspect the
+returned `engine` and `status` instead of assuming identical output schemas.
 
 - `engine="gsas2"` — fastest, the standard path. Use unless you have a specific reason not to.
-- `engine="maud"` — MAUD via MILK (lanl/MILK). Use for texture/microstructure-heavy data
-  (HEDM grain analysis, rolled samples) or as a second opinion on a suspicious GSAS-II fit.
-  Soft-fails with a structured `engine_unavailable` response if MAUD or JDK is missing
-  (set `MAUD_PATH`, install MILK with `uv pip install milk-rietveld`).
-- `engine="both"` — runs gsas2 then maud sequentially, writes a `refinement_crossvalidation.json`
-  reporting `|Δa_engines|` and Rwp ratio. Use for calibrant validation and paper-grade NIST
-  agreement claims. Falls back silently to gsas2-only with `fallback_used="gsas2"` if MAUD is
-  missing (no error, just a warning in the response).
+- `engine="maud"` — the limited MAUD/MILK backend for supported MIDAS caked
+  archives. It currently performs cell and profile refinement; it is not a
+  general MAUD texture or microstructure workflow. Missing MAUD, MILK, or JDK
+  returns a structured `engine_unavailable` result.
+- `engine="both"` — runs GSAS-II and then MAUD on a supported caked archive and
+  returns cross-validation data. If MAUD is unavailable, the result records a
+  GSAS-II fallback and its reason; check that field before treating the result as
+  a two-engine comparison.
 
-Texture and microstructure modes (`refine_texture=`, `refine_microstructure=`) are Phase 2
-and not yet exposed; today `engine="maud"` does cell+profile parity only.
+Texture and microstructure modes (`refine_texture=`, `refine_microstructure=`) are
+not exposed by this adapter.
 
 ---
 

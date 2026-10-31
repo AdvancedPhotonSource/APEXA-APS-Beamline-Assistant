@@ -1,3 +1,5 @@
+> Runtime boundary: only `diode_max_1d_scan` simulation/replay/read-only shadow is implemented. Hardware and Bayesian-optimization guidance below is future commissioning context, not an executable procedure. Do not dispatch motor commands or bypass a broker refusal. See [README.md](README.md) and `docs/ALIGNMENT_RUNTIME.md`.
+
 # Alignment task parameter envelope
 
 > Which parameters are **Fixed** (never vary), **Configured** (set per

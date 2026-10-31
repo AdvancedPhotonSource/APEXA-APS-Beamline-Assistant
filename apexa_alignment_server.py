@@ -3,34 +3,19 @@
 APEXA Alignment MCP Server
 ==========================
 
-General-purpose beamline alignment helper for APS beamlines (first target: 1-ID-E).
+Alignment history, analytical helpers and one durable bounded scan runtime.
 
-Every alignment task — slit tuning, rotation-axis finding, SAXS beam centering on
-a beamstop, diode maximization, IC optimization — is expressed as ONE schema:
+`diode_max_1d_scan` supports deterministic simulation, immutable replay and
+read-only shadow observations. It persists bounded proposals and observations,
+fits a Gaussian with explicit quality gates, and returns recommendations. It
+never dispatches a motor move. Hardware execution requires a separately
+qualified broker and is refused. Other YAML tasks remain specifications or
+analytical helpers; installing Xopt does not implement their optimizers.
 
-    (variables, objectives, constraints)   # Xopt VOCS
-  + (observation PVs, reducer)             # how to read "the beam"
-  + (algorithm: scan | bo | custom)        # how to optimize
-  + (prior_source: history | random)       # warm-start
-
-The server never bypasses the EPICS motor server's safety gates. It proposes
-moves and dispatches them through the existing motor tools — same soft-limit,
-large-move, velocity, jog-duration guards. "Alignment" never issues a raw caput.
-
-Design principles
------------------
-* **Reuse, don't rebuild.** Xopt owns the optimization math; pvapy owns the
-  live PVA stream; apexa_remote_exec routes local/remote data paths; the EPICS
-  motor server owns gated motion. This module is the agent-driven decision
-  layer plus a persistent history store that warm-starts future runs.
-* **Honest status.** Every run reports {converged|partial|failed} with the full
-  trajectory; never claims alignment without the convergence check.
-* **Offline-clean base install.** `xopt` and `pvapy` are OPTIONAL — history
-  ingestion, query, replay, and analytical fits (rotation axis) work without
-  them. See pyproject.toml `[alignment]` extra for the full stack.
-* **Capsule discipline.** Operating card lives in
-  knowledge_base/capsules/beamline-alignment/ (loaded JIT by the AlignmentAgent
-  on first invocation of any alignment tool), not in Python strings.
+History ingestion and live single-frame acquisition are separate tools. The
+bounded runtime does not invoke either. Runtime priors require exact recipe,
+configuration revision/hash and mode matches; legacy experiment history is not
+treated as a qualified prior. See docs/ALIGNMENT_RUNTIME.md for the contracts.
 
 Author: APEXA / Argonne National Laboratory
 """
@@ -44,7 +29,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from mcp.server.mcpserver import MCPServer
+from apexa_mcp import TracedMCPServer as MCPServer
 
 import logging
 logging.getLogger("mcp").setLevel(logging.WARNING)
@@ -60,6 +45,7 @@ APEXA_HOME = Path(os.environ.get("APEXA_HOME", Path.home() / ".apexa"))
 ALIGN_DIR = APEXA_HOME / "alignment"
 HISTORY_DB = ALIGN_DIR / "history.db"
 TASK_LIBRARY_DIR = Path(__file__).parent / "knowledge_base" / "alignment_tasks"
+RUNTIME_DB = ALIGN_DIR / "runtime.db"
 
 
 def _fmt(result: dict) -> str:
@@ -982,6 +968,92 @@ def _rotation_axis_correction_moves(cor_offset_px: Optional[float],
 # Task library — list the YAML task specs available for `run_alignment`
 # ---------------------------------------------------------------------------
 
+def _runtime_call(method: str, *args, **kwargs) -> str:
+    from apexa_alignment_runtime import AlignmentError, AlignmentRuntime
+    try:
+        return _fmt(getattr(AlignmentRuntime(RUNTIME_DB), method)(*args, **kwargs))
+    except AlignmentError as exc:
+        return _fmt({"status": "error", "error_code": exc.code, "detail": exc.detail,
+                     "motion_executed": False, "hardware_alignment_verified": False})
+
+
+@mcp.tool()
+def preflight_alignment(plan: dict) -> str:
+    """Validate an explicit bounded diode scan plan without device access or writes.
+
+    Returns canonical plan/configuration hashes and the software preflight scope.
+    Modes: simulation, replay, shadow. Hardware mode is refused. The JSON plan
+    schema and examples are in docs/ALIGNMENT_RUNTIME.md.
+    """
+    from apexa_alignment_runtime import AlignmentError, preflight
+    try:
+        return _fmt(preflight(plan))
+    except AlignmentError as exc:
+        return _fmt({"status": "error", "error_code": exc.code, "detail": exc.detail,
+                     "motion_executed": False, "hardware_alignment_verified": False})
+
+
+@mcp.tool()
+def run_alignment(plan: dict, max_steps: int = 21) -> str:
+    """Create and advance a durable diode scan in simulation/replay/shadow mode.
+
+    Persists each candidate before observation. Never commands or reads hardware.
+    Shadow returns a pending advisory request for an external read-only monitor.
+    A completed fit is a recommendation, never verified hardware alignment.
+    """
+    from apexa_alignment_runtime import AlignmentError, AlignmentRuntime, _integer
+    try:
+        _integer(max_steps, "max_steps", 1, 201)
+        runtime = AlignmentRuntime(RUNTIME_DB)
+        created = runtime.create(plan)
+        return _fmt(runtime.advance(created["run_id"], created["configuration_hash"], max_steps=max_steps,
+                                    expected_revision=created["revision"]))
+    except AlignmentError as exc:
+        out = {"status": "error", "error_code": exc.code, "detail": exc.detail,
+               "motion_executed": False, "hardware_alignment_verified": False}
+        if "created" in locals():
+            out["run_id"] = created["run_id"]
+        return _fmt(out)
+
+
+@mcp.tool()
+def get_alignment_status(run_id: str, include_trajectory: bool = False) -> str:
+    """Read compact durable status; opt in to the frozen plan, samples and event log."""
+    return _runtime_call("status", run_id, include_trajectory=include_trajectory)
+
+
+@mcp.tool()
+def resume_alignment(run_id: str, configuration_hash: str, expected_revision: int,
+                     max_steps: int = 21) -> str:
+    """Resume the immutable plan after verifying configuration, recipe and revision.
+
+    An expired worker lease is recovered; an active lease refuses another owner.
+    Terminal runs remain terminal. This never resumes or dispatches hardware.
+    """
+    return _runtime_call("advance", run_id, configuration_hash, expected_revision=expected_revision,
+                         max_steps=max_steps)
+
+
+@mcp.tool()
+def submit_alignment_observation(run_id: str, observation: dict, expected_revision: int) -> str:
+    """Commit one fresh, identity-matched observation to a pending shadow request.
+
+    Caller supplies request/step/source/sequence/configuration, positions, units
+    and acquisition time. Invalid observations fail the run with a durable event.
+    These external observations are advisory and have no broker attestation.
+    """
+    return _runtime_call("submit", run_id, observation, expected_revision=expected_revision)
+
+
+@mcp.tool()
+def stop_alignment(run_id: str, expected_revision: Optional[int] = None) -> str:
+    """Stop recommendations and revoke the worker lease; no subsequent sample commits.
+
+    This is not a physical emergency stop. Use the beamline's independent stop
+    for hardware controlled outside this runtime. No return move is attempted.
+    """
+    return _runtime_call("stop", run_id, expected_revision=expected_revision)
+
 @mcp.tool()
 def list_alignment_tasks(filter: str = "") -> str:
     """List available alignment task templates (YAML files in the task library).
@@ -997,7 +1069,9 @@ def list_alignment_tasks(filter: str = "") -> str:
     for yml in sorted(TASK_LIBRARY_DIR.glob("*.yaml")):
         if filter and filter.lower() not in yml.stem.lower():
             continue
-        info = {"name": yml.stem, "path": str(yml)}
+        info = {"name": yml.stem, "path": str(yml), "hardware_execution": False,
+                "runtime_modes": ["simulation", "replay", "shadow"] if yml.stem == "diode_max_1d_scan" else [],
+                "implementation": "bounded_scan_runtime" if yml.stem == "diode_max_1d_scan" else "specification_or_analytical_helper"}
         try:
             # Lightweight parse — avoids a hard dep on PyYAML at list time.
             text = yml.read_text()

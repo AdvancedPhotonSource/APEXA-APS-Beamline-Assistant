@@ -12,7 +12,7 @@ Design:
   - Append-only JSONL (one JSON object per line, easy to parse)
   - Stored in ~/.apexa/logs/ (survives git updates, per-machine)
   - Captures tool call timing, success, and loop detection
-  - No PII beyond ANL username (already in Argo API calls)
+  - Persist metadata only: prompts, usernames, arguments and result text are omitted
 
 Usage:
     logger = InteractionLogger()
@@ -27,6 +27,8 @@ import json
 import os
 import time
 import uuid
+import logging
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -128,25 +130,34 @@ class InteractionLogger:
         )
 
     def save(self, entry: InteractionEntry):
-        """Append a completed interaction entry to the log file."""
+        """Append operational metadata without scientist content or credentials."""
         try:
+            record = entry.to_dict()
+            record["query_chars"] = len(record.pop("query", ""))
+            record.pop("user", None)
+            for tool in record["tool_calls"]:
+                tool.pop("arguments", None)
+                tool.pop("result_preview", None)
+            record["content_policy"] = "metadata_only"
+            from apexa_observability import current_ids
+            record["trace_id"] = current_ids().get("trace_id")
             with open(self.log_file, "a") as f:
-                f.write(json.dumps(entry.to_dict(), default=str) + "\n")
-        except Exception:
-            pass  # logging should never crash the main application
+                f.write(json.dumps(record, default=str) + "\n")
+        except Exception as exc:
+            logging.getLogger(__name__).warning("Interaction metadata write failed (%s)", type(exc).__name__)
 
     def recent(self, n: int = 20) -> List[Dict]:
         """Read the last n entries (for dashboarding / reflection)."""
         if not self.log_file.exists():
             return []
-        entries = []
+        entries = deque(maxlen=max(1, min(n, 10000)))
         try:
             with open(self.log_file) as f:
                 for line in f:
                     line = line.strip()
                     if line:
                         entries.append(json.loads(line))
-            return entries[-n:]
+            return list(entries)
         except Exception:
             return []
 

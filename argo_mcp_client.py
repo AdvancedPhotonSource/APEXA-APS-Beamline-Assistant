@@ -41,6 +41,8 @@ from mcp.client.stdio import stdio_client
 from dotenv import load_dotenv
 from apexa_agents import ArgoProvider, OrchestratorAgent, DEV_ONLY_MODELS, select_provider
 from apexa_timing import query_scope, record_tool_call
+from apexa_observability import traced_tool, current_ids
+from apexa_workflow_client import WORKFLOW_TOOLS, WORKFLOW_TOOL_NAMES
 import time as _time
 
 load_dotenv()
@@ -1716,6 +1718,8 @@ class APEXAClient:
             print(f"  {C.YELLOW}⚠ LLM preflight skipped: {_e}{C.RESET}", file=sys.stderr)
 
         # Initialise the orchestrator (Phase 2 core)
+        existing = {tool['function']['name'] for tool in self._available_tools}
+        self._available_tools.extend(tool for tool in WORKFLOW_TOOLS if tool['function']['name'] not in existing)
         self.orchestrator = OrchestratorAgent(
             execute_tool_fn=self.execute_tool_call,
             all_tools=self._available_tools,
@@ -1807,7 +1811,23 @@ class APEXAClient:
         self._busy_server = None
         print(f"  {C.DIM}back to prompt — Ctrl-C again to quit{C.RESET}\n")
 
+    @traced_tool
     async def execute_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+
+        if tool_name in WORKFLOW_TOOL_NAMES:
+            from apexa_workflow_client import handle_tool
+            try:
+                return await handle_tool(self, tool_name, arguments)
+            except (ValueError, KeyError, RuntimeError) as exc:
+                return json.dumps({'status': 'error', 'error': str(exc)})
+        from apexa_workflow_client import pending_workflow_denial, is_reviewed_workflow_dispatch
+        try:
+            blocked = await pending_workflow_denial(self, tool_name)
+        except (ValueError, KeyError, RuntimeError) as exc:
+            return json.dumps({'status': 'denied', 'nothing_was_run': True,
+                               'error': f'Workflow ownership cannot be verified: {exc}'})
+        if blocked:
+            return json.dumps({'status': 'denied', 'nothing_was_run': True, 'error': blocked})
 
         # ===== LIVENESS SIGNAL =====
         # Every tool path (native tool_calls, text mode, orchestrator fast-path,
@@ -1928,20 +1948,38 @@ class APEXAClient:
             # BaseException and skips the `except Exception` below — _abort_active_query
             # captures _busy_server BEFORE it awaits the cancelled task).
             self._busy_server = server_name
-            result = await session.call_tool(tool_name, arguments)
-            result_text = str(result.content[0].text if result.content else "No result")
+            if isinstance(session, ClientSession):
+                from mcp.types import RequestParamsMeta
+                result = await session.call_tool(tool_name, arguments,
+                    meta=RequestParamsMeta(apexa_trace=current_ids()))
+            else:
+                result = await session.call_tool(tool_name, arguments)
+            from apexa_outcomes import normalize_mcp_result, classify_result
+            result_text = normalize_mcp_result(result)
 
             # Cache result if applicable
-            if tool_name in cacheable_operations:
+            if tool_name in cacheable_operations and classify_result(result_text).successful:
                 self.cache.set(tool_name, arguments, result_text)
 
-            # Record analysis in context
-            self.context.add_analysis(tool_name, result_text)
+            # Workflow receipts live in their owning job/session ledger. A
+            # background review action has no chat turn and must not append to
+            # the last chat session's still-loaded in-memory metadata.
+            if not is_reviewed_workflow_dispatch():
+                self.context.add_analysis(tool_name, result_text)
 
             # Add proactive suggestion to result
+            # Do not append prose to a JSON tool result: doing so destroys its
+            # machine-readable failure/scientific status for downstream callers.
             suggestion = ProactiveSuggestions.get_suggestion(tool_name, result_text)
-            if suggestion:
-                result_text += f"\n\n{suggestion}"
+            if suggestion and classify_result(result_text).successful:
+                try:
+                    payload = json.loads(result_text)
+                except (ValueError, TypeError):
+                    result_text += f"\n\n{suggestion}"
+                else:
+                    if isinstance(payload, dict):
+                        payload["suggestion"] = suggestion
+                        result_text = json.dumps(payload, default=str)
 
             record_tool_call(_time.monotonic() - _t0)
             return result_text
@@ -2504,30 +2542,11 @@ class APEXAClient:
                         print(f"  {C.DIM}{'─' * 44}{C.RESET}\n")
 
                 elif user_input.lower().startswith('workflow '):
-                    # Workflow command
-                    # Example: workflow phase_analysis or workflow list
-                    workflow_cmd = user_input[9:].strip()
-
-                    if workflow_cmd == 'list':
-                        print("\nAvailable Workflows:")
-                        print("="*50)
-                        for name, steps in self.workflow_builder.workflows.items():
-                            print(f"\n{name}:")
-                            for i, step in enumerate(steps, 1):
-                                print(f"  {i}. {step['description']}")
-                    else:
-                        workflow = self.workflow_builder.get_workflow(workflow_cmd)
-                        if workflow:
-                            print(f"\nExecuting workflow: {workflow_cmd}")
-                            print("="*50)
-                            for i, step in enumerate(workflow, 1):
-                                print(f"\nStep {i}: {step['description']}")
-                                # Note: Would need user input for arguments
-                                print(f"  Tool: {step['tool']}")
-                            print("\nNote: Use natural language queries to execute workflows with your data")
-                        else:
-                            print(f"Unknown workflow: {workflow_cmd}")
-                            print("Use 'workflow list' to see available workflows")
+                    from apexa_workflow_client import cli_command
+                    try:
+                        print(await cli_command(self, user_input))
+                    except (ValueError, KeyError, RuntimeError) as exc:
+                        print(f"Workflow action refused: {exc}")
 
                 elif user_input.lower().startswith('session '):
                     # Session management
@@ -3129,6 +3148,9 @@ class APEXAClient:
                 print(f"  {C.RED}✗{C.RESET} {C.BOLD}Error:{C.RESET} {str(e)}")
 
     async def cleanup(self):
+        workflows = getattr(self, '_scientific_workflows', None)
+        if workflows is not None:
+            await workflows.aclose()
         # Close each per-server stack (transport + ClientSession) first, then the
         # shared stack. Suppress Exception AND CancelledError: tearing down an mcp
         # stdio_client cancels its internal anyio task group (blocked on the server

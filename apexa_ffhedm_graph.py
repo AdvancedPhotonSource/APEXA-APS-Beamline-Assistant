@@ -181,6 +181,7 @@ class FFHEDMWorkflow:
         self._db_path = db_path
         self._state_path = state_path
         self._conn = None          # aiosqlite connection (durable mode only)
+        self._checkpoint_error = None
         self._async_saver = False  # True when using AsyncSqliteSaver (no sync API)
         # Per-session bookkeeping — persisted to `state_path` so the sync accessors
         # (is_active / pending_gate) the orchestrator calls each turn stay correct
@@ -207,8 +208,14 @@ class FFHEDMWorkflow:
             self._app = None
 
     # ---- durable checkpointer / state persistence ----------------------- #
+    @property
+    def durability(self) -> str:
+        if self._app is None:
+            return "uninitialized"
+        return "sqlite" if self._async_saver else "memory"
+
     async def _ensure_app(self) -> None:
-        """Lazily build the durable graph on the running loop; fall back to memory."""
+        """Build requested durable state; never silently downgrade persistence."""
         if self._app is not None:
             return
         try:
@@ -221,6 +228,14 @@ class FFHEDMWorkflow:
             self._checkpointer = saver
             self._async_saver = True
         except Exception as e:  # pragma: no cover - environment dependent
+            self._checkpoint_error = str(e)
+            if self._conn is not None:
+                await self._conn.close()
+                self._conn = None
+            if os.environ.get("APEXA_ALLOW_VOLATILE_WORKFLOWS", "0") != "1":
+                raise RuntimeError("Durable FF-HEDM checkpoints could not initialize; no workflow was started. "
+                                   "Repair APEXA_FFHEDM_DB or explicitly opt into volatile development mode "
+                                   "with APEXA_ALLOW_VOLATILE_WORKFLOWS=1.") from e
             print(f"⚠ FF-HEDM graph: durable checkpoint unavailable ({e}); "
                   "using in-memory (no cross-restart resume this run)", file=sys.stderr)
             self._checkpointer = MemorySaver()

@@ -312,7 +312,7 @@ def cmd_survey(args) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# reconstruct — normalize → center → recon → (phase) → write (THE ORDER 5-7)
+# reconstruct — normalize → optional intensity phase retrieval → -log → recon
 # ---------------------------------------------------------------------------
 def cmd_reconstruct(args) -> dict:
     # Hard rule 3: refuse to default pixel size, rotation axis, handedness.
@@ -325,6 +325,27 @@ def cmd_reconstruct(args) -> dict:
         return {"tool": "run_tomo_reconstruction", "status": "error",
                 "error": "refusing to default: " + ", ".join(missing)
                 + " (capsule hard rule 3 — these are not recoverable later)"}
+
+    required_finite = {"pixel_size_um": args.pixel_size_um,
+                       "omega_start": args.omega_start, "omega_step": args.omega_step}
+    for key in ("rotation_center", "threshold"):
+        if getattr(args, key, None) is not None:
+            required_finite[key] = getattr(args, key)
+    if (any(v is None or not np.isfinite(float(v)) for v in required_finite.values())
+            or float(args.pixel_size_um) <= 0 or float(args.omega_step) == 0):
+        return {"tool": "run_tomo_reconstruction", "status": "error",
+                "error": "Finite geometry, positive pixel size and nonzero signed omega_step are required"}
+    if args.phase_retrieval and any(
+        v is None or not np.isfinite(float(v)) or float(v) <= 0
+        for v in (args.propagation_mm, args.energy_kev, args.paganin_alpha)
+    ):
+        return {"tool": "run_tomo_reconstruction", "status": "error",
+                "error": "Phase retrieval requires positive finite propagation_mm, energy_kev and paganin_alpha"}
+    if args.center_sweep:
+        lo, hi, step = args.center_sweep
+        if not all(np.isfinite(v) for v in (lo, hi, step)) or not (lo < hi and step > 0):
+            return {"tool": "run_tomo_reconstruction", "status": "error",
+                    "error": "Center sweep requires finite LO < HI and STEP > 0"}
 
     files = _list_frames(args.data, args.pattern)
     if not files:
@@ -351,11 +372,14 @@ def cmd_reconstruct(args) -> dict:
     proj = stack[layout["proj"]]
     n_proj = proj.shape[0]
 
-    # Normalize → -log (Beer-Lambert). Clip so a stray T<=0 does not make inf.
+    # Paganin filtering acts on normalized transmission, before Beer-Lambert -log.
     proj = tomopy.normalize(proj, flat, dark)
-    proj = tomopy.minus_log(np.clip(proj, 1e-6, None))
+    if not np.isfinite(proj).all():
+        return {"tool": "run_tomo_reconstruction", "status": "error",
+                "error": "Normalization produced nonfinite transmission; check flat/dark inputs"}
 
-    # Angles (radians). ω from args; handedness sets the sweep direction.
+    # The signed omega_step sets acquisition direction. Handedness records the
+    # declared coordinate convention; it must not silently invert signed omega.
     ang1 = float(args.omega_start)
     ang2 = ang1 + float(args.omega_step) * (n_proj - 1)
     theta = np.deg2rad(np.linspace(ang1, ang2, n_proj, dtype=np.float64))
@@ -372,6 +396,11 @@ def cmd_reconstruct(args) -> dict:
             energy=float(args.energy_kev),
             alpha=float(args.paganin_alpha))
         phase_applied = True
+
+    if not np.isfinite(proj).all():
+        return {"tool": "run_tomo_reconstruction", "status": "error",
+                "error": "Phase retrieval produced nonfinite transmission"}
+    proj = tomopy.minus_log(np.clip(proj, 1e-6, None))
 
     # Rotation axis: an OUTPUT, not a default. Either a given center, or a sweep whose
     # chosen index is recorded. find_center_vo when neither is supplied.
@@ -392,15 +421,28 @@ def cmd_reconstruct(args) -> dict:
         rot_center = float(tomopy.find_center_vo(proj))
         center_source = "find_center_vo"
     chosen_shift = rot_center
+    if not np.isfinite(rot_center) or not 0 <= rot_center < proj.shape[-1]:
+        return {"tool": "run_tomo_reconstruction", "status": "error",
+                "error": "Rotation center is nonfinite or outside the detector"}
 
     recon = tomopy.recon(proj, theta, center=rot_center,
                          algorithm=args.algorithm, sinogram_order=False)
+    if not np.isfinite(recon).all():
+        return {"tool": "run_tomo_reconstruction", "status": "error",
+                "scientific_verdict": "rejected", "error": "Reconstruction contains nonfinite voxels"}
     recon = tomopy.circ_mask(recon, axis=0, ratio=0.95)
+    # Validate the dtype actually written; finite float64 values may overflow
+    # when converted into the float32 volume artifact.
+    with np.errstate(over="ignore", invalid="ignore"):
+        recon = np.asarray(recon, dtype=np.float32)
+    if not np.isfinite(recon).all() or not recon.size or float(np.ptp(recon.astype(np.float64))) <= 0:
+        return {"tool": "run_tomo_reconstruction", "status": "error",
+                "scientific_verdict": "rejected", "error": "Reconstruction is empty, nonfinite or constant"}
 
     # Write the volume as a TIFF stack.
     import tifffile
     vol_path = out_dir / "recon.tif"
-    tifffile.imwrite(str(vol_path), recon.astype(np.float32))
+    tifffile.imwrite(str(vol_path), recon)
 
     # Optional threshold → binary sample mask (hard rule: only on an absorption recon;
     # a phase-contrast recon must have had phase retrieval first).
@@ -415,15 +457,19 @@ def cmd_reconstruct(args) -> dict:
 
     # Honest status: output must be newer than run start and non-degenerate.
     fresh = vol_path.stat().st_mtime >= run_started - 1
-    finite = bool(np.isfinite(recon).any() and float(np.ptp(recon)) > 0)
-    status = "success" if (fresh and finite) else "warning"
-    run_note = ("" if status == "success" else
+    finite = bool(np.isfinite(recon).all() and float(np.ptp(recon.astype(np.float64))) > 0)
+    provisional = center_source == "sweep_midpoint_provisional"
+    status = "provisional" if provisional else ("success" if fresh and finite else "warning")
+    run_note = ("Center-sweep midpoint is provisional; select and validate a center before accepting this volume."
+                if provisional else "" if status == "success" else
                 "reconstruction wrote no fresh/variable volume — check normalization, "
                 "center and angles")
 
     return {
         "tool": "run_tomo_reconstruction",
         "status": status,
+        "execution_state": "completed",
+        "scientific_verdict": "provisional" if status != "success" else "unassessed",
         "backend": "tomopy",
         "algorithm": args.algorithm,
         "data_folder": args.data,
@@ -435,6 +481,7 @@ def cmd_reconstruct(args) -> dict:
         "layout": layout,
         "pixel_size_um": args.pixel_size_um,
         "handedness": args.handedness,
+        "angle_convention": "theta = omega_start + frame_index * signed omega_step; handedness is a coordinate declaration",
         "rotation_center": rot_center,
         "rotation_center_source": center_source,
         "recorded_shift": chosen_shift,

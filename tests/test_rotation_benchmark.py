@@ -7,7 +7,7 @@ while measuring the wrong thing.
 """
 from __future__ import annotations
 
-import json, os, sys, time
+import hashlib, json, os, sys, time
 from pathlib import Path
 
 import pytest
@@ -17,6 +17,13 @@ BENCH = REPO / "benchmark" / "harness_comparison"
 sys.path.insert(0, str(BENCH))
 
 rb = pytest.importorskip("rotation_benchmark")
+
+
+def _knowledge_manifest(tmp_path, files=None):
+    path = tmp_path / "knowledge-manifest.json"
+    path.write_text(json.dumps({"schema_version": 1, "study_id": "offline-fixture", "reviewed_by": "test",
+                               "review_note": "Synthetic fixture only", "files": files or {}}))
+    return path
 
 
 # ── ground truth ──────────────────────────────────────────────────────────────
@@ -63,25 +70,31 @@ def test_groups_are_fitted_separately(tmp_path):
 
 
 # ── the clean room ────────────────────────────────────────────────────────────
-def test_stage_refuses_a_workspace_that_leaks_ground_truth(tmp_path):
+def test_stage_refuses_a_workspace_that_leaks_ground_truth(tmp_path, monkeypatch):
     """THE defect that voided the previous 31 records: the answer was in the room."""
     src = tmp_path / "src"; src.mkdir()
     exposure = src / "ceria_000250.h5"; exposure.write_bytes(b"\x89HDF\r\n\x1a\n")
     manuals = tmp_path / "manuals"; manuals.mkdir()
     (manuals / "README.md").write_text("how to calibrate")
     (manuals / "refined_MIDAS_params_v2.txt").write_text("tz 3.0\n")   # the leak
+    monkeypatch.setattr(rb, "REPO", tmp_path)
+    policy = rb.load_manifest(_knowledge_manifest(tmp_path, {p.relative_to(tmp_path).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in manuals.iterdir()}))
     with pytest.raises(SystemExit, match="leaks ground truth"):
-        rb.stage(exposure, manuals, tmp_path / "ws")
+        rb.stage(exposure, manuals, tmp_path / "ws", knowledge_policy=policy)
 
 
-def test_stage_accepts_a_clean_workspace(tmp_path):
+def test_stage_accepts_a_clean_workspace(tmp_path, monkeypatch):
     src = tmp_path / "src"; src.mkdir()
     exposure = src / "ceria_000250.h5"; exposure.write_bytes(b"\x89HDF\r\n\x1a\n")
     manuals = tmp_path / "manuals"; manuals.mkdir()
     (manuals / "phase-4-calibrate.md").write_text("the recipe")
-    staged = rb.stage(exposure, manuals, tmp_path / "ws")
-    assert staged == ["ceria_000250.h5", "manuals/"]
+    (manuals / "LAB_NOTEBOOK.md").write_text("unapproved answer")
+    monkeypatch.setattr(rb, "REPO", tmp_path)
+    policy = rb.load_manifest(_knowledge_manifest(tmp_path, {"manuals/phase-4-calibrate.md": hashlib.sha256(b"the recipe").hexdigest()}))
+    staged = rb.stage(exposure, manuals, tmp_path / "ws", knowledge_policy=policy)
+    assert staged == ["ceria_000250.h5", "manuals/phase-4-calibrate.md"]
     assert (tmp_path / "ws" / "manuals" / "phase-4-calibrate.md").exists()
+    assert not (tmp_path / "ws" / "manuals" / "LAB_NOTEBOOK.md").exists()
 
 
 def test_stage_without_manuals_copies_only_the_exposure(tmp_path):
@@ -92,6 +105,19 @@ def test_stage_without_manuals_copies_only_the_exposure(tmp_path):
     (manuals / "README.md").write_text("...")
     rb.stage(exposure, None, tmp_path / "ws")
     assert not (tmp_path / "ws" / "manuals").exists()
+
+
+def test_manual_staging_requires_reviewed_contents(tmp_path, monkeypatch):
+    monkeypatch.setattr(rb, "REPO", tmp_path)
+    source = tmp_path / "input.h5"
+    source.write_bytes(b"fixture")
+    manuals = tmp_path / "manuals"
+    manuals.mkdir()
+    (manuals / "README.md").write_text("unreviewed content")
+    with pytest.raises(rb.KnowledgePolicyError, match="explicit reviewed"):
+        rb.stage(source, manuals, tmp_path / "unreviewed")
+    with pytest.raises(rb.KnowledgePolicyError, match="approves no files"):
+        rb.stage(source, manuals, tmp_path / "empty", knowledge_policy=rb.load_manifest(_knowledge_manifest(tmp_path)))
 
 
 # ── reading the answer back ───────────────────────────────────────────────────
@@ -124,11 +150,11 @@ def test_extract_tz_ignores_files_predating_the_run(tmp_path):
     assert tz is None and src == "none"
 
 
-def test_extract_tz_falls_back_to_the_transcript(tmp_path):
+def test_extract_tz_does_not_grade_an_unverified_transcript(tmp_path):
     tz, src = rb.extract_tz(tmp_path, "Refined geometry: tz = -3.52 deg, ty = 0.31",
                             time.time())
-    assert tz == pytest.approx(-3.52)
-    assert src == "stdout"
+    assert tz is None
+    assert src == "unverified_transcript"
 
 
 def test_extract_tz_prefers_disk_over_transcript(tmp_path):
@@ -184,8 +210,8 @@ def test_four_outcomes(reported, predicted, claimed, expected):
 
 
 def test_a_rail_of_half_a_degree_scores_accepted_wrong():
-    """The real failure: scans 269/276 railed at the +-3 deg tilt bound and the
-    gate passed them. That must not read as success."""
+    """Hypothetical accepted rail differs from the trend; the existing real
+    summary labels scans 269/276 as gate failures, not accepted-wrong cases."""
     r = _run(reported_tz=-3.0000, predicted_tz=-3.5178, claimed=True)
     assert rb.score(r, tol=0.10) == "accepted_wrong"
 
@@ -220,14 +246,15 @@ def test_summarise_counts_each_arm_separately():
 
 
 # ── arm design ────────────────────────────────────────────────────────────────
-def test_the_three_contrasts_are_each_single_variable():
+def test_apexa_ablation_is_explicitly_a_bundled_intervention():
     A = rb.ARMS
     assert A["A1"].harness == A["A2"].harness and A["A1"].manuals == A["A2"].manuals
-    assert A["A1"].enforcement and not A["A2"].enforcement      # enforcement only
-    assert not A["A2"].enforcement and not A["A3"].enforcement
-    assert A["A2"].manuals == A["A3"].manuals                   # harness only
+    assert "bundled" in A["A2"].note
+    assert rb.policy_environment(A["A1"]) == {"APEXA_STAGE_GUARDRAILS": "1", "APEXA_ASSUME_SCAN_METADATA": "0"}
+    assert rb.policy_environment(A["A2"]) == {"APEXA_STAGE_GUARDRAILS": "0", "APEXA_ASSUME_SCAN_METADATA": "1"}
+    assert rb.policy_environment(A["A3"]) == {}
     assert A["A3"].harness == A["A6"].harness
-    assert A["A3"].manuals and not A["A6"].manuals              # documentation only
+    assert A["A3"].manuals and not A["A6"].manuals
 
 
 def test_only_our_arms_claim_enforcement():
@@ -315,9 +342,8 @@ def test_the_default_model_is_one_every_harness_can_speak():
 
 # ── the reference line must survive the real outlier fraction ────────────────
 def _real_like_series():
-    """The CeO2 group's actual structure: 21 scans at ~0.999 deg/scan, of which 6
-    are false basins (off by 6-28 deg) and 2 are rails at +-3 deg -- 8/21 = 38%,
-    past Theil-Sen's ~29% breakdown."""
+    """Synthetic stress fixture resembling the CeO2 outlier regime, with 21
+    constructed points and eight outliers; not a reanalysis of the 22-row group."""
     xs = [s for s in range(261, 283) if s != 273]
     ys = [-14.0 + 0.999 * (x - 261) for x in xs]
     bad = {261: -4.576, 262: 17.309, 263: -2.729, 264: -1.899,
@@ -404,3 +430,218 @@ def test_the_sandbox_really_blocks_a_read(tmp_path):
     p = subprocess.run(rb.sandboxed(["cat", str(secret)], [os.path.realpath(secret.parent)]),
                        capture_output=True, text=True)
     assert p.returncode != 0 and "-3.5178" not in p.stdout
+
+
+# ── explicit scientific decision and artifact adoption ────────────────────────
+@pytest.mark.parametrize("text", [
+    "The initial attempt succeeded numerically, but validation failed. Do not use this geometry.",
+    "Validation failed, even though the optimizer converged successfully.",
+    "Solver passed. Final decision: rejected. The numerical solver succeeded.",
+    "Geometry is not acceptable despite numerical convergence.",
+])
+def test_explicit_rejection_overrides_earlier_solver_success(text):
+    assert rb.claimed_success(text, -3.5)[0] is False
+
+
+def test_explicit_final_decision_can_supersede_failed_attempt():
+    text = "The first validation failed. Final decision: accepted; tz=-3.5 after correction."
+    assert rb.claimed_success(text, -3.5)[0] is True
+
+
+def _manifest(ws, artifact="final.txt", status="accepted", **overrides):
+    import hashlib
+    record = {"schema_version": 1, "scientific_status": status}
+    if artifact:
+        record.update(artifact_path=artifact,
+                      artifact_sha256=hashlib.sha256((ws / artifact).read_bytes()).hexdigest())
+    record.update(overrides)
+    (ws / rb.MANIFEST_NAME).write_text(json.dumps(record))
+
+
+def test_manifest_adopts_specific_result_not_newest_seed(tmp_path):
+    t0 = time.time()
+    final = tmp_path / "final.txt"; final.write_text("tz -3.5\n")
+    seed = tmp_path / "initial_seed.txt"; seed.write_text("tz 99\n")
+    os.utime(seed, (t0 + 2, t0 + 2))
+    _manifest(tmp_path)
+    result = rb.extract_result(tmp_path, "seed tz=99", t0)
+    assert result.tz == -3.5 and result.source == "manifest:final.txt"
+    assert result.scientific_status == "accepted" and result.artifact_sha256
+
+
+def test_multiple_geometries_are_ambiguous_without_adoption(tmp_path):
+    t0 = time.time()
+    (tmp_path / "one.txt").write_text("tz -3.5\n")
+    (tmp_path / "two.txt").write_text("tz 5.0\n")
+    result = rb.extract_result(tmp_path, "Final tz=-3.5", t0)
+    assert result.tz is None and result.source == "ambiguous_artifacts"
+
+
+def test_new_seed_is_not_an_output_artifact(tmp_path):
+    t0 = time.time()
+    (tmp_path / "seed_params.txt").write_text("tz 99\n")
+    result = rb.extract_result(tmp_path, "", t0)
+    assert result.tz is None
+
+
+def test_staged_file_touch_is_not_new_execution_evidence(tmp_path):
+    artifact = tmp_path / "params.txt"; artifact.write_text("tz -3.5\n")
+    before = rb.workspace_snapshot(tmp_path)
+    t0 = time.time()
+    artifact.touch()
+    result = rb.extract_result(tmp_path, "", t0, before)
+    assert result.tz is None
+
+
+def test_adopted_file_must_match_its_hash(tmp_path):
+    t0 = time.time()
+    artifact = tmp_path / "final.txt"; artifact.write_text("tz -3.5\n")
+    _manifest(tmp_path)
+    artifact.write_text("tz 9\n")
+    result = rb.extract_result(tmp_path, "", t0)
+    assert result.source == "invalid_manifest" and "hash" in result.error
+
+
+def test_invalid_manifest_cannot_fall_back_to_other_file(tmp_path):
+    t0 = time.time()
+    (tmp_path / "final.txt").write_text("tz -3.5\n")
+    (tmp_path / rb.MANIFEST_NAME).write_text("not json")
+    assert rb.extract_result(tmp_path, "tz=-3.5", t0).source == "invalid_manifest"
+
+
+def test_manifest_cannot_read_outside_workspace(tmp_path):
+    outside = tmp_path / "secret.txt"; outside.write_text("tz 9\n")
+    ws = tmp_path / "workspace"; ws.mkdir()
+    (ws / rb.MANIFEST_NAME).write_text(json.dumps({"schema_version": 1,
+        "scientific_status": "accepted", "artifact_path": "../secret.txt", "artifact_sha256": "anything"}))
+    assert "escapes" in rb.extract_result(ws, "", time.time()).error
+
+
+def test_artifact_symlink_is_not_followed(tmp_path):
+    (tmp_path / "one.txt").write_text("tz -3.5\n")
+    (tmp_path / "link.txt").symlink_to(tmp_path / "one.txt")
+    _manifest(tmp_path, "link.txt")
+    result = rb.extract_result(tmp_path, "", time.time())
+    assert result.source == "invalid_manifest" and "nonsymlink" in result.error
+
+
+def test_rejected_manifest_is_not_an_accepted_geometry(tmp_path):
+    (tmp_path / "final.txt").write_text("tz -3.5\n")
+    _manifest(tmp_path, status="rejected")
+    result = rb.extract_result(tmp_path, "Solver converged", time.time())
+    assert rb.claimed_success("Solver converged", result.tz, result.scientific_status)[0] is False
+
+
+def test_abstention_manifest_does_not_require_artifact(tmp_path):
+    _manifest(tmp_path, artifact=None, status="abstained")
+    result = rb.extract_result(tmp_path, "Cannot determine geometry", time.time())
+    assert not result.error and result.scientific_status == "abstained" and result.tz is None
+
+
+@pytest.mark.parametrize("data", ['{"tz":NaN}', '{"tz":Infinity}', 'tz 1e999\n'])
+def test_nonfinite_geometry_is_not_graded(tmp_path, data):
+    (tmp_path / "out.json").write_text(data)
+    assert rb.extract_result(tmp_path, "", time.time()).tz is None
+
+
+# ── no-model driver preflight and provider isolation ──────────────────────────
+def test_driver_config_contains_only_rotation_analysis_servers(tmp_path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("audit_apexa_driver", BENCH / "_apexa_driver.py")
+    driver = importlib.util.module_from_spec(spec); spec.loader.exec_module(driver)
+    for name in ("beamline_core_server.py", "midas_comprehensive_server.py", "motor.py", "alignment.py"):
+        (tmp_path / name).write_text("# never executed\n")
+    (tmp_path / "servers.config").write_text("core:beamline_core_server.py\nmidas:midas_comprehensive_server.py\nmotor:motor.py\nalignment:alignment.py\n")
+    assert [config["name"] for config in driver.server_configs(tmp_path)] == ["core", "midas"]
+
+
+@pytest.mark.skipif(not rb.SANDBOX, reason="macOS sandbox-exec required")
+def test_staged_driver_help_and_preflight_run_while_benchmark_stays_denied(tmp_path):
+    import subprocess
+    reference = tmp_path / "answers" / "summary.csv"
+    reference.parent.mkdir(); reference.write_text("secret")
+    deny = rb.deny_paths(rb.ARMS["A1"], reference)
+    driver = rb.stage_apexa_driver(tmp_path / "runtime")
+    assert str((rb.REPO / "benchmark").resolve()) in deny
+    env = dict(os.environ, APEXA_BENCH_REPO=str(rb.REPO))
+    manifest = _knowledge_manifest(tmp_path)
+    env[rb.MANIFEST_ENV] = str(manifest)
+    env[rb.DIGEST_ENV] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    result = subprocess.run(rb.sandboxed([sys.executable, str(driver), "--help"], deny),
+                            env=env, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    ok, detail = rb.preflight_apexa_driver(driver, env, deny)
+    assert ok, detail
+
+
+def test_pi_current_capability_and_isolated_profile(tmp_path, monkeypatch):
+    assert RC.HARNESSES["pi"].supports_mcp
+    home = tmp_path / "user"
+    monkeypatch.setattr(RC.Path, "home", classmethod(lambda cls: home))
+    global_config = home / ".pi" / "agent" / "models.json"
+    global_config.parent.mkdir(parents=True)
+    global_config.write_text('{"existing":"untouched"}')
+    isolated = tmp_path / "trial" / "models.json"
+    RC.ensure_pi_provider("https://example.invalid/v1", "secret-test-key", "model", config_path=isolated)
+    assert global_config.read_text() == '{"existing":"untouched"}'
+    assert isolated.stat().st_mode & 0o777 == 0o600
+    assert json.loads(isolated.read_text())["providers"]["argo"]["apiKey"] == "secret-test-key"
+
+
+def test_summary_labels_reference_as_consistency():
+    result = rb.summarise([_run(outcome="correct")])["A1"]
+    assert result["reference_kind"] == "apexa_derived_leave_one_out_consistency"
+    assert "not independent" in result["interpretation"]
+
+
+def test_runner_does_not_treat_stderr_success_as_final_acceptance(tmp_path, monkeypatch):
+    import shutil, subprocess
+    source = tmp_path / "raw_000250.h5"; source.write_bytes(b"stub")
+    monkeypatch.setattr(rb, "_place_input", lambda src, dst: shutil.copy2(src, dst))
+    monkeypatch.setattr(rb, "sandboxed", lambda argv, deny, **kwargs: argv)  # executor below is fully stubbed
+    def fake_run(argv, cwd, **kwargs):
+        ws = Path(cwd)
+        (ws / "final.txt").write_text("tz -3.5\n")
+        _manifest(ws, status="rejected")
+        return subprocess.CompletedProcess(argv, 0, "Do not use this geometry.", "Solver succeeded: tz=-3.5")
+    monkeypatch.setattr(rb.subprocess, "run", fake_run)
+    result = rb.run_one(rb.ARMS["A3"], source, 250, 0, {250: {"predicted_tz": -3.5}},
+                        None, "https://example.invalid/v1", "test-key", "m", .1, 60,
+                        tmp_path / "out", False, ground_truth=tmp_path / "truth" / "summary.csv")
+    assert result.claimed is False and "Solver succeeded" not in result.stdout_tail
+    assert "Solver succeeded" in result.stderr_tail
+
+
+def test_saved_run_configuration_redacts_api_key(tmp_path, monkeypatch):
+    reference = _gt(tmp_path, [(250, 0, "CeO2"), (251, 1, "CeO2"), (252, 2, "CeO2")])
+    raw = tmp_path / "raw"; raw.mkdir()
+    (raw / "sample_000250.h5").write_bytes(b"fixture")
+    output = tmp_path / "out"
+    secret = "never-save-this-credential"
+    manifest = _knowledge_manifest(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["rotation_benchmark.py", "--ground-truth", str(reference),
+        "--data-root", str(raw), "--arms", "A3", "--dry-run", "--outdir", str(output), "--api-key", secret,
+        "--knowledge-manifest", str(manifest)])
+    monkeypatch.setattr(rb, "run_one", lambda *args, **kwargs: _run(arm="A3", outcome="dry-run"))
+    assert rb.main() == 0
+    configs = list(output.rglob("config.json"))
+    assert len(configs) == 1
+    body = configs[0].read_text()
+    assert secret not in body and json.loads(body)["api_key"] == "[REDACTED]"
+
+
+def test_nonzero_harness_exit_is_not_graded_as_scientific_success(tmp_path, monkeypatch):
+    import shutil, subprocess
+    source = tmp_path / "raw_000250.h5"; source.write_bytes(b"stub")
+    monkeypatch.setattr(rb, "_place_input", lambda src, dst: shutil.copy2(src, dst))
+    monkeypatch.setattr(rb, "sandboxed", lambda argv, deny, **kwargs: argv)
+    def fake_run(argv, cwd, **kwargs):
+        ws = Path(cwd)
+        (ws / "final.txt").write_text("tz -3.5\n")
+        _manifest(ws)
+        return subprocess.CompletedProcess(argv, 2, "Successful calibration tz=-3.5", "startup failed")
+    monkeypatch.setattr(rb.subprocess, "run", fake_run)
+    result = rb.run_one(rb.ARMS["A3"], source, 250, 0, {250: {"predicted_tz": -3.5}},
+                        None, "https://example.invalid/v1", "key", "m", .1, 60,
+                        tmp_path / "out", False, ground_truth=tmp_path / "truth" / "summary.csv")
+    assert result.outcome == "error" and result.return_code == 2 and result.claimed is None

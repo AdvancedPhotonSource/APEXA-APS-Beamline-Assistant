@@ -23,6 +23,9 @@ from pathlib import Path
 # Suppress noisy third-party library startup messages
 logging.getLogger("numexpr").setLevel(logging.WARNING)
 logging.getLogger("numexpr.utils").setLevel(logging.WARNING)
+import asyncio
+import math
+import re
 import shlex
 import subprocess
 import stat
@@ -31,9 +34,10 @@ import platform
 import shutil
 import numpy as np
 import logging
-from mcp.server.mcpserver import MCPServer  # mcp>=2: FastMCP was renamed
+from apexa_mcp import TracedMCPServer as MCPServer
 
-from apexa_remote_exec import remote_run, ssh_hint, is_local_host
+from apexa_remote_exec import remote_run, ssh_hint, is_local_host, _SSH_OPTS, _wrap_login
+from apexa_subprocess import run as run_subprocess
 
 # Suppress verbose MCP server logging
 logging.getLogger("mcp").setLevel(logging.WARNING)
@@ -68,18 +72,15 @@ except ImportError:
 # =============================================================================
 
 ALLOWED_COMMANDS = {
-    # Shell interpreters — enables bash -c "..." multi-command inline scripts,
-    # making run_command functionally equivalent to Claude Code's Bash tool.
-    # Real safety guarantee is the motor server's hardware gate, not this list.
+    # Exploratory analysis commands require an operator-enabled, separately
+    # contained analysis identity. This list is not an OS security boundary.
     'bash', 'sh', 'zsh',
     # Basic system commands
     'ls', 'pwd', 'cat', 'head', 'tail', 'less', 'more',
     'grep', 'find', 'wc', 'sort', 'uniq', 'diff', 'sed', 'awk',
     'cp', 'mv', 'mkdir', 'rmdir', 'touch', 'chmod', 'ln', 'readlink',
-    # Deletion (rm/unlink; rmdir above). ENABLED so an APPROVED deletion actually
-    # executes — the real safeguard is the client-side human permission gate in
-    # APEXAClient.execute_tool_call (this server subprocess cannot prompt a human),
-    # not this allowlist. Same spirit as the motor server's hardware gate.
+    # Available only in explicitly enabled exploratory analysis mode. Client
+    # confirmation is an additional UX gate, not filesystem containment.
     'rm', 'unlink',
     'echo', 'date', 'hostname', 'uname', 'whoami', 'env', 'which',
     'file', 'stat', 'tree', 'du', 'df', 'free', 'ps', 'nproc', 'lscpu', 'uptime',
@@ -91,7 +92,7 @@ ALLOWED_COMMANDS = {
     'curl', 'wget', 'ssh', 'scp', 'rsync',
     'python', 'python3', 'pip', 'pip3', 'uv', 'conda', 'git',
     'make', 'cmake', 'gcc', 'g++',
-    'caget', 'caput', 'camonitor', 'cainfo',
+    'caget', 'camonitor', 'cainfo',
 
     # ── FF-HEDM CPU executables ──────────────────────────────────────────────
     'GetHKLListZarr',
@@ -360,7 +361,7 @@ def _validate_segments(command: str) -> tuple:
     return len(blocked) == 0, blocked
 
 
-def is_command_allowed(command: str) -> bool:
+def _legacy_command_allowed(command: str) -> bool:
     """Check that every executable in a pipeline is in ALLOWED_COMMANDS.
 
     For shell interpreters (bash, sh, zsh) called with -c, validates the
@@ -398,6 +399,71 @@ def is_command_allowed(command: str) -> bool:
     # re.split is safe here because we're not inside a bash -c quoted string.
     allowed, _ = _validate_segments(command)
     return allowed
+
+
+# Default command execution is a small argv-only inspection surface. It never
+# invokes a shell, an interpreter, a user-selected executable or a remote host.
+_READ_ONLY_COMMANDS = frozenset({
+    "pwd", "echo", "ls", "cat", "head", "tail", "wc", "du", "df", "hostname", "uname",
+    "whoami", "nproc", "lscpu", "uptime", "readlink", "realpath", "md5sum", "sha256sum",
+})
+_RAW_HARDWARE_WRITE = re.compile(r"(?<![A-Za-z0-9_])(?:caput|pvput)(?![A-Za-z0-9_])", re.IGNORECASE)
+
+
+def _exploratory_enabled() -> bool:
+    return os.environ.get("APEXA_ALLOW_UNSANDBOXED_COMMANDS", "") == "1"
+
+
+def _read_only_argv(command: str):
+    if any(c in command for c in "|&;<>\n\r`$"):
+        return None
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if not parts or _base_cmd(parts[0]) not in _READ_ONLY_COMMANDS:
+        return None
+    name = _base_cmd(parts[0])
+    # Do not run ./ls or a malicious executable named ls from a writable PATH.
+    candidates = [Path(directory) / name for directory in ("/usr/bin", "/bin", "/usr/sbin", "/sbin")]
+    executable = next((p for p in candidates if p.is_file() and os.access(p, os.X_OK)), None)
+    if executable is None:
+        return None
+    if "/" in parts[0] and Path(parts[0]).resolve() not in {p.resolve() for p in candidates if p.exists()}:
+        return None
+    return [str(executable), *parts[1:]]
+
+
+def is_command_allowed(command: str) -> bool:
+    """Apply default inspection policy or explicit exploratory analysis opt-in.
+
+    Even in exploratory mode, raw caput/pvput is refused. Arbitrary Python or
+    shell can still bypass lexical checks: use a separate OS identity with no
+    hardware-write rights. This function is not a sandbox.
+    """
+    if not command or _RAW_HARDWARE_WRITE.search(command):
+        return False
+    if _read_only_argv(command) is not None:
+        return True
+    return _exploratory_enabled() and _legacy_command_allowed(command)
+
+
+def _command_error(command: str, *, remote=False):
+    if _RAW_HARDWARE_WRITE.search(command):
+        detail = "Raw EPICS writes are not available through analysis commands; use the commissioned motor broker."
+    elif not _exploratory_enabled():
+        detail = ("Only simple local read-only commands are enabled. An operator may enable "
+                  "APEXA_ALLOW_UNSANDBOXED_COMMANDS=1 for shell/interpreter/SSH analysis only "
+                  "under an OS identity isolated from EPICS writes and restricted to approved data/output roots.")
+    else:
+        detail = "Command is outside the configured exploratory executable list."
+    return format_result({"success": False, "status": "error", "error_code": "command_policy_denied",
+                          "error": "Remote command disabled" if remote else "Command not allowed", "detail": detail})
+
+
+def _command_timeout(timeout):
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("timeout must be finite and greater than zero")
 
 
 def _get_blocked_commands(command: str) -> list:
@@ -973,201 +1039,79 @@ async def get_file_info(file_path: str) -> str:
 
 @mcp.tool()
 async def run_command(command: str, working_dir: str = None, timeout: int = 120) -> str:
-    """Execute a shell command with full bash capabilities.
+    """Run a bounded local analysis command without blocking the event loop.
 
-    Supports pipes (|), redirections (>, >>), &&, ||, semicolons, subshells,
-    and bash -c "..." multi-command scripts — equivalent to Claude Code's
-    Bash tool for beamline analysis tasks. Every executable in a pipeline
-    is validated against an allowed-command list before execution.
-
-    Use freely for: grep, awk, sed, find, wc, sort, uniq, diff, head, tail,
-    cat, du, stat, ls, python3 scripts, MIDAS executables, and pipelines
-    combining any of the above.
-
-    Args:
-        command: Shell command to execute. Full bash syntax supported.
-                 Examples:
-                   "find /path -name '*.h5' | wc -l"
-                   "grep -n 'Wavelength' params.txt | head -5"
-                   "awk -F, 'NR>1{print $3}' Grains.csv | sort | uniq -c"
-                   "bash -c 'for f in /path/*.h5; do echo $f; done'"
-        working_dir: Working directory (defaults to CWD if not set)
-        timeout: Max execution time in seconds (default: 120)
-
-    Returns:
-        JSON with stdout, stderr, return_code, success flag, working_dir
+    Default: simple argv-only inspection commands (ls, cat, head, wc, etc.).
+    Shell pipelines, interpreters and scientific CLI exploration require the
+    operator's APEXA_ALLOW_UNSANDBOXED_COMMANDS=1 deployment setting and an
+    analysis OS identity without hardware write privileges. caput/pvput are
+    always refused. Timeout/cancellation terminates the owned local process
+    group. Use typed scientific tools for qualified workflows.
     """
     try:
+        _command_timeout(timeout)
         if not is_command_allowed(command):
-            blocked = _get_blocked_commands(command)
-            return format_result({
-                "error": f"Command not allowed: {', '.join(blocked) if blocked else command.split()[0]}",
-                "detail": "Every executable in the pipeline must be in the allowed list.",
-                "allowed_commands": "Use check_environment to see allowed commands"
-            })
-
-        cwd = working_dir if working_dir and Path(working_dir).exists() else None
-
-        # shell=True enables pipes (|), semicolons (;), &&, ||, redirections
-        # (>, >>), and other shell operators.  Security is preserved by
-        # is_command_allowed() which validates every pipeline segment's base
-        # executable against ALLOWED_COMMANDS before reaching this point.
-        result = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=cwd
-        )
-
-        return format_result({
-            "tool": "run_command",
-            "command": command,
-            "return_code": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "success": result.returncode == 0,
-            "working_dir": str(cwd) if cwd else str(Path.cwd())
-        })
-
+            return _command_error(command)
+        cwd = str(Path(working_dir).expanduser().resolve()) if working_dir else None
+        if cwd and not Path(cwd).is_dir():
+            raise ValueError(f"Working directory does not exist: {cwd}")
+        argv = _read_only_argv(command)
+        result = await run_subprocess(argv if argv is not None else command,
+                                      shell=argv is None, timeout=timeout, cwd=cwd)
+        return format_result({"tool": "run_command", "command": command,
+                              "return_code": result.returncode, "stdout": result.stdout,
+                              "stderr": result.stderr, "success": result.returncode == 0,
+                              "status": "completed" if result.returncode == 0 else "error",
+                              "execution_policy": "read_only_argv" if argv else "operator_enabled_analysis",
+                              "working_dir": cwd or str(Path.cwd())})
     except subprocess.TimeoutExpired:
-        return format_result({"error": f"Command timed out after {timeout} seconds"})
-    except Exception as e:
-        return format_result({"error": f"Error executing command: {str(e)}"})
+        return format_result({"success": False, "status": "error", "timed_out": True,
+                              "error": f"Command timed out after {timeout} seconds; local process group terminated"})
+    except Exception as exc:
+        return format_result({"success": False, "status": "error", "error": f"Error executing command: {exc}"})
+
 
 @mcp.tool()
 async def run_remote_command(command: str, host: str = "", remote_dir: str = None,
                              timeout: int = 600, force_ssh: bool = False) -> str:
-    """Execute a shell command on a REMOTE analysis host over SSH.
+    """Run an operator-enabled analysis command over key-based SSH.
 
-    Like run_command, but the command runs on another machine — for running
-    analysis where the beamline data already lives (e.g. `copland`), instead of
-    copying the data to this machine. The command is executed through a remote
-    LOGIN shell (`bash -lc`), so the remote user's PATH/profile is sourced and
-    MIDAS executables resolve exactly as they would in an interactive session
-    there.
-
-    SSH MUST BE KEY-BASED. This runs non-interactively (BatchMode=yes); a
-    password prompt would hang, so instead it fails fast (return_code 255) with
-    an actionable error. Set up once with `ssh-copy-id <user>@<host>`.
-
-    The same allowlist as run_command is applied to `command` before it is sent,
-    so bash/python/MIDAS binaries/ls/rsync/grep/… are permitted and unknown
-    executables are refused — the guardrail travels with the command to the
-    remote host.
-
-    Args:
-        command: Shell command to run on the remote host. Full bash syntax
-                 supported (pipes, &&, redirects). Examples:
-                   "ls -la /gdata/dm/1ID/2026/pokharel_jul26/data/ge5"
-                   "cd /gdata/.../pokharel_jul26 && ff_MIDAS.py -paramFile ff.txt"
-                   "nproc && df -h /gdata"
-        host: Remote host, e.g. "copland" or "user@copland". Defaults to
-              $APEXA_ANALYSIS_HOST, else "copland".
-        remote_dir: Directory to `cd` into on the remote host before running.
-        timeout: Max seconds (default 600; remote analysis can be long).
-        force_ssh: Take the SSH path even when the target is this machine.
-                 Only for verifying key-based login actually works
-                 (`ssh-copy-id`) -- a loopback login shell is a DIFFERENT
-                 environment and a working command may fail there.
-
-    SELF-TARGET: when the resolved host IS this machine, the command runs
-    locally instead of looping back through SSH, and the result says so
-    (`executed_locally: true`). Every other host still goes over SSH -- this
-    collapses one degenerate case, it does not disable remote execution.
-
-    Returns:
-        JSON with stdout, stderr, return_code, success, host, command.
+    Arbitrary remote execution requires APEXA_ALLOW_UNSANDBOXED_COMMANDS=1 and
+    an isolated analysis identity on the target. A self-target uses the local
+    command policy unless force_ssh=True. Cancelling the local SSH transport
+    does not prove the remote process stopped; timed-out jobs need reconciliation.
     """
     try:
+        _command_timeout(timeout)
         target = host or os.environ.get("APEXA_ANALYSIS_HOST", "copland")
-
-        if not is_command_allowed(command):
-            blocked = _get_blocked_commands(command)
-            return format_result({
-                "error": f"Command not allowed: {', '.join(blocked) if blocked else command.split()[0]}",
-                "detail": "Every executable in the remote command must be in the allowed list.",
-                "allowed_commands": "Use check_environment to see allowed commands"
-            })
-
-        # APEXA deployed ON the analysis host resolves $APEXA_ANALYSIS_HOST to the
-        # machine it is already running on and SSHes to itself. That is not merely
-        # a wasted hop: the loopback login shell is a DIFFERENT environment,
-        # typically without the conda/venv activation MIDAS needs, so the command
-        # fails with `command not found` for a binary plainly on PATH in the
-        # process doing the dispatch. Observed on copland 2026-08-26, and
-        # is_local_host() already collapses this case for the typed MIDAS tools
-        # (decide_exec_host) and the FF workflow -- this path was the one left.
-        #
-        # Narrow by construction: ONLY a target that is this machine runs locally.
-        # A real remote host, named explicitly or via $APEXA_ANALYSIS_HOST, still
-        # goes over SSH exactly as before.
+        if not re.fullmatch(r"(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9_][A-Za-z0-9_.-]*", target):
+            raise ValueError("Invalid SSH host; use a configured host or user@host name")
         if is_local_host(target) and not force_ssh:
-            cwd = remote_dir if remote_dir and Path(remote_dir).exists() else None
-            try:
-                r = subprocess.run(command, shell=True, capture_output=True,
-                                   text=True, timeout=timeout, cwd=cwd)
-            except subprocess.TimeoutExpired:
-                return format_result({
-                    "error": f"Command timed out after {timeout} seconds "
-                             f"(ran locally: '{target}' is this machine)"})
-            return format_result({
-                "tool": "run_remote_command",
-                "host": target,
-                "command": command,
-                "remote_dir": remote_dir,
-                "return_code": r.returncode,
-                "stdout": r.stdout,
-                "stderr": r.stderr,
-                "success": r.returncode == 0,
-                "executed_locally": True,
-                "note": (f"'{target}' is this machine, so the command ran here "
-                         f"directly rather than over SSH. The data is already "
-                         f"local -- prefer run_command. Pass force_ssh=True to "
-                         f"exercise the loopback SSH path deliberately."),
-            })
-
-        # Run over SSH via the shared transport (login shell `bash -lc`, BatchMode,
-        # ConnectTimeout, rc==255 = ssh-layer failure). Factored into
-        # apexa_remote_exec so the midas server's per-tool routing shares one
-        # implementation; behavior and response keys here are unchanged.
-        res = remote_run(target, command, remote_dir=remote_dir, timeout=timeout)
-
-        if res.get("timed_out"):
-            return format_result({
-                "error": f"Remote command timed out after {timeout} seconds on '{target}'"
-            })
-
-        # ssh exit 255 = ssh-layer failure (auth/connectivity), not the remote
-        # command's own exit code. Classify it so the agent gets an actionable
-        # message instead of a bare non-zero.
-        if res.get("ssh_failed"):
-            return format_result({
-                "tool": "run_remote_command",
-                "host": target,
-                "command": command,
-                "return_code": 255,
-                "stderr": res.get("stderr", ""),
-                "success": False,
-                "error": ssh_hint(target),
-            })
-
-        return format_result({
-            "tool": "run_remote_command",
-            "host": target,
-            "command": command,
-            "remote_dir": remote_dir,
-            "return_code": res.get("return_code"),
-            "stdout": res.get("stdout", ""),
-            "stderr": res.get("stderr", ""),
-            "success": res.get("success", False),
-        })
-
-    except Exception as e:
-        return format_result({
-            "error": f"Error executing remote command: {str(e)}"
-        })
+            result = json.loads(await run_command(command, working_dir=remote_dir, timeout=timeout))
+            result.update(tool="run_remote_command", host=target, remote_dir=remote_dir, executed_locally=True,
+                          note=f"'{target}' is this machine; prefer run_command. force_ssh=True explicitly tests the SSH path.")
+            return format_result(result)
+        if not _exploratory_enabled() or not is_command_allowed(command):
+            return _command_error(command, remote=True)
+        argv = ["ssh", *_SSH_OPTS, target, _wrap_login(command, remote_dir)]
+        try:
+            result = await run_subprocess(argv, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return format_result({"tool": "run_remote_command", "host": target, "success": False,
+                                  "status": "error", "timed_out": True, "remote_state": "unknown",
+                                  "requires_reconciliation": True,
+                                  "error": f"SSH command timed out after {timeout}s. Local SSH stopped; remote process termination is unverified."})
+        response = {"tool": "run_remote_command", "host": target, "command": command,
+                    "remote_dir": remote_dir, "return_code": result.returncode,
+                    "stdout": result.stdout, "stderr": result.stderr,
+                    "success": result.returncode == 0,
+                    "status": "completed" if result.returncode == 0 else "error",
+                    "cancellation_scope": "local_ssh_transport_only"}
+        if result.returncode == 255:
+            response.update(error=ssh_hint(target), remote_state="unknown", requires_reconciliation=True)
+        return format_result(response)
+    except Exception as exc:
+        return format_result({"success": False, "status": "error", "error": f"Error executing remote command: {exc}"})
 
 @mcp.tool()
 async def check_environment() -> str:
@@ -1190,7 +1134,9 @@ async def check_environment() -> str:
                 "home_dir": str(Path.home()),
                 "python_executable": sys.executable
             },
-            "available_commands": sorted(list(ALLOWED_COMMANDS)),
+            "available_commands": sorted(ALLOWED_COMMANDS if _exploratory_enabled() else _READ_ONLY_COMMANDS),
+            "command_policy": "operator_enabled_analysis" if _exploratory_enabled() else "read_only_argv",
+            "command_policy_note": "Exploratory shell is not a sandbox; analysis identity must not have hardware write rights.",
             "optional_libraries": {
                 "scipy": SCIPY_AVAILABLE,
                 "fabio": SCIPY_AVAILABLE

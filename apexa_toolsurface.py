@@ -2,9 +2,9 @@
 
 The problem
 -----------
-APEXA registers 81 tools (11 core + 57 MIDAS + 13 motor). The default unified
-agent has ``tool_names=[]``, so ``_filter_tools`` returns all of them and **every
-single request carries all 81 JSON schemas**. That is a large fixed cost on every
+APEXA discovers configured tools at connection time. An unrestricted unified
+agent with ``tool_names=[]`` would pass every discovered schema on each request.
+The count depends on configured servers and host capabilities. That is a large fixed cost on every
 turn, it pushes the genuinely relevant tools down among dozens of irrelevant ones,
 and it makes the request prefix churn.
 
@@ -51,6 +51,7 @@ except Exception:  # pragma: no cover - defensive
 # table for the many turns that have nothing to do with motion. They remain fully
 # reachable via search_tools/load_tools.
 CORE_TOOLS: tuple[str, ...] = (
+    "list_scientific_workflows", "prepare_scientific_workflow", "get_scientific_workflow",
     # core server — primitives
     "list_directory",
     "read_file",
@@ -85,6 +86,8 @@ _DOMAIN_HINTS: Dict[str, tuple[str, ...]] = {
     "plot":      ("plot", "visualize", "view", "image", "heatmap", "contour", "render"),
     "pdf":       ("pdf", "pair distribution", "g(r)", "structure factor"),
     "report":    ("report", "summary", "verify", "diagnostics", "html"),
+    "synth":     ("synth", "synthesis", "in-situ", "heating", "anneal", "phase fraction",
+                  "kinetics", "avrami", "jmak", "temperature step", "cathode"),
 }
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")

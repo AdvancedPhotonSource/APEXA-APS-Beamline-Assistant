@@ -12,9 +12,11 @@ def science_gateway(base_url: str, *, transport=None) -> APIRouter:
             or parsed.path not in ("", "/")):
         raise ValueError("APEXA_SCIENCE_BASE_URL must be an HTTP loopback SSH tunnel, e.g. http://127.0.0.1:8020")
     router = APIRouter(prefix="/api/science")
-    allowed = {"structure": "GET", "report": "GET", "sequence": "POST", "frame": "POST", "rings": "POST"}
+    allowed = {"structure": "GET", "report": "GET", "image": "GET",
+               "sequence": "POST", "frame": "POST", "rings": "POST",
+               "gsas2/figures": "GET", "refinement/status": "GET", "refinement/evidence": "GET"}
 
-    @router.api_route("/{operation}", methods=["GET", "POST"])
+    @router.api_route("/{operation:path}", methods=["GET", "POST"])
     async def forward(operation: str, request: Request):
         if allowed.get(operation) != request.method:
             raise HTTPException(404, "Unknown scientific viewer operation")
@@ -27,7 +29,8 @@ def science_gateway(base_url: str, *, transport=None) -> APIRouter:
                     f"{base_url.rstrip('/')}/api/science/{operation}",
                     params=request.query_params, content=body,
                     headers={"Content-Type": "application/json"})
-            return Response(result.content, status_code=result.status_code, media_type="application/json")
+            media_type = result.headers.get("content-type", "application/json")
+            return Response(result.content, status_code=result.status_code, media_type=media_type)
         except httpx.HTTPError as exc:
             raise HTTPException(502, "Remote scientific viewer unavailable. Check the SSH tunnel and remote viewer service; local files were not used as a fallback.") from exc
     return router

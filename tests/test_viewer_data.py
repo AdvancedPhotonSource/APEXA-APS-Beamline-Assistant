@@ -72,7 +72,7 @@ def test_dark_mask_never_mutate_raw_or_include_excluded_pixels():
 
 
 def test_structure_symmetry_and_bragg_geometry():
-    cif = str(Path(__file__).resolve().parents[1] / "Ni_mp-23.cif")
+    cif = str(Path(__file__).resolve().parent / "data/nickel_fcc.cif")
     structure = structure_payload(cif)
     assert len(structure["atoms"]) == 4  # FCC symmetry expands the single 4a site
     assert {a["element"] for a in structure["atoms"]} == {"Ni"}

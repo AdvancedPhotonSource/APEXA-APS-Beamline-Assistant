@@ -14,6 +14,7 @@ import tempfile
 import io
 import base64
 import time
+import threading
 from contextlib import asynccontextmanager
 
 # Force UTF-8 stdio so the server runs cleanly on Windows, whose console defaults
@@ -40,13 +41,44 @@ import uvicorn
 
 # Import your MCP client
 from argo_mcp_client import APEXAClient
+from apexa_outcomes import result_response
+from apexa_web_security import (SingleOperatorBoundary, allowed_origins,
+                                authorize_data_path, save_upload)
+from apexa_observability import TraceMiddleware, trace_store, span, current_ids
+from apexa_workflow_api import workflow_router, close_workflow_operations
+
+runtime_metrics = {"event_loop_lag_ms": None, "peak_event_loop_lag_ms": None,
+                   "rss_bytes": None}
+active_chat_tasks = set()
+
+
+async def monitor_runtime():
+    import psutil
+    process = psutil.Process()
+    loop = asyncio.get_running_loop()
+    while True:
+        expected = loop.time() + 1
+        await asyncio.sleep(1)
+        lag = max(0.0, (loop.time() - expected) * 1000)
+        runtime_metrics.update(event_loop_lag_ms=round(lag, 3),
+            peak_event_loop_lag_ms=max(runtime_metrics['peak_event_loop_lag_ms'] or 0, round(lag, 3)),
+            rss_bytes=process.memory_info().rss)
 
 @asynccontextmanager
 async def lifespan(app):
     await initialize_mcp_client()
+    monitor = asyncio.create_task(monitor_runtime())
     try:
         yield
     finally:
+        monitor.cancel()
+        await asyncio.gather(monitor, return_exceptions=True)
+        turns = list(active_chat_tasks)
+        for task in turns:
+            task.cancel()
+        await asyncio.gather(*turns, return_exceptions=True)
+        await close_workflow_operations()
+        await asyncio.to_thread(trace_store().flush)
         if mcp_client:
             await mcp_client.cleanup()
 
@@ -54,6 +86,9 @@ async def lifespan(app):
 app = FastAPI(title="Beamline Assistant API", version="0.1.0", lifespan=lifespan)
 from apexa_session_api import router as session_router
 app.include_router(session_router)
+from apexa_runtime_api import router as runtime_router
+app.include_router(runtime_router)
+app.include_router(workflow_router(lambda: mcp_client))
 from apexa_viewer_api import router as science_viewer_router
 # CIFs fetched by local MP/COD tools remain local even when detector data is remote.
 app.include_router(science_viewer_router, prefix="/local")
@@ -71,11 +106,13 @@ else:
 # CORS middleware for web UI
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TraceMiddleware)
+app.add_middleware(SingleOperatorBoundary)
 
 # Global MCP client instance
 mcp_client: Optional[APEXAClient] = None
@@ -86,6 +123,33 @@ upload_dir.mkdir(exist_ok=True)
 image_cache: Dict[str, np.ndarray] = {}
 image_paths: Dict[str, str] = {}  # Maps file_id to actual file path
 calibration_cache: Dict[str, Dict[str, Any]] = {}
+_image_cache_lock = threading.Lock()
+
+
+def _store_image(file_id: str, image: np.ndarray, path: str):
+    """Bound the legacy viewer cache; quantitative inputs remain on disk."""
+    budget = max(1, int(os.environ.get("APEXA_IMAGE_CACHE_BYTES", str(512 * 1024 * 1024))))
+    if image.nbytes > budget:
+        raise HTTPException(413, "Image exceeds the viewer cache budget; use the sequence viewer")
+    with _image_cache_lock:
+        image_cache.pop(file_id, None)
+        used = sum(array.nbytes for array in image_cache.values())
+        while image_cache and used + image.nbytes > budget:
+            oldest = next(iter(image_cache))
+            used -= image_cache.pop(oldest).nbytes
+            image_paths.pop(oldest, None)
+        image_cache[file_id] = image
+        image_paths[file_id] = path
+
+
+def _require_tool(name: str):
+    if mcp_client is None or name not in getattr(mcp_client, "_tool_registry", {}):
+        raise HTTPException(503, f"Tool '{name}' is unavailable in the connected registry")
+
+
+async def _call_scientific_tool(name: str, arguments: dict):
+    _require_tool(name)
+    return result_response(await mcp_client.execute_tool_call(name, arguments))
 
 
 # ==================== Image Processing Functions ====================
@@ -464,6 +528,7 @@ async def initialize_mcp_client():
                 {"name": "core",  "script_path": "./beamline_core_server.py"},
                 {"name": "midas", "script_path": "./midas_comprehensive_server.py"},
                 {"name": "motor", "script_path": "./epics_motor_server.py"},
+                {"name": "gsas2", "script_path": "./gsas2_server.py"},
             ]
 
         await mcp_client.connect_to_multiple_servers(server_configs)
@@ -531,30 +596,10 @@ async def serve_test_viewer():
 
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """Handle file upload"""
-    try:
-        # Generate unique filename
-        file_id = str(uuid.uuid4())
-        file_extension = Path(file.filename).suffix
-        saved_filename = f"{file_id}{file_extension}"
-        file_path = upload_dir / saved_filename
-        
-        # Save uploaded file
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        return {
-            "success": True,
-            "file_id": file_id,
-            "filename": file.filename,
-            "saved_path": str(file_path),
-            "size": len(content),
-            "type": file.content_type
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+    """Store a bounded upload under a generated filename."""
+    path, size = await save_upload(file, upload_dir)
+    return {"success": True, "file_id": path.stem, "filename": file.filename,
+            "saved_path": str(path), "size": size, "type": file.content_type}
 
 @app.post("/api/analyze")
 async def analyze_file(request: Dict[str, Any]):
@@ -564,6 +609,8 @@ async def analyze_file(request: Dict[str, Any]):
 
     # Extract parameters from request
     file_id = request.get("file_id")
+    if not isinstance(file_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", file_id):
+        raise HTTPException(422, "Invalid upload ID")
     analysis_type = request.get("analysis_type", "comprehensive")
     parameters = request.get("parameters")
     
@@ -840,6 +887,15 @@ async def websocket_endpoint(websocket: WebSocket):
     # receive loop resolves it when the browser replies `confirm_response`. The
     # frontend (chatStore.ts + ConfirmModal) already implements this contract.
     pending_confirms: Dict[str, asyncio.Future] = {}
+    socket_turns = set()
+
+    def turn_done(task):
+        active_chat_tasks.discard(task)
+        socket_turns.discard(task)
+        # Retrieve exceptions from disconnected transports; the trace records
+        # failure without printing the scientist's request or arguments.
+        if not task.cancelled():
+            task.exception()
 
     async def _web_permission(tool_name: str, arguments: dict, command: str) -> bool:
         """Prompt the browser to approve a file deletion; block until it answers.
@@ -867,6 +923,10 @@ async def websocket_endpoint(websocket: WebSocket):
             pending_confirms.pop(cid, None)
 
     async def _handle_chat(message_data):
+        with span("websocket.turn", role="single_operator"):
+            await _handle_chat_inner(message_data)
+
+    async def _handle_chat_inner(message_data):
         """Process one chat message end-to-end (context build → run_query → reply).
 
         Launched as a task so the receive loop keeps reading — that lets a
@@ -876,67 +936,10 @@ async def websocket_endpoint(websocket: WebSocket):
         if True:  # noqa: retains original block indentation after extraction to a task fn
                 if mcp_client:
                     try:
-                        # Build context about currently loaded images
-                        context = ""
-                        if image_cache or calibration_cache:
-                            context += f"\n\n==== IMPORTANT CONTEXT ====\n"
-                            context += "The user has loaded files in the image viewer. When they say 'this image' or 'the uploaded file', they mean:\n\n"
-
-                        if image_cache:
-                            context += f"LOADED DIFFRACTION IMAGES (already open in the viewer):\n"
-                            for file_id in image_cache.keys():
-                                file_path = image_paths.get(file_id, "unknown")
-                                arr = image_cache[file_id]
-                                img_shape = arr.shape
-                                try:
-                                    finite = arr[np.isfinite(arr)]
-                                    imn, imx, imean = float(finite.min()), float(finite.max()), float(finite.mean())
-                                    stat_line = f"    Intensity: min {imn:.0f}, max {imx:.0f}, mean {imean:.1f}\n"
-                                except Exception:
-                                    stat_line = ""
-                                context += f"  • File: {file_id}\n"
-                                context += f"    Full path: {file_path}\n"
-                                context += f"    Size: {img_shape[1]}x{img_shape[0]} pixels\n"
-                                context += stat_line
-                                context += f"    USE THIS FILE PATH when running MIDAS tools\n\n"
-                            context += (
-                                "HOW TO ANSWER ABOUT A LOADED IMAGE:\n"
-                                "• If the user asks an INFORMATIONAL question ('what's this image?', "
-                                "'is it saturated?', 'what calibrant?'), ANSWER IN TEXT (1–3 sentences) "
-                                "using the size/intensity above; call inspect_dataset_file ONLY if you "
-                                "need frame count / omega / geometry. Do NOT launch a GUI viewer "
-                                "(run_midas_viewer) and do NOT call list_directory for this — the image "
-                                "is already shown in the viewer panel.\n"
-                                "• Launch run_midas_viewer ONLY when the user explicitly says open / view / "
-                                "show / overlay / plot.\n\n"
-                            )
-
-                        if calibration_cache:
-                            context += f"LOADED CALIBRATION FILES:\n"
-                            for cal_id, cal_data in calibration_cache.items():
-                                rings = cal_data.get('rings', [])
-                                center = cal_data.get('beam_center', [0, 0])
-                                wavelength = cal_data.get('wavelength', 0)
-                                distance = cal_data.get('detector_distance', 0)
-                                context += f"  • Calibration: {cal_id}\n"
-                                context += f"    Beam center: ({center[0]:.1f}, {center[1]:.1f})\n"
-                                context += f"    Number of rings: {len(rings)}\n"
-                                if wavelength > 0:
-                                    context += f"    Wavelength: {wavelength:.4f} Å\n"
-                                if distance > 0:
-                                    context += f"    Detector distance: {distance:.1f} mm\n"
-                                if rings:
-                                    context += f"    Ring radii: {', '.join([f'{r:.1f}' for r in rings[:5]])} pixels\n"
-                                context += "\n"
-
-                        # Append context to user message
-                        user_message = message_data["message"] + WEB_CANVAS_CONTEXT + selected_canvas_context(message_data.get("viewer_context"))
-                        if context:
-                            context += "When the user asks to analyze 'this image' or 'the uploaded file', use the file path(s) shown above.\n"
-                            context += "==== END CONTEXT ====\n"
-                            user_message += context
-
-                        print(f"Sending to AI with context: {user_message[:500]}...")  # Debug log
+                        # Only explicitly selected dataset metadata belongs to this turn.
+                        # Global caches are transport caches, not session context.
+                        user_message = (message_data["message"] + WEB_CANVAS_CONTEXT
+                                        + selected_canvas_context(message_data.get("viewer_context")))
 
                         async def _on_tool_start(tool_name: str, arguments: dict):
                             # Push a "tool starting" event so the browser shows a live
@@ -945,6 +948,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             try:
                                 await manager.send_personal_message({
                                     "type": "tool_start",
+                                    "trace_id": current_ids().get("trace_id"),
                                     "thread_id": message_data.get("thread_id"),
                                     "tool": tool_name,
                                     "args": arguments,
@@ -957,6 +961,7 @@ async def websocket_endpoint(websocket: WebSocket):
                                 clean = _ansi_re.sub('', result)
                                 await manager.send_personal_message({
                                     "type": "tool_result",
+                                    "trace_id": current_ids().get("trace_id"),
                                     "thread_id": message_data.get("thread_id"),
                                     "tool": tool_name,
                                     "args": arguments,          # for the UI "in:" view
@@ -971,7 +976,10 @@ async def websocket_endpoint(websocket: WebSocket):
                         # Serialize activate→run→save under the client's thread
                         # lock (one shared orchestrator, single beamline user).
                         thread_id = message_data.get("thread_id")
+                        queued_at = time.monotonic()
                         async with mcp_client._web_thread_lock:
+                            from apexa_observability import emit
+                            emit("turn.admitted", queue_wait_ms=(time.monotonic() - queued_at) * 1000)
                             await mcp_client.activate_web_thread(thread_id)
                             if message_data.get("model"):
                                 mcp_client.selected_model = message_data["model"]
@@ -996,6 +1004,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             gate = None
                         await manager.send_personal_message({
                             "type": "chat_response",
+                            "trace_id": current_ids().get("trace_id"),
                             "thread_id": message_data.get("thread_id"),
                             "message": clean_response,
                             "awaiting_input": bool(gate),
@@ -1030,7 +1039,7 @@ async def websocket_endpoint(websocket: WebSocket):
             except (ValueError, TypeError):
                 await manager.send_personal_message({"type": "error", "message": "Invalid WebSocket message; expected a JSON object."}, websocket)
                 continue
-            print(f"Received WebSocket message: {message_data}")
+            # Message contents belong to the session, not operational logs.
 
             mtype = message_data.get("type")
             # Handle different message types
@@ -1038,7 +1047,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Fire-and-forget so the receive loop keeps reading — required so a
                 # `confirm_response` (deletion approval) can arrive and resolve the
                 # permission Future while this query is still running.
-                asyncio.create_task(_handle_chat(message_data))
+                if socket_turns or len(active_chat_tasks) >= 16:
+                    await manager.send_personal_message({"type": "error",
+                        "thread_id": message_data.get("thread_id"),
+                        "message": "A turn is already pending or the server queue is full. Wait for it to finish."}, websocket)
+                    continue
+                task = asyncio.create_task(_handle_chat(message_data))
+                socket_turns.add(task)
+                active_chat_tasks.add(task)
+                task.add_done_callback(turn_done)
 
             elif mtype == "confirm_response":
                 # Browser answered a `confirm_required` prompt (see _web_permission).
@@ -1076,16 +1093,47 @@ async def websocket_endpoint(websocket: WebSocket):
 async def get_status():
     """Get server status"""
     from apexa_network import tier
+    orchestrator = getattr(mcp_client, "orchestrator", None)
+    workflow = getattr(orchestrator, "_ffhedm", None)
     return {
         "status": "running",
-        "mcp_client_connected": mcp_client is not None,
+        "readiness": runtime_readiness(),
+        "telemetry": {**trace_store().status(), **runtime_metrics},
+        "mcp_client_connected": bool(mcp_client and mcp_client.sessions),
+        "deployment_mode": "single_operator",
+        "workflow_mode": (getattr(getattr(mcp_client, "orchestrator", None), "_workflow_mode", "") or "agent"),
+        "shared_workflow_engine": "langgraph",
+        "shared_workflow_durability": ("sqlite" if getattr(getattr(mcp_client, '_scientific_workflows', None), '_app', None) is not None else "not_initialized"),
+        "checkpoint_durability": getattr(workflow, "durability", "not_initialized"),
+        "checkpoint_error": getattr(workflow, "_checkpoint_error", None),
         "connected_servers": list(mcp_client.sessions.keys()) if mcp_client else [],
         "active_connections": len(manager.active_connections),
+        "active_chat_turns": len(active_chat_tasks),
         "network_tier": tier(),
         "science_location": "SSH tunnel" if os.environ.get("APEXA_SCIENCE_BASE_URL") else "local",
         "upload_directory": str(upload_dir),
         "available_models": list(mcp_client.available_models.keys()) if mcp_client else []
     }
+
+
+def runtime_readiness():
+    required = {name.strip() for name in os.environ.get("APEXA_REQUIRED_SERVERS", "core,midas").split(',') if name.strip()}
+    connected = set(getattr(mcp_client, "sessions", {}))
+    missing = sorted(required - connected)
+    return {"ready": bool(connected) and not missing, "required_servers": sorted(required),
+            "missing_servers": missing, "engine_qualification": "not_verified",
+            "remote_data_host": "not_probed" if os.environ.get("APEXA_SCIENCE_BASE_URL") else "not_configured"}
+
+
+@app.get('/api/health/live')
+async def health_live():
+    return {"live": True}
+
+
+@app.get('/api/health/ready')
+async def health_ready():
+    result = runtime_readiness()
+    return JSONResponse(result, status_code=200 if result['ready'] else 503)
 
 @app.post("/api/feedback")
 async def post_feedback(payload: dict = Body(...)):
@@ -1169,10 +1217,13 @@ async def list_uploaded_files():
     return {"files": files}
 
 @app.get("/api/browse")
-def browse_directory(path: str = ".", show_hidden: bool = False):
-    """Browse directories for the file browser UI"""
+def browse_directory(path: str = ".", show_hidden: bool = False,
+                     offset: int = 0, limit: int = 100):
+    """Browse a stable page; filters apply before pagination."""
+    if offset < 0 or not 1 <= limit <= 500:
+        raise HTTPException(422, "offset must be nonnegative and limit must be 1–500")
     try:
-        dir_path = Path(path).expanduser().resolve()
+        dir_path = authorize_data_path(path)
         if not dir_path.exists():
             raise HTTPException(status_code=404, detail=f"Path not found: {path}")
         if not dir_path.is_dir():
@@ -1180,18 +1231,19 @@ def browse_directory(path: str = ".", show_hidden: bool = False):
 
         entries = []
         try:
-            items = sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+            items = sorted(
+                (p for p in dir_path.iterdir() if show_hidden or not p.name.startswith('.')),
+                key=lambda p: (not p.is_dir(), p.name.lower(), p.name))
         except PermissionError:
             raise HTTPException(status_code=403, detail="Permission denied")
 
-        # Limit to prevent large directory listings
+        # Only stat the requested page. Directory membership/order is a live
+        # view, so clients should refresh after filesystem mutations.
         DIFFRACTION_EXTS = {'.tif', '.tiff', '.ge', '.ge2', '.ge3', '.ge4', '.ge5',
                            '.h5', '.hdf5', '.nxs', '.zip', '.csv', '.dat', '.xy',
                            '.txt', '.bin', '.npy', '.mic', '.map'}
 
-        for item in items[:500]:
-            if not show_hidden and item.name.startswith('.'):
-                continue
+        for item in items[offset:offset + limit]:
             try:
                 stat = item.stat()
                 entry = {
@@ -1212,6 +1264,11 @@ def browse_directory(path: str = ".", show_hidden: bool = False):
             "path": str(dir_path),
             "parent": str(dir_path.parent) if dir_path != dir_path.parent else None,
             "entries": entries,
+            "offset": offset,
+            "limit": limit,
+            "total": len(items),
+            "has_more": offset + limit < len(items),
+            "next_offset": offset + limit if offset + limit < len(items) else None,
         }
     except HTTPException:
         raise
@@ -1223,7 +1280,7 @@ def read_csv_data(path: str, max_rows: int = 100000):
     """Read CSV/DAT/XY file and return as JSON for Plotly rendering"""
     import pandas as pd
     try:
-        file_path = Path(path).expanduser().resolve()
+        file_path = authorize_data_path(path)
         if not file_path.exists():
             raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
@@ -1268,14 +1325,13 @@ def read_csv_data(path: str, max_rows: int = 100000):
 def load_viewer_image_by_path(path: str = Form(...)):
     """Load an image from a filesystem path (for file browser integration)"""
     try:
-        file_path = Path(path).expanduser().resolve()
+        file_path = authorize_data_path(path)
         if not file_path.exists():
             raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
         img = load_diffraction_image(str(file_path))
         file_id = f"browse_{file_path.stem}_{uuid.uuid4().hex[:6]}"
-        image_cache[file_id] = img
-        image_paths[file_id] = str(file_path)
+        _store_image(file_id, img, str(file_path))
 
         # Generate preview
         preview = apply_contrast(img)
@@ -1308,42 +1364,22 @@ async def get_viewer_status():
 
 @app.post("/api/viewer/load")
 async def load_viewer_image(file: UploadFile = File(...)):
-    """Load image for viewer with proper handling"""
+    """Load a confined upload without blocking the request loop."""
+    path, _ = await save_upload(file, upload_dir)
     try:
-        content = await file.read()
-        temp_path = upload_dir / file.filename
-        with open(temp_path, "wb") as f:
-            f.write(content)
-
-        img = load_diffraction_image(str(temp_path))
-        file_id = file.filename
-        image_cache[file_id] = img
-        image_paths[file_id] = str(temp_path)  # Store the file path
-
-        stats = {
-            "shape": list(img.shape),
-            "dtype": str(img.dtype),
-            "min": float(img.min()),
-            "max": float(img.max()),
-            "mean": float(img.mean()),
-            "std": float(img.std())
-        }
-
-        # Debug: Log what we're caching
-        print(f"[DEBUG] Loaded image: file_id={file_id}, dtype={img.dtype}, shape={img.shape}, min={img.min()}, max={img.max()}")
-
-        img_preview = apply_contrast(img)
-        preview_base64 = image_to_base64(img_preview)
-
-        return JSONResponse({
-            "success": True,
-            "file_id": file_id,
-            "stats": stats,
-            "preview": preview_base64
-        })
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        img = await asyncio.to_thread(load_diffraction_image, str(path))
+        stats = await asyncio.to_thread(_safe_stats, img)
+        preview = await asyncio.to_thread(lambda: image_to_base64(apply_contrast(img)))
+    except Exception as exc:
+        path.unlink(missing_ok=True)
+        raise HTTPException(422, f"Invalid image: {exc}") from exc
+    file_id = path.stem
+    try:
+        _store_image(file_id, img, str(path))
+    except HTTPException:
+        path.unlink(missing_ok=True)
+        raise
+    return {"success": True, "file_id": file_id, "stats": stats, "preview": preview}
 
 
 @app.post("/api/viewer/adjust")
@@ -1431,25 +1467,16 @@ def get_viewer_azimuthal_profile(
 
 @app.post("/api/viewer/load_calibration")
 async def load_calibration_file(file: UploadFile = File(...)):
-    """Load MIDAS calibration file and cache it"""
+    """Load a confined calibration upload."""
+    path, _ = await save_upload(file, upload_dir)
     try:
-        content = await file.read()
-        temp_path = upload_dir / file.filename
-        with open(temp_path, "wb") as f:
-            f.write(content)
-
-        calibration = load_midas_calibration(str(temp_path))
-        file_id = file.filename
-        calibration_cache[file_id] = calibration
-
-        return JSONResponse({
-            "success": True,
-            "file_id": file_id,
-            "calibration": calibration
-        })
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        calibration = await asyncio.to_thread(load_midas_calibration, str(path))
+    except Exception as exc:
+        path.unlink(missing_ok=True)
+        raise HTTPException(422, f"Invalid calibration file: {exc}") from exc
+    calibration_cache[path.stem] = calibration
+    image_paths[path.stem] = str(path)
+    return {"success": True, "file_id": path.stem, "calibration": calibration}
 
 
 @app.get("/api/viewer/colormaps")
@@ -1540,108 +1567,45 @@ async def auto_calibrate(
     save_plots_hdf: Optional[str] = Form(None),
     mask_file: Optional[UploadFile] = File(None)
 ):
-    """Run MIDAS auto-calibration on uploaded image"""
-    try:
-        # Get the image file path
-        if image_file_id not in image_paths:
-            raise HTTPException(status_code=404, detail="Image file not found")
-
-        image_path = image_paths[image_file_id]
-
-        # Read the actual image dimensions
-        img = load_diffraction_image(image_path)
-        nr_pixels_y, nr_pixels_z = img.shape[:2] if len(img.shape) >= 2 else (img.shape[0], img.shape[0])
-
-        # Create a parameter file
-        param_file = upload_dir / "calib_params_temp.txt"
-        with open(param_file, 'w') as f:
-            f.write(f"SpaceGroup {space_group}\n")
-            f.write(f"LatticeParameter {lattice_a} {lattice_b} {lattice_c} {lattice_alpha} {lattice_beta} {lattice_gamma}\n")
-            f.write(f"px {px}\n")
-            f.write(f"Wavelength {wavelength}\n")
-            f.write(f"tx {tx}\n")
-            f.write(f"ty {ty}\n")
-            f.write(f"tz {tz}\n")
-            f.write(f"NrPixelsY {nr_pixels_y}\n")
-            f.write(f"NrPixelsZ {nr_pixels_z}\n")
-            f.write(f"ImTransOpt {im_trans_opt}\n")
-            f.write(f"BadPxIntensity {bad_px_intensity}\n")
-            f.write(f"GapIntensity {gap_intensity}\n")
-
-        # Save mask file if provided
-        mask_path = None
-        if mask_file:
-            mask_path = upload_dir / mask_file.filename
-            with open(mask_path, "wb") as f:
-                f.write(await mask_file.read())
-
-        # Prepare AutoCalibrateZarr command
-        import subprocess
-        import sys
-
-        # Import find_midas_python and get_midas_env from midas_comprehensive_server
-        sys.path.insert(0, str(Path(__file__).parent))
-        from midas_comprehensive_server import find_midas_python, get_midas_env
-
-        # Find AutoCalibrateZarr.py
-        midas_path = Path.home() / "opt" / "MIDAS" / "utils" / "AutoCalibrateZarr.py"
-        if not midas_path.exists():
-            midas_path = Path("/Users/b324240/Git/MIDAS/utils/AutoCalibrateZarr.py")
-
-        if not midas_path.exists():
-            raise HTTPException(status_code=500, detail="AutoCalibrateZarr.py not found")
-
-        # Use MIDAS Python environment and environment variables
-        midas_python = find_midas_python()
-        midas_env = get_midas_env()
-
-        cmd = [
-            midas_python,
-            str(midas_path),
-            "-dataFN", str(image_path),
-            "-ConvertFile", str(convert_file),
-            "-paramFN", str(param_file),
-            "-LsdGuess", str(lsd_guess),
-            "-StoppingStrain", str(stopping_strain),
-            "-MakePlots", str(make_plots),
-            "-ImTransOpt", str(im_trans_opt),
-            "-BadPxIntensity", str(bad_px_intensity),
-            "-GapIntensity", str(gap_intensity)
-        ]
-
-        # Add BC guess if provided
-        if bc_guess_x != 0.0 or bc_guess_y != 0.0:
-            cmd.extend(["-BCGuess", str(bc_guess_x), str(bc_guess_y)])
-
-        # Add SavePlotsHDF if specified
-        if save_plots_hdf:
-            cmd.extend(["-SavePlotsHDF", str(upload_dir / save_plots_hdf)])
-
-        # Run calibration with MIDAS environment
-        result = await asyncio.to_thread(subprocess.run, cmd, capture_output=True, text=True, timeout=600, env=midas_env)
-
-        # Find refined parameters file
-        refined_params = upload_dir / "refined_MIDAS_params.txt"
-        if not refined_params.exists():
-            # Try in current directory
-            refined_params = Path("refined_MIDAS_params.txt")
-
-        return JSONResponse({
-            "success": result.returncode == 0,
-            "output_file": str(refined_params) if refined_params.exists() else None,
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        })
-
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=500, detail="Calibration timed out after 10 minutes")
-    except Exception as e:
-        import traceback
-        return JSONResponse({
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        })
+    """Route explicit calibration metadata through the canonical scientific adapter."""
+    _require_tool("midas_auto_calibrate")
+    if image_file_id not in image_paths:
+        raise HTTPException(404, "Image file not found")
+    if mask_file is not None:
+        raise HTTPException(422, "This calibration adapter cannot yet verify an uploaded mask. No calibration was run; use a qualified masked-input recipe.")
+    values = [lattice_a, lattice_b, lattice_c, lattice_alpha, lattice_beta, lattice_gamma,
+              lsd, lsd_guess, bc_x, bc_y, bc_guess_x, bc_guess_y, px, wavelength,
+              tx, ty, tz, stopping_strain, bad_px_intensity, gap_intensity]
+    if not all(np.isfinite(v) for v in values) or min(px, wavelength, lsd_guess, stopping_strain) <= 0:
+        raise HTTPException(422, "Calibration geometry must be finite with positive pixel size, wavelength, distance and strain threshold")
+    if not 1 <= space_group <= 230 or min(lattice_a, lattice_b, lattice_c) <= 0:
+        raise HTTPException(422, "Invalid calibrant space group or lattice parameters")
+    image_path = str(authorize_data_path(image_paths[image_file_id]))
+    img = await asyncio.to_thread(load_diffraction_image, image_path)
+    height, width = img.shape[:2]
+    run_dir = authorize_data_path(upload_dir) / ("calibration_" + uuid.uuid4().hex)
+    run_dir.mkdir(parents=True)
+    param_file = run_dir / "input_params.txt"
+    params = {
+        "SpaceGroup": space_group,
+        "LatticeParameter": f"{lattice_a} {lattice_b} {lattice_c} {lattice_alpha} {lattice_beta} {lattice_gamma}",
+        "px": px, "Wavelength": wavelength, "Lsd": lsd_guess,
+        "BC": f"{bc_x} {bc_y}", "tx": tx, "ty": ty, "tz": tz,
+        "NrPixelsY": width, "NrPixelsZ": height, "ImTransOpt": im_trans_opt,
+        "BadPxIntensity": bad_px_intensity, "GapIntensity": gap_intensity,
+    }
+    await asyncio.to_thread(param_file.write_text, "".join(f"{key} {value}\n" for key, value in params.items()))
+    result = await _call_scientific_tool("midas_auto_calibrate", {
+        "image_file": image_path, "parameters_file": str(param_file), "template_param_file": str(param_file),
+        "output_dir": str(run_dir), "lsd_guess": lsd_guess,
+        "bc_x_guess": bc_guess_x if bc_guess_x != 0 else bc_x,
+        "bc_y_guess": bc_guess_y if bc_guess_y != 0 else bc_y,
+        "px_um": px, "wavelength_angstrom": wavelength, "image_transform": str(im_trans_opt),
+        "make_plots": make_plots, "strain_gate_ue": stopping_strain * 1e6,
+        "save_plots_hdf": str(run_dir / "calibration_plots.h5") if save_plots_hdf else "",
+    })
+    result["run_directory"] = str(run_dir)
+    return result
 
 
 @app.post("/api/midas_integrate")
@@ -1671,9 +1635,7 @@ async def midas_integrate(
             param_file_path = image_paths[param_file_id]
         elif param_file_upload:
             # Save uploaded parameter file
-            param_file_path = upload_dir / param_file_upload.filename
-            with open(param_file_path, "wb") as f:
-                f.write(await param_file_upload.read())
+            param_file_path, _ = await save_upload(param_file_upload, upload_dir)
 
         if not param_file_path or not Path(param_file_path).exists():
             raise HTTPException(status_code=400, detail="Parameter file required")
@@ -1682,6 +1644,7 @@ async def midas_integrate(
         result_folder_path = Path(result_folder)
         if not result_folder_path.is_absolute():
             result_folder_path = upload_dir / result_folder
+        result_folder_path = authorize_data_path(result_folder_path)
         result_folder_path.mkdir(parents=True, exist_ok=True)
 
         # Import find_midas_python and get_midas_env from midas_comprehensive_server
@@ -1767,12 +1730,12 @@ def export_to_paraview(
         from paraview_export import grains_to_vtk, nf_voxels_to_vtk, peaks_to_vtk
 
         # Resolve path
-        input_path = Path(results_path)
+        input_path = authorize_data_path(results_path)
         if not input_path.exists():
             raise HTTPException(status_code=404, detail=f"File not found: {results_path}")
 
         # Create output path
-        output_path = upload_dir / f"{data_type}.vtp"
+        output_path = authorize_data_path(upload_dir) / f"{uuid.uuid4().hex}.vtp"
 
         # Convert based on type
         if data_type == "grains":
@@ -1799,76 +1762,23 @@ async def identify_phases(
     file_id: str = Form(...),
     elements: str = Form(...)
 ):
-    """
-    Identify crystalline phases using MIDAS MCP tool
-    """
-    try:
-        if not mcp_client:
-            raise HTTPException(status_code=503, detail="MCP Client not connected")
-            
-        file_path = image_paths.get(file_id)
-        if not file_path:
-            raise HTTPException(status_code=404, detail="File not found")
-            
-        # Call MIDAS tool
-        result = await mcp_client.execute_tool_call(
-            "midas_identify_crystalline_phases",
-            {
-                "image_path": file_path,
-                "elements": elements
-            }
-        )
-        
-        return JSONResponse({
-            "success": True,
-            "result": result
-        })
-        
-    except Exception as e:
-        # Fallback for demo/testing if tool fails or not found
-        print(f"Phase ID failed: {e}")
-        return JSONResponse({
-            "success": False,
-            "error": str(e),
-            "message": "Phase ID tool unavailable. Please check MCP connection."
-        })
+    """Legacy endpoint: report unavailable capability instead of fabricated success."""
+    file_path = image_paths.get(file_id)
+    if not file_path:
+        raise HTTPException(404, "File not found")
+    return await _call_scientific_tool("midas_identify_crystalline_phases",
+                                      {"image_path": file_path, "elements": elements})
 
 
 @app.post("/api/analysis/peaks")
 async def analyze_peaks(
     file_id: str = Form(...)
 ):
-    """
-    Analyze diffraction peaks using MIDAS MCP tool
-    """
-    try:
-        if not mcp_client:
-            raise HTTPException(status_code=503, detail="MCP Client not connected")
-            
-        file_path = image_paths.get(file_id)
-        if not file_path:
-            raise HTTPException(status_code=404, detail="File not found")
-            
-        # Call MIDAS tool
-        result = await mcp_client.execute_tool_call(
-            "midas_analyze_diffraction_peaks",
-            {
-                "image_path": file_path
-            }
-        )
-        
-        return JSONResponse({
-            "success": True,
-            "result": result
-        })
-        
-    except Exception as e:
-        print(f"Peak analysis failed: {e}")
-        return JSONResponse({
-            "success": False,
-            "error": str(e),
-            "message": "Peak analysis tool unavailable."
-        })
+    """Legacy endpoint: report unavailable capability instead of fabricated success."""
+    file_path = image_paths.get(file_id)
+    if not file_path:
+        raise HTTPException(404, "File not found")
+    return await _call_scientific_tool("midas_analyze_diffraction_peaks", {"image_path": file_path})
 
 
 @app.post("/api/calibrate")
@@ -1880,54 +1790,8 @@ async def run_calibration(
     center_x: Optional[float] = Form(None),
     center_y: Optional[float] = Form(None)
 ):
-    """
-    Run MIDAS auto-calibration on uploaded diffraction image
-    
-    Args:
-        file_id: ID of uploaded image
-        calibrant: Calibrant material (CeO2, LaB6, Si, etc.)
-        distance: Initial detector distance (mm)
-        wavelength: X-ray wavelength (Angstroms)
-        center_x: Initial beam center X (pixels)
-        center_y: Initial beam center Y (pixels)
-    
-    Returns:
-        Refined calibration parameters
-    """
-    if not mcp_client:
-        raise HTTPException(status_code=503, detail="MCP client not connected")
-    
-    try:
-        # Get image path
-        if file_id not in image_paths:
-            raise HTTPException(status_code=404, detail=f"Image {file_id} not found")
-        
-        image_path = image_paths[file_id]
-        img_array = image_cache[file_id]
-        
-        # Set default center if not provided
-        if center_x is None:
-            center_x = img_array.shape[1] / 2
-        if center_y is None:
-            center_y = img_array.shape[0] / 2
-        
-        # Call MIDAS auto-calibration via MCP
-        # Note: Requires AutoCalibrateZarr tool to be available in midas_comprehensive_server
-        prompt = f"""Run detector calibration on {image_path} with:
-- Calibrant: {calibrant}
-- Distance: {distance} mm
-- Wavelength: {wavelength} Å
-- Beam center: ({center_x}, {center_y}) pixels
-
-Please use the AutoCalibrateZarr tool and return the refined parameters."""
-        
-        response = await mcp_client.run_query(prompt)
-        
-        return {"success": True, "calibration": response, "message": "Calibration completed"}
-        
-    except Exception as e:
-        print(f"Calibration error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Legacy underspecified calibration route, retained with an explicit migration error."""
+    raise HTTPException(422, "Calibration requires verified pixel size, detector transform and calibrant parameters. Use /api/auto_calibrate with explicit geometry, or the midas_auto_calibrate tool with a reviewed template. No calibration was run.")
 
 
 # ---------------------------------------------------------------------------

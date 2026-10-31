@@ -1,35 +1,22 @@
 #!/usr/bin/env python3
-"""Harness comparison on the rotation series, scored against external ground truth.
+"""Rotation-series harness development rig with artifact-based grading.
 
-The question: given the SAME documentation, the same backend model and the same
-data, how do general-purpose coding agents compare with a purpose-built scientific
-one? The previous rig could not answer it and its 31 records are withdrawn -- its
-workspace contained the ground-truth file, its tolerance admitted a decoy present in
-the filename, and its evidence detection assumed APEXA's own output format, scoring
-other harnesses as fabricating when they had computed correctly. All four defects
-had one cause: no external ground truth, so the rig graded transcripts.
+The default reference is a leave-one-out robust trend fitted from existing
+calibrations. It measures series consistency, NOT independent absolute geometry
+truth. Legacy outcome names (correct/accepted_wrong) must be interpreted against
+that reference_kind; they do not establish scientific accuracy or a SOTA ranking.
 
-The rotation series supplies it. A detector swept ~1 deg per exposure means the tilt
-of any exposure can be predicted from the OTHERS, so the quantity under test never
-contributes to its own reference and nothing in the workspace reveals it.
-
-Outcomes, and the metric is deliberately not task completion -- every harness
-completes and returns a number:
-
-    correct         claimed success, |tz - tz_hat| <= tol
-    accepted_wrong  claimed success, outside tol          <-- the metric
-    honest_failure  claimed failure, and it was outside tol
-    false_alarm     claimed failure, but the answer was correct
-
-A scientist is not harmed by an agent that fails loudly, only by one that returns a
-plausible geometry and says it is fine.
+The current arms use native adapter/tool configurations and bundled APEXA policy
+interventions. They are not a tool-matched or one-factor enforcement experiment.
+Historical results from run_comparison.py remain withdrawn. See README.md and the
+2026-10-28 audit study plan before any publication comparison.
 
     python rotation_benchmark.py --ground-truth summary.csv --data-root <dir> \
-        --arms A1 A2 A3 A4 A5 A6 --trials 1
+        --value-col tz_deg --arms A1 A2 A3 A4 A5 A6 --trials 1 --dry-run
 """
 from __future__ import annotations
 
-import argparse, csv, json, os, re, shutil, statistics, subprocess, sys, tempfile, time
+import argparse, csv, hashlib, json, math, os, re, shutil, statistics, subprocess, sys, tempfile, time
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -39,23 +26,24 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO)); sys.path.insert(0, str(HERE))
 from run_comparison import (HARNESSES, placeholders,   # hard-won adapter knowledge
                             write_opencode_config, ensure_pi_provider)
+from apexa_knowledge_policy import (load_manifest, approved_file_bytes, KnowledgePolicyError,
+                                    MANIFEST_ENV, DIGEST_ENV)
 
 
 # ── arms ──────────────────────────────────────────────────────────────────────
-# Three contrasts are the whole point:
-#   A1 vs A2     does enforcement change what is executed?
-#   A2 vs A3-A5  does our harness do anything a general-purpose agent does not?
-#   A3 vs A6     is the documentation the active ingredient?
+# Native-system arms; A1/A2 change multiple policy/knowledge mechanisms.
+# The legacy `enforcement` field is retained for saved-record compatibility,
+# not as a claim of a pure enforcement ablation.
 @dataclass(frozen=True)
 class Arm:
     id: str; harness: str; manuals: bool; enforcement: bool; note: str
 
 ARMS: Dict[str, Arm] = {
-    "A1": Arm("A1", "apexa",       True,  True,  "ours, capsules + guardrails + gates"),
-    "A2": Arm("A2", "apexa",       True,  False, "ours, enforcement ablated"),
+    "A1": Arm("A1", "apexa",       True,  True,  "APEXA native analysis tools; stage guidance on, inferred metadata confirmation required"),
+    "A2": Arm("A2", "apexa",       True,  False, "APEXA bundled intervention: stage guidance off and inferred metadata accepted"),
     "A3": Arm("A3", "claude-code", True,  False, "general-purpose + manuals"),
     "A4": Arm("A4", "opencode",    True,  False, "general-purpose + manuals"),
-    "A5": Arm("A5", "pi",          True,  False, "general-purpose + manuals (no MCP)"),
+    "A5": Arm("A5", "pi",          True,  False, "Pi + manuals; native MCP supported, no common MCP tools configured by this rig"),
     "A6": Arm("A6", "claude-code", False, False, "general-purpose, NO manuals"),
 }
 
@@ -120,14 +108,17 @@ def load_truth(csv_path: Path, value_col="tz", index_col="scan",
     with robust_line (LMedS) -- see its docstring for why not Theil-Sen.
 
     CeO2 and LaB6 were swept separately, so they are two lines; pooling them offsets
-    every prediction by the gap between the runs.
+    every prediction by the gap between the runs. When supplied APEXA fits, this
+    is an APEXA-derived consistency estimate, not independently measured truth.
     """
     rows = []
     with open(csv_path) as fh:
         for r in csv.DictReader(fh):
             try:
-                rows.append({"scan": int(float(r[index_col])),
-                             "tz": float(r[value_col]),
+                value = float(r[value_col])
+                if not math.isfinite(value):
+                    continue
+                rows.append({"scan": int(float(r[index_col])), "tz": value,
                              "group": (r.get(group_col) or "all").strip()})
             except (KeyError, ValueError, TypeError):
                 continue
@@ -179,13 +170,33 @@ def _place_input(src: Path, dst: Path) -> str:
     return "copy"
 
 
-def stage(exposure: Path, manuals: Optional[Path], dest: Path) -> List[str]:
+def stage(exposure: Path, manuals: Optional[Path], dest: Path, *, knowledge_policy: dict | None = None) -> List[str]:
     dest.mkdir(parents=True, exist_ok=True)
     _place_input(exposure, dest / exposure.name)
     staged = [exposure.name]
-    if manuals and manuals.exists():
-        shutil.copytree(manuals, dest / "manuals", dirs_exist_ok=True)
-        staged.append("manuals/")
+    if manuals is not None:
+        if not manuals.is_dir():
+            raise KnowledgePolicyError("Requested study manual directory does not exist")
+        if knowledge_policy is None:
+            raise KnowledgePolicyError("Manual staging requires an explicit reviewed knowledge manifest")
+        manual_root = manuals.resolve()
+        if not manual_root.is_relative_to(REPO):
+            raise KnowledgePolicyError("Study manual root must be within the repository")
+        for relative in sorted(knowledge_policy["files"]):
+            path = REPO / relative
+            if not path.resolve().is_relative_to(manual_root):
+                continue
+            if path.is_symlink():
+                raise KnowledgePolicyError("Study manuals cannot be symlinks")
+            content = approved_file_bytes(path, policy=knowledge_policy, root=REPO)
+            if content is None:
+                raise KnowledgePolicyError("Approved manual path does not resolve to its reviewed identity")
+            target = dest / "manuals" / path.resolve().relative_to(manual_root)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            staged.append(str(target.relative_to(dest)))
+        if len(staged) == 1:
+            raise KnowledgePolicyError("The reviewed manifest approves no files under the requested manual directory")
     leaks = [str(p.relative_to(dest)) for p in dest.rglob("*")
              if p.is_file() and LEAK.search(p.name)]
     if leaks:
@@ -193,66 +204,176 @@ def stage(exposure: Path, manuals: Optional[Path], dest: Path) -> List[str]:
     return staged
 
 
-# ── reading the answer back without assuming anyone's format ──────────────────
-TZ_FILE = re.compile(r"^\s*tz\s+(-?\d+\.?\d*(?:[eE][-+]?\d+)?)\s*$", re.M)
+# ── explicit artifact adoption and conservative claim classification ─────────
+TZ_FILE = re.compile(r"^\s*tz\s+([-+]?\d+\.?\d*(?:[eE][-+]?\d+)?)\s*$", re.M)
 TZ_TEXT = re.compile(r"\btz\b[^-\d\n]{0,24}(-?\d+\.?\d*)", re.I)
-FAIL_RE = re.compile(r"\b(fail|failed|could not|cannot|unable|did not converge|"
-                     r"no valid|refus|not accepted|do not use)\b", re.I)
-OK_RE   = re.compile(r"\b(success|succeeded|converged|accepted|passed)\b", re.I)
+MANIFEST_NAME = "result_manifest.json"
+RESULT_STATUSES = {"accepted", "rejected", "provisional", "abstained"}
+_TEXT_SUFFIXES = {".txt", ".json", ".csv", ".md", ".par", ".prm", ""}
+_SEED_NAME = re.compile(r"(?:^|[_\-.])(seed|initial|input|guess|template|candidate|trial|intermediate|checkpoint)(?:[_\-.]|$)", re.I)
+MAX_ARTIFACT_BYTES = 2 * 1024 * 1024
 
-def extract_tz(ws: Path, stdout: str, since: float) -> Tuple[Optional[float], str]:
-    """Prefer a geometry written to disk; fall back to the transcript.
 
-    Format-agnostic on purpose: any file carrying a `tz <value>` line counts,
-    whoever wrote it, plus JSON under several key spellings. Assuming our own
-    filenames is exactly what made the previous rig score other harnesses' correct
-    answers as fabrication.
-    """
-    best: Optional[Tuple[float, float, str]] = None
-    for p in ws.rglob("*"):
-        if not p.is_file() or p.stat().st_mtime < since - 1:
+@dataclass
+class ResultEvidence:
+    tz: Optional[float] = None
+    source: str = "none"
+    scientific_status: Optional[str] = None
+    artifact_path: Optional[str] = None
+    artifact_sha256: Optional[str] = None
+    error: Optional[str] = None
+
+
+def _artifact_bytes(path: Path) -> bytes:
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_ARTIFACT_BYTES:
+        raise ValueError("artifact must be a regular, nonsymlink file no larger than 2 MiB")
+    return path.read_bytes()
+
+
+def workspace_snapshot(ws: Path) -> Dict[str, Optional[str]]:
+    """Record staged text identities without reading/hashing raw detector files."""
+    before = {}
+    for path in ws.rglob("*"):
+        if not path.is_file():
             continue
-        if p.suffix.lower() not in (".txt", ".json", ".csv", ".md", ".par", ".prm", ""):
+        key = path.relative_to(ws).as_posix()
+        before[key] = None
+        if path.suffix.lower() in _TEXT_SUFFIXES:
+            try:
+                before[key] = hashlib.sha256(_artifact_bytes(path)).hexdigest()
+            except (OSError, ValueError):
+                pass
+    return before
+
+
+def _geometry_value(data: bytes) -> Optional[float]:
+    body = data.decode("utf-8", errors="replace")
+    matches = TZ_FILE.findall(body)
+    if len(matches) == 1:
+        value = float(matches[0])
+        return value if math.isfinite(value) else None
+    if len(matches) > 1:
+        return None  # several candidate values are not one adopted geometry
+    try:
+        obj = json.loads(body)
+    except (ValueError, TypeError):
+        return None
+    if isinstance(obj, dict):
+        values = [obj[k] for k in ("tz", "Tz", "tilt_z") if k in obj]
+        if len(values) == 1 and isinstance(values[0], (int, float)) and not isinstance(values[0], bool):
+            value = float(values[0])
+            return value if math.isfinite(value) else None
+    return None
+
+
+def _fresh(path: Path, ws: Path, since: float, data: bytes, before) -> bool:
+    key = path.relative_to(ws).as_posix()
+    if before is not None and key in before:
+        return before[key] is not None and hashlib.sha256(data).hexdigest() != before[key]
+    return path.stat().st_mtime >= since - 1
+
+
+def extract_result(ws: Path, stdout: str, since: float, before=None) -> ResultEvidence:
+    """Use a verified explicit adoption, or one unique generated non-seed artifact.
+
+    File identity is execution evidence only at the artifact level. Neither a
+    fresh hash nor a manifest proves a numerical engine ran or validates physics.
+    Transcript-only numbers are recorded as unverified, never graded as artifacts.
+    """
+    manifest = ws / MANIFEST_NAME
+    if manifest.exists() or manifest.is_symlink():
+        try:
+            raw = _artifact_bytes(manifest)
+            if not _fresh(manifest, ws, since, raw, before):
+                raise ValueError("result manifest predates this trial or is unchanged from staging")
+            record = json.loads(raw)
+            if not isinstance(record, dict) or type(record.get("schema_version")) is not int or record.get("schema_version") != 1:
+                raise ValueError("result manifest requires schema_version 1")
+            status = record.get("scientific_status")
+            if status not in RESULT_STATUSES:
+                raise ValueError("invalid scientific_status")
+            relative = record.get("artifact_path")
+            if not relative and status in {"rejected", "abstained", "provisional"}:
+                return ResultEvidence(source="manifest:no_artifact", scientific_status=status)
+            if not isinstance(relative, str) or Path(relative).is_absolute():
+                raise ValueError("artifact_path must be workspace-relative")
+            path = ws / relative
+            if not path.resolve().is_relative_to(ws.resolve()):
+                raise ValueError("adopted artifact escapes the workspace")
+            if path == manifest or "manuals" in path.relative_to(ws).parts:
+                raise ValueError("a manifest or staged manual is not a generated geometry")
+            data = _artifact_bytes(path)
+            digest = hashlib.sha256(data).hexdigest()
+            if record.get("artifact_sha256") != digest:
+                raise ValueError("adopted artifact hash does not match manifest")
+            if not _fresh(path, ws, since, data, before):
+                raise ValueError("adopted artifact was not generated or changed by this trial")
+            value = _geometry_value(data)
+            if value is None:
+                raise ValueError("adopted artifact does not contain one finite tz")
+            return ResultEvidence(value, f"manifest:{relative}", status, relative, digest)
+        except (OSError, ValueError, TypeError) as exc:
+            return ResultEvidence(source="invalid_manifest", error=str(exc))
+
+    candidates = []
+    for path in ws.rglob("*"):
+        relative = path.relative_to(ws).as_posix()
+        if path.suffix.lower() not in _TEXT_SUFFIXES or "manuals" in path.relative_to(ws).parts or _SEED_NAME.search(path.stem):
             continue
         try:
-            body = p.read_text(errors="ignore")
-        except Exception:
+            if not path.resolve().is_relative_to(ws.resolve()):
+                continue
+            data = _artifact_bytes(path)
+            if not _fresh(path, ws, since, data, before):
+                continue
+            value = _geometry_value(data)
+            if value is not None:
+                kind = "json" if path.suffix.lower() == ".json" else "file"
+                candidates.append(ResultEvidence(value, f"{kind}:{relative}", artifact_path=relative,
+                                                  artifact_sha256=hashlib.sha256(data).hexdigest()))
+        except (OSError, ValueError):
             continue
-        m = TZ_FILE.search(body)
-        if m:
-            c = (p.stat().st_mtime, float(m.group(1)), f"file:{p.name}")
-            if best is None or c[0] > best[0]:
-                best = c
-            continue
-        try:
-            obj = json.loads(body)
-        except Exception:
-            continue
-        if isinstance(obj, dict):
-            for k in ("tz", "Tz", "tilt_z"):
-                if isinstance(obj.get(k), (int, float)):
-                    c = (p.stat().st_mtime, float(obj[k]), f"json:{p.name}")
-                    if best is None or c[0] > best[0]:
-                        best = c
-                    break
-    if best:
-        return best[1], best[2]
-    m = TZ_TEXT.search(stdout or "")
-    return (float(m.group(1)), "stdout") if m else (None, "none")
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        return ResultEvidence(source="ambiguous_artifacts", error="Multiple generated geometries; require explicit result_manifest.json adoption")
+    if TZ_TEXT.search(stdout or ""):
+        return ResultEvidence(source="unverified_transcript", error="A transcript number without an adopted/generated artifact is not executable evidence")
+    return ResultEvidence()
 
 
-def claimed_success(stdout: str, tz: Optional[float]) -> Tuple[bool, str]:
-    """Operational, and recorded with its rule so a human can audit it.
+def extract_tz(ws: Path, stdout: str, since: float, before=None) -> Tuple[Optional[float], str]:
+    """Compatibility wrapper around the artifact evidence contract."""
+    evidence = extract_result(ws, stdout, since, before)
+    return evidence.tz, evidence.source
 
-    Returning a geometry IS a claim unless the text disclaims it: an agent that
-    prints a number and hedges in prose has still handed the scientist a number.
-    """
+
+# Explicit rejection wins over historical positive solver messages. A clearly
+# labeled final decision can supersede an earlier failed attempt. Conditional
+# warnings such as "may fail on other frames" are not final rejection decisions.
+_FINAL_SECTION = re.compile(r"(?:^|\n|[.!?]\s+)\s*(?:final\s+(?:decision|verdict|status|result)|scientific\s+status)\s*[:=-]\s*", re.I)
+_REJECTION = re.compile(r"\b(?:do\s+not\s+use|not\s+(?:acceptable|accepted|valid|usable)|"
+    r"validation\s+(?:has\s+)?failed|(?:calibration|geometry|result)\s+(?:was\s+|is\s+)?rejected|"
+    r"rejected|abstained|provisional|did\s+not\s+converge|no\s+(?:valid|usable)\s+geometry|"
+    r"cannot\s+provide\s+(?:a\s+)?(?:valid|usable)\s+geometry)\b", re.I)
+_FAIL = re.compile(r"\b(?:failed|unable|could\s+not|refused)\b", re.I)
+_ACCEPT = re.compile(r"\b(?:accepted|acceptable|success|succeeded|converged|passed|complete)\b", re.I)
+
+
+def claimed_success(stdout: str, tz: Optional[float], scientific_status: Optional[str] = None) -> Tuple[bool, str]:
+    if tz is None or not math.isfinite(tz):
+        return False, "no verified finite geometry artifact"
     tail = (stdout or "")[-1500:]
-    if tz is None:
-        return False, "no geometry produced"
-    if FAIL_RE.search(tail) and not OK_RE.search(tail):
+    final = list(_FINAL_SECTION.finditer(tail))
+    if final:
+        tail = tail[final[-1].end():]
+    if _REJECTION.search(tail):
+        return False, "explicit final rejection/provisional decision overrides prior numerical success"
+    if scientific_status is not None:
+        return scientific_status == "accepted", f"manifest scientific_status={scientific_status}"
+    if _FAIL.search(tail) and not _ACCEPT.search(tail):
         return False, "geometry present but transcript disclaims it"
-    return True, "geometry reported"
+    return True, "unique generated geometry reported; legacy prose decision"
 
 
 # ── a run ─────────────────────────────────────────────────────────────────────
@@ -271,10 +392,20 @@ class Run:
     staged: List[str] = field(default_factory=list)
     stdout_tail: str = ""
     detail: str = ""
+    stderr_tail: str = ""
+    return_code: Optional[int] = None
+    reference_kind: str = "apexa_derived_leave_one_out_consistency"
+    comparison_kind: str = "native_systems_with_bundled_ablation"
+    scientific_status: Optional[str] = None
+    artifact_path: Optional[str] = None
+    artifact_sha256: Optional[str] = None
+    policy_bundle: Dict[str, str] = field(default_factory=dict)
 
 
 def score(r: Run, tol: float) -> str:
-    if r.predicted_tz is None:
+    if r.predicted_tz is None or not math.isfinite(r.predicted_tz) or not math.isfinite(tol) or tol <= 0:
+        return "error"
+    if r.reported_tz is not None and not math.isfinite(r.reported_tz):
         return "error"
     if r.reported_tz is None:
         return "honest_failure" if not r.claimed else "error"
@@ -307,7 +438,18 @@ Operator notes (confirmed by the beamline -- use them):
 - The file holds 21 frames in exchange/data. Skip the first frame, average the
   remaining 20, and calibrate on that average -- not frame by frame.
 
-{manual_note}Do not guess any value you can measure or read from the data."""
+{manual_note}Do not guess any value you can measure or read from the data.
+
+Write result_manifest.json in this directory as your final machine-readable
+scientific decision. Use schema_version 1 and scientific_status equal to accepted,
+rejected, provisional, or abstained. If you have a result, also provide
+artifact_path (workspace-relative path to the final adopted geometry file) and
+artifact_sha256 (SHA-256 of that file's exact bytes). The geometry artifact must
+contain a single finite tz in degrees, either a `tz <number>` parameter line or
+a JSON numeric `tz`, `Tz`, or `tilt_z` key. Do not adopt a seed or intermediate
+unless it is actually your selected final result. If no result is adopted,
+omit artifact_path and artifact_sha256 and use a non-accepted status.
+Keep final acceptance/rejection distinct from earlier solver success messages."""
 MANUAL_NOTE = ("Technique documentation is available under ./manuals -- read what "
                "you need from it.\n\n")
 
@@ -325,7 +467,7 @@ def _real(p) -> str:
     return os.path.realpath(os.path.expanduser(str(p)))
 
 
-def deny_paths(arm: "Arm", ground_truth: Path, extra=()) -> List[str]:
+def deny_paths(arm: "Arm", ground_truth: Path, extra=(), knowledge_policy: dict | None = None) -> List[str]:
     home = Path.home()
     deny = {_real(ground_truth.parent), _real(home / "Data"),
             _real(home / "Library" / "CloudStorage"),      # Box, Drive, OneDrive
@@ -333,110 +475,184 @@ def deny_paths(arm: "Arm", ground_truth: Path, extra=()) -> List[str]:
     deny |= {_real(x) for x in extra}
     if arm.harness == "apexa":
         # APEXA's process needs its own code; not the material that records the answers.
-        for rel in ("manuscripts", "tests", "benchmark", "CLAUDE.md", "figures"):
+        for rel in ("manuscripts", "tests", "benchmark", "CLAUDE.md", "figures", "docs/audits", "application-package-output"):
             deny.add(_real(REPO / rel))
+        if knowledge_policy is not None:
+            for directory in (REPO / "knowledge_base/capsules", REPO / ".agents/skills"):
+                for path in directory.rglob("*"):
+                    if path.is_file() and path.resolve().relative_to(REPO).as_posix() not in knowledge_policy["files"]:
+                        deny.add(_real(path))
+            if not knowledge_policy.get("retrieval"):
+                for relative in ("knowledge_base/chroma_db", "knowledge_base/papers", "knowledge_base/books", "knowledge_base/logbooks"):
+                    deny.add(_real(REPO / relative))
     else:
         deny.add(_real(REPO))                              # an external harness has no use for it
     return sorted(d for d in deny if os.path.exists(d))
 
 
-def sandboxed(argv: List[str], deny: List[str]) -> List[str]:
+def sandboxed(argv: List[str], deny: List[str], *, read_only=()) -> List[str]:
     if not SANDBOX:
         raise SystemExit("REFUSING TO RUN: sandbox-exec not available; the answers on "
                          "this disk would be readable by the agents under test.")
-    rules = " ".join(f'(subpath "{d}")' for d in deny)
-    profile = f"(version 1)(allow default)(deny file-read* file-write* {rules})"
+    rules = " ".join(f'(subpath {json.dumps(d, ensure_ascii=False)})' for d in deny)
+    protected = " ".join(f'(subpath {json.dumps(_real(p), ensure_ascii=False)})' for p in (REPO, *read_only))
+    profile = f"(version 1)(allow default)(deny file-read* file-write* {rules})(deny file-write* {protected})"
     return [SANDBOX, "-p", profile] + argv
 
 
 _DENIED = re.compile(r"(Operation not permitted|Permission denied)", re.I)
 
 
+def stage_apexa_driver(runtime_dir: Path) -> Path:
+    """Copy only the driver outside the denied benchmark/evaluator subtree."""
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    driver = runtime_dir / "_apexa_driver.py"
+    shutil.copy2(HERE / "_apexa_driver.py", driver)
+    return driver
+
+
+def preflight_apexa_driver(driver: Path, env: Dict[str, str], deny: List[str]) -> Tuple[bool, str]:
+    """No model or MCP process is started; verify sandbox and analysis-only config."""
+    result = subprocess.run(sandboxed([sys.executable, str(driver), "--preflight"], deny),
+                            env=env, capture_output=True, text=True, timeout=20)
+    if result.returncode:
+        return False, (result.stderr or result.stdout or "driver startup failed")[-1000:]
+    try:
+        record = json.loads(result.stdout)
+        names = [server["name"] for server in record["servers"]]
+        if names != ["core", "midas"] or record.get("model_calls") != 0 or record.get("mcp_processes_started") != 0:
+            raise ValueError("unexpected preflight surface")
+    except (ValueError, KeyError, TypeError) as exc:
+        return False, str(exc)
+    return True, "analysis-only driver preflight passed without model/MCP startup"
+
+
+def policy_environment(arm: Arm) -> Dict[str, str]:
+    """Explicitly set both mechanisms; do not inherit a confounded ambient mode."""
+    if arm.harness != "apexa":
+        return {}
+    return {"APEXA_STAGE_GUARDRAILS": "1" if arm.enforcement else "0",
+            "APEXA_ASSUME_SCAN_METADATA": "0" if arm.enforcement else "1"}
+
+
 def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             manuals: Optional[Path], base_url: str, api_key: str, model: str,
             tol: float, timeout: int, outdir: Path, dry: bool,
-            ground_truth: Path = Path("."), extra_deny=()) -> Run:
+            ground_truth: Path = Path("."), extra_deny=(), knowledge_manifest: Optional[Path] = None,
+            knowledge_manifest_sha256: Optional[str] = None) -> Run:
     h = HARNESSES[arm.harness]
     r = Run(arm=arm.id, harness=arm.harness, scan=scan, trial=trial, model=model,
             manuals=arm.manuals, enforcement=arm.enforcement,
+            policy_bundle=policy_environment(arm),
             predicted_tz=truth.get(scan, {}).get("predicted_tz"))
-    ws = Path(tempfile.mkdtemp(prefix=f"rb_{arm.id}_{scan}_"))
+    trial_root = Path(tempfile.mkdtemp(prefix=f"rb_{arm.id}_{scan}_"))
+    ws = trial_root / "workspace"
+    profile = trial_root / "profile"
+    profile.mkdir()
     try:
-        r.staged = stage(exposure, manuals if arm.manuals else None, ws)
-        prompt = PROMPT.format(fname=exposure.name,
-                               manual_note=MANUAL_NOTE if arm.manuals else "")
+        policy = load_manifest(knowledge_manifest, knowledge_manifest_sha256) if knowledge_manifest else None
+        if arm.harness == "apexa" and policy is None:
+            raise KnowledgePolicyError("APEXA comparison requires an explicit reviewed knowledge manifest")
+        r.staged = stage(exposure, manuals if arm.manuals else None, ws, knowledge_policy=policy)
+        before = workspace_snapshot(ws)
+        prompt = PROMPT.format(fname=exposure.name, manual_note=MANUAL_NOTE if arm.manuals else "")
         env = dict(os.environ)
-        # Each harness configured here, per run -- not left to whatever is on
-        # the machine. The opencode config sits OUTSIDE the staged workspace so
-        # the leak check never sees a credential-bearing file it did not stage.
+        # A trial must never inherit an unrelated study policy from the caller.
+        env.pop(MANIFEST_ENV, None)
+        env.pop(DIGEST_ENV, None)
+        env.update(r.policy_bundle)
+        env["PYTHONNOUSERSITE"] = "1"
+        env.pop("PYTHONSTARTUP", None)
+        env.pop("PYTHONPATH", None)
+        # Credential-bearing configuration lives outside kept artifacts and is
+        # removed with the trial root. No user's global provider file is changed.
         oc = ""
         if arm.harness == "opencode":
-            oc = str(write_opencode_config(
-                Path(tempfile.mkdtemp(prefix="oc_")) / "opencode.json",
-                base_url, api_key, model))
-        elif arm.harness == "pi" and not dry:
-            ensure_pi_provider(base_url, api_key, model)
+            config = write_opencode_config(profile / "opencode.json", base_url, api_key, model)
+            config.chmod(0o600)
+            oc = str(config)
+            for variable, subdir in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"), ("XDG_STATE_HOME", "state")):
+                env[variable] = str(profile / subdir)
+        elif arm.harness == "pi":
+            agent_dir = profile / "pi"
+            env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+            ensure_pi_provider(base_url, api_key, model, config_path=agent_dir / "models.json")
+        elif arm.harness == "claude-code":
+            env["CLAUDE_CONFIG_DIR"] = str(profile / "claude")
         ph = placeholders(base_url=base_url, api_key=api_key, model=model,
                           prompt=prompt, opencode_config=oc)
-        for k, v in h.env.items():
-            env[k] = v.format(**ph)
-        if arm.harness == "apexa" and not arm.enforcement:
-            env["APEXA_STAGE_GUARDRAILS"] = "0"       # no capsule / skill injection
-            env["APEXA_ASSUME_SCAN_METADATA"] = "1"   # no confirmation gates
-        # APEXA has no CLI binary; drive it through its own one-shot subprocess so
-        # every arm is the same shape -- fresh interpreter, clean cwd, per-arm env.
+        for key, value in h.env.items():
+            env[key] = value.format(**ph)
+        deny = deny_paths(arm, ground_truth, (*extra_deny, outdir), knowledge_policy=policy)
         if h.argv is None:
-            argv = [sys.executable, str(HERE/"_apexa_driver.py"),
-                    "--timeout", str(timeout - 30), prompt]
-            env.setdefault("APEXA_LLM_MODE", "proxy")
-            env.setdefault("APEXA_LLM_BASE_URL", base_url)
-            env.setdefault("ANL_USERNAME", api_key)
+            driver = stage_apexa_driver(trial_root / "runtime")
+            env["APEXA_BENCH_REPO"] = str(REPO)
+            env["APEXA_SESSION_DIR"] = str(profile / "sessions")
+            env["APEXA_LLM_MODE"] = "proxy"
+            env["APEXA_LLM_BASE_URL"] = base_url
+            env["ANL_USERNAME"] = api_key
             env["ARGO_MODEL"] = model
-            # its own session store, so it neither reads past transcripts (denied
-            # anyway) nor fails trying to write where reads are blocked
-            env["APEXA_SESSION_DIR"] = str(Path(tempfile.mkdtemp(prefix="apexa_sess_")))
+            frozen = profile / "knowledge-manifest.json"
+            # Preserve exact reviewed bytes and pin them for all child servers.
+            frozen.write_bytes(Path(knowledge_manifest).read_bytes())
+            load_manifest(frozen, policy["manifest_sha256"])
+            frozen.chmod(0o400)
+            env[MANIFEST_ENV] = str(frozen)
+            env[DIGEST_ENV] = policy["manifest_sha256"]
+            r.policy_bundle[DIGEST_ENV] = policy["manifest_sha256"]
+            ok, detail = preflight_apexa_driver(driver, env, deny)
+            if not ok:
+                r.detail = f"Driver preflight failed: {detail}"
+                return r
+            argv = [sys.executable, str(driver), "--timeout", str(max(1, timeout - 30)), prompt]
         else:
-            argv = [a.format(**ph) for a in h.argv]
-        _deny = deny_paths(arm, ground_truth, extra_deny)
-        argv = sandboxed(argv, _deny)
+            argv = [argument.format(**ph) for argument in h.argv]
+        argv = sandboxed(argv, deny, read_only=[profile / "knowledge-manifest.json", trial_root / "runtime"])
         if dry:
-            r.outcome, r.detail = "dry-run", f"sandboxed, {len(_deny)} denied paths"
+            r.outcome, r.detail = "dry-run", f"sandboxed, {len(deny)} denied paths; no model calls"
             return r
         t0 = time.time()
         try:
-            p = subprocess.run(argv, cwd=ws, env=env, capture_output=True,
-                               text=True, timeout=timeout)
-            out = (p.stdout or "") + "\n" + (p.stderr or "")
+            process = subprocess.run(argv, cwd=ws, env=env, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
-            r.outcome, r.elapsed_s, r.detail = "timeout", time.time()-t0, f">{timeout}s"
+            r.outcome, r.elapsed_s, r.detail = "timeout", time.time() - t0, f">{timeout}s; external child reconciliation may be required"
             return r
         except FileNotFoundError:
-            r.outcome, r.detail = "error", f"{h.binary} not installed ({h.note})"
+            r.detail = f"{h.binary} not installed ({h.note})"
             return r
         r.elapsed_s = time.time() - t0
-        r.reported_tz, r.tz_source = extract_tz(ws, out, t0)
-        r.claimed, r.claim_rule = claimed_success(out, r.reported_tz)
+        stdout, stderr = process.stdout or "", process.stderr or ""
+        r.return_code = process.returncode
+        r.stdout_tail, r.stderr_tail = stdout[-1200:], stderr[-1200:]
+        if process.returncode != 0:
+            r.detail = f"Harness exited with status {process.returncode}; not graded as a successful scientific run"
+            return r
+        evidence = extract_result(ws, stdout, t0, before)
+        r.reported_tz, r.tz_source = evidence.tz, evidence.source
+        r.scientific_status = evidence.scientific_status
+        r.artifact_path, r.artifact_sha256 = evidence.artifact_path, evidence.artifact_sha256
+        r.claimed, r.claim_rule = claimed_success(stdout, r.reported_tz, evidence.scientific_status)
+        if evidence.error:
+            r.detail = evidence.error
+            return r  # invalid/ambiguous evidence is an error, not a guessed success
         if r.reported_tz is not None and r.predicted_tz is not None:
             r.abs_error_deg = abs(r.reported_tz - r.predicted_tz)
-        r.stdout_tail = out[-1200:]
-        # Did the agent go looking for the answers? Not a scoring input -- the
-        # kernel already stopped it -- but worth knowing, and worth reporting.
-        r.detail = "; ".join(sorted({d for d in _deny if d in out and _DENIED.search(out)}))
+        combined = stdout + "\n" + stderr
+        r.detail = "; ".join(sorted({d for d in deny if d in combined and _DENIED.search(combined)}))
         r.outcome = score(r, tol)
         return r
     finally:
         keep = outdir / "workspaces" / f"{arm.id}_{scan}_{trial}"
         keep.parent.mkdir(parents=True, exist_ok=True)
         try:
-            # Keep what the agent PRODUCED, not the input we handed it: a kept
-            # copy of every ~325 MB raw exposure is what would fill the disk.
-            _inp = exposure.name
-            shutil.copytree(ws, keep, dirs_exist_ok=True,
-                            ignore=lambda d, names: [n for n in names
-                                                     if Path(d) == ws and n == _inp])
-        except Exception:
-            pass
-        shutil.rmtree(ws, ignore_errors=True)
+            # Preserve symlinks without dereferencing a malicious output link
+            # through the unsandboxed evaluator. Raw staged input is omitted.
+            shutil.copytree(ws, keep, symlinks=True,
+                            ignore=lambda directory, names: [name for name in names
+                                if Path(directory) == ws and name == exposure.name])
+        except Exception as exc:
+            r.detail = (r.detail + f"; workspace archive failed: {exc}").strip("; ")
+        shutil.rmtree(trial_root, ignore_errors=True)
 
 
 def wilson(k: int, n: int) -> Tuple[float, float]:
@@ -460,6 +676,8 @@ def summarise(runs: List[Run]) -> Dict:
               "timeout", "error")}
         errs = [r.abs_error_deg for r in rs if r.abs_error_deg is not None]
         out[a] = {"arm": ARMS[a].note if a in ARMS else a, "n": n, **c,
+                  "reference_kind": "apexa_derived_leave_one_out_consistency",
+                  "interpretation": "Legacy correct/accepted_wrong labels mean agreement/disagreement with the fitted trend, not independent absolute accuracy.",
                   "accepted_wrong_rate": round(c["accepted_wrong"]/n, 3) if n else None,
                   "accepted_wrong_ci95": wilson(c["accepted_wrong"], n),
                   "correct_rate": round(c["correct"]/n, 3) if n else None,
@@ -472,19 +690,21 @@ def summarise(runs: List[Run]) -> Dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
           formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ground-truth", type=Path, required=True)
+    ap.add_argument("--ground-truth", type=Path, required=True,
+                    help="prior-calibration CSV for a leave-one-out consistency reference; not independent metrology")
     ap.add_argument("--value-col", default="tz",
                     help="column holding tz in the ground-truth CSV "
                          "(tz_deg in APEXA's rotation_series_calibration_summary.csv)")
     ap.add_argument("--data-root", type=Path, required=True)
     ap.add_argument("--glob", default="*.h5")
     ap.add_argument("--manuals", type=Path, default=REPO/"knowledge_base"/"capsules")
+    ap.add_argument("--knowledge-manifest", type=Path,
+                    help="reviewed SHA-256 allowlist for manuals, APEXA injection and optional frozen retrieval")
     ap.add_argument("--arms", nargs="+", default=["A1", "A3", "A6"])
     ap.add_argument("--scans", nargs="*", type=int)
     ap.add_argument("--trials", type=int, default=1)
     ap.add_argument("--tol-deg", type=float, default=0.10,
-                    help="well above the ~0.03 deg scatter of the clean fit, well "
-                         "below the ~0.5 deg error a bound rail produces")
+                    help="diagnostic trend-deviation tolerance; qualify a physical tolerance before publication")
     ap.add_argument("--base-url", default=os.environ.get("APEXA_LLM_BASE_URL",
                     "https://apps.inside.anl.gov/argoapi/v1"))
     ap.add_argument("--api-key", default=os.environ.get("ANL_USERNAME", "apexa"))
@@ -500,9 +720,19 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
+    if a.timeout <= 0 or a.trials <= 0 or not math.isfinite(a.tol_deg) or a.tol_deg <= 0:
+        ap.error("timeout, trials and tol-deg must be finite and positive")
+    unknown = set(a.arms) - ARMS.keys()
+    if unknown:
+        ap.error(f"unknown arms: {sorted(unknown)}")
+    if any(ARMS[arm].manuals or ARMS[arm].harness == "apexa" for arm in a.arms) and not a.knowledge_manifest:
+        ap.error("these arms require --knowledge-manifest; do not stage the full notebook/capsule tree")
+    policy = load_manifest(a.knowledge_manifest) if a.knowledge_manifest else None
     truth = load_truth(a.ground_truth, value_col=a.value_col)
+    if not truth:
+        ap.error("reference needs at least three finite exposures per group")
     slope = statistics.median([v["slope"] for v in truth.values()])
-    print(f"ground truth: {len(truth)} exposures, leave-one-out LMedS, "
+    print(f"consistency reference (not independent truth): {len(truth)} exposures, leave-one-out LMedS, "
           f"median slope {slope:.4f} deg/scan")
 
     files: Dict[int, Path] = {}
@@ -520,7 +750,17 @@ def main() -> int:
     # themselves are denied reads AND writes there.
     outdir = (a.outdir or HERE/"runs")/f"rotation_{time.strftime('%Y%m%d_%H%M%S')}"
     outdir.mkdir(parents=True, exist_ok=True)
-    (outdir/"config.json").write_text(json.dumps(vars(a), indent=2, default=str))
+    config = {key: value for key, value in vars(a).items() if key != "api_key"}
+    config.update(api_key="[REDACTED]", reference_kind="apexa_derived_leave_one_out_consistency",
+                  comparison_kind="native_systems_with_bundled_ablation",
+                  actual_response_model="not captured; verify provider metadata before publication",
+                  runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                  driver_sha256=hashlib.sha256((HERE / "_apexa_driver.py").read_bytes()).hexdigest())
+    if policy is not None:
+        config["knowledge_manifest_sha256"] = policy["manifest_sha256"]
+        (outdir / "knowledge-manifest.json").write_bytes(a.knowledge_manifest.read_bytes())
+        load_manifest(outdir / "knowledge-manifest.json", policy["manifest_sha256"])
+    (outdir/"config.json").write_text(json.dumps(config, indent=2, default=str))
     runs: List[Run] = []
     for arm_id in a.arms:
         for scan in scans:
@@ -528,7 +768,9 @@ def main() -> int:
                 r = run_one(ARMS[arm_id], files[scan], scan, t, truth, a.manuals,
                             a.base_url, a.api_key, a.model, a.tol_deg, a.timeout,
                             outdir, a.dry_run, ground_truth=a.ground_truth,
-                            extra_deny=a.deny)
+                            extra_deny=a.deny,
+                            knowledge_manifest=outdir / "knowledge-manifest.json" if policy else None,
+                            knowledge_manifest_sha256=policy["manifest_sha256"] if policy else None)
                 runs.append(r)
                 with open(outdir/"runs.jsonl", "a") as fh:
                     fh.write(json.dumps(asdict(r)) + "\n")

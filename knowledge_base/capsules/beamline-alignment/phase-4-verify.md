@@ -1,74 +1,31 @@
-# Phase 4 — Verify, record, honest status
+# Phase 4 — Verify and report persisted evidence
 
-## Goal
+The runtime records plans, proposals, accepted observations, rejected-data reasons,
+leases/recovery, STOP and final scientific results in `alignment/runtime.db`.
+Use `get_alignment_status(run_id, include_trajectory=True)` to inspect that record.
+There is no `_record_run` tool and no need to manually write the legacy history DB.
 
-Decide the final `status` of the alignment run and write the record to the
-history DB. This is the step that makes the next run smarter — a `converged`
-run becomes warm-start fuel; a `failed` run becomes an anti-prior.
+Terminal states:
 
-## Verdict rules
+- `completed`: the full scan passed finite Gaussian/covariance, R², interior-peak,
+  FWHM/span, sampling-resolution and center-uncertainty gates.
+- `partial`: incomplete budget/scan or rejected fit; an observed sampled maximum
+  may be a provisional recommendation. This is not verified alignment.
+- `failed`: invalid/missing/stale/mismatched observation, with a persistent reason.
+- `stopped`: operator stopped recommendations; no later samples may commit.
 
-`converged` ← ALL of:
-- Final objective below the task's `success_criteria`.
-- Residual RMS below the task's convergence tolerance (if applicable).
-- Zero safety-gate rejections across the whole trajectory.
-- Zero constraint violations at the FINAL evaluated point (constraint
-  violations earlier in the trajectory are fine — that's BO learning).
+Always report `result.evidence_scope`: `simulation_only`, `replay_only`, or
+`advisory`. Accepted shadow fits still contain caller-supplied, unattested evidence.
+`hardware_alignment_verified` and `motion_executed` remain false in every mode.
+A peak recommendation is never an instruction to move a motor automatically.
 
-`partial` ← one of:
-- Final objective above the success threshold but the fit is well-formed
-  (e.g. Gaussian R² ≥ 0.90 but peak is at a boundary; CoR fit succeeded but
-  vertical drift exceeded 3 rows).
-- Convergence tolerance missed but BO ran its full iteration budget.
-- Analytical path completed but RUNBOOK scale missing (T5), so the proposed
-  move can't be dispatched.
+A concise operator report should state the run ID/revision/mode/status, number of
+accepted observations, fit acceptance or rejection reason, recommendation and
+units (if present), and the operator-review requirement. Do not rename the status
+`converged`, invent final physical positions, or relabel simulated/replayed data
+as a good measured experiment. Gaussian covariance describes this model fit;
+it is not independently calibrated experimental uncertainty.
 
-`failed` ← one of:
-- H1/H2/H3/H4 halted the run.
-- Objective at the best observed point is WORSE than at the starting point
-  (something is wrong with the task spec or the hardware).
-
-`dry_run` ← ran in dry-run mode. **Never report `converged` on a dry run**,
-regardless of simulated outcome.
-
-## Record
-
-Call `_record_run(run_id, task_name, status, trajectory_json, task_spec_json)`
-to insert into `alignment_runs`. The record MUST include:
-- The resolved VOCS (post-warm-start)
-- Every evaluation with inputs, outputs, timestamp
-- The final decided motor positions
-- The verdict rationale (which rule triggered which status)
-
-If the run included new experiment data (a tomo-H5 input), optionally ingest
-it with `outcome` matching the verdict:
-- `converged` → `ingest_experiment_h5(..., outcome="good")` so future runs
-  warm-start from it.
-- `failed` → `ingest_experiment_h5(..., outcome="bad")` so future runs
-  avoid that region.
-- `partial` / `dry_run` → `outcome="unknown"` (don't bias future priors).
-
-## Report to the operator
-
-A one-paragraph summary + three bullet points:
-
-```
-Status: <converged|partial|failed|dry_run>
-
-- Final <objective_name>: <value> (<Δ from start>, <target>)
-- Final motor positions: samX = X.XX mm, samY = Y.YY mm
-- Trajectory: N evaluations over T seconds; <K> safety-gate rejections
-
-Why this verdict: <rule that triggered status>
-
-Next step: <explicit action — "approve dry-run moves", "re-ingest archive to
-refresh prior", "ingest result as good", etc.>
-```
-
-Everything else goes in the DB. Keep the chat terse.
-
-## Successful phase-4 exit (= end of task)
-
-```json
-{"phase": 4, "run_id": "...", "status": "...", "recorded": true}
-```
+If the analysis suggests a physical correction, commissioning of a separately
+qualified broker and beamline validation remain outstanding. Starting a new
+simulation or reviewed shadow run does not waive that boundary.
