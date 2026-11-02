@@ -58,17 +58,33 @@ its tooltip and accessible label. Touch input keeps larger controls, and narrow
 screens can wrap the header. Panel placement and Chat / Split / Canvas behavior
 are independent of these dimensions.
 
-The APEXA mark combines a white A with an incoming photon beam, a crystal/sample
-interaction point, and concentric elliptical diffraction rings with discrete
-reflections. Its SVG source is `frontend/public/apexa-mark.svg`, also used for the
-favicon and documentation. Header and navigation marks embed that source in the
-frontend bundle, so they remain visible without a separate logo request. No
-external font or image-generation service is needed.
+The APEXA mark combines a white A, a cyan photon beam and sample point, and a
+soft field of concentric diffraction rings. A rim of tapered rays takes visual
+inspiration from Krishna's Sudarshan chakra; it suggests rotation without an
+animation. The diffuse background is original vector artwork inspired by the
+ceria pattern in `test-BISCUIT`; it contains no
+detector image or acquisition data. A near-black field and soft silver rings
+recall a diffraction image, with a white A and cyan beam for contrast at toolbar
+size. These logo colors do not alter the application's Classic palette.
+
+Its canonical SVG is `frontend/public/apexa-mark.svg`, also copied to
+`frontend/public/favicon.svg` and used by the README. The shared `ApexaLogo`
+component bundles that source for the header, navigation, welcome screen,
+assistant replies and the Thinking indicator shown after sending a message.
+Chat avatars have an accessible APEXA label. No separate image request, external
+font, runtime image processing or service is needed. When updating the mark,
+keep the favicon copy in sync and rebuild `frontend/dist`.
 
 ## See the changes
 
+For frontend-only updates, including the logo, rebuild the frontend (or pull
+the updated tracked `frontend/dist`) and refresh the browser. Use **Cmd+Shift+R**
+on macOS or **Ctrl+Shift+R** on Windows/Linux if it still shows old assets.
+The running Python server does not need a restart for these asset changes.
+
 For the Python-served UI at `http://localhost:8001`, finish or cancel active work
-through its normal controls, stop the web server in its terminal, then run:
+through its normal controls before a backend restart, stop the web server in its
+terminal, then run:
 
 ```bash
 cd ~/Git/beamline-assistant-dev

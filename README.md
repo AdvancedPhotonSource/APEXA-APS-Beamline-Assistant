@@ -1,4 +1,4 @@
-<img src="frontend/public/apexa-mark.svg" width="64" height="64" alt="APEXA photon beam and diffraction mark">
+<img src="frontend/public/apexa-mark.svg" width="64" height="64" alt="APEXA photon beam and diffuse diffraction mark">
 
 # APEXA - Advanced Photon EXperiment Assistant
 

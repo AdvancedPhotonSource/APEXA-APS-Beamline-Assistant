@@ -4,6 +4,7 @@ import { MessageBubble } from './MessageBubble'
 import { TypingIndicator } from './TypingIndicator'
 import { useVizStore } from '@/stores/vizStore'
 import { suggestedWorkflows, workflowPrompt } from '@/lib/workflowCatalog'
+import { ApexaLogo } from '@/components/ui/ApexaLogo'
 
 export function MessageList() {
   const sessionId = useChatStore(s => s.currentSessionId)
@@ -69,7 +70,8 @@ function WelcomeScreen() {
   return (
     <div className="apexa-chat-welcome flex-1 min-h-0 overflow-y-auto px-5 py-6 animate-fade-in">
       <div className="flex min-h-full flex-col items-center justify-center">
-      <div className="relative mb-6">
+      <div className="relative mb-6 flex items-center gap-3">
+        <ApexaLogo size={48} decorative />
         <div className="text-[56px] font-extrabold tracking-tight"
           style={{
             background: 'var(--apexa-accent-grad)',

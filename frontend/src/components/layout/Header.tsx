@@ -21,7 +21,7 @@ export function Header({ children }: { children?: ReactNode }) {
   return (
     <header className="apexa-topbar">
       <span className="flex shrink-0 items-center gap-1.5" title="Advanced Photon EXperiment Assistant">
-        <ApexaLogo size={24} /><span className="apexa-brand">APEXA</span>
+        <ApexaLogo size={24} decorative /><span className="apexa-brand">APEXA</span>
       </span>
       {children}
       <div className="apexa-header-controls">

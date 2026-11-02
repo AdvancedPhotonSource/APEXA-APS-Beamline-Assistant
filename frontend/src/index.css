@@ -13,8 +13,6 @@
   --apexa-accent-grad: linear-gradient(135deg, #3b82f6, #6366f1);
   --apexa-accent-soft: rgba(59, 130, 246, 0.12);
   --apexa-ring: rgba(59, 130, 246, 0.55);
-  --apexa-avatar-bg: linear-gradient(135deg, #3b82f6, #8b5cf6);
-  --apexa-avatar-shadow: 0 0 10px rgba(59,130,246,0.3);
   --apexa-rail-selected-bg: linear-gradient(135deg, var(--apexa-accent-soft), transparent);
   --apexa-rail-selected-text: var(--apexa-accent);
   --apexa-rail-selected-shadow: inset 2px 0 0 var(--apexa-accent), 0 0 16px rgba(59,130,246,0.16);
@@ -55,8 +53,6 @@
   --apexa-accent-grad: linear-gradient(#2443b0, #2443b0);
   --apexa-accent-soft: rgba(36, 67, 176, 0.08);
   --apexa-ring: #2443b0;
-  --apexa-avatar-bg: #00b3ca;
-  --apexa-avatar-shadow: none;
   --apexa-rail-selected-bg: #2443b0;
   --apexa-rail-selected-text: #ffffff;
   --apexa-rail-selected-shadow: none;

@@ -1,4 +1,4 @@
-import { ApexaLogo as BrandMark } from '@/components/ui/ApexaLogo'
+import { ApexaLogo } from '@/components/ui/ApexaLogo'
 
 export type RailView = 'history' | 'files' | 'workflows' | 'motors' | 'viewers' | null
 
@@ -66,7 +66,7 @@ export function IconRail({ activeView, onSelect }: IconRailProps) {
       </RailButton>
 
       {/* APEXA logo mark */}
-      <BrandMark size={28} />
+      <ApexaLogo size={28} />
     </nav>
   )
 }
@@ -124,28 +124,5 @@ function RailButton({
       {children}
       <span style={{ fontSize: 10, fontWeight: 500, letterSpacing: 0.3 }}>{label}</span>
     </button>
-  )
-}
-
-export function ApexaLogo({ size = 28 }: { size?: number }) {
-  return (
-    <div style={{
-      width: size,
-      height: size,
-      borderRadius: '50%',
-      background: 'var(--apexa-avatar-bg)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: 'var(--apexa-avatar-shadow)',
-      flexShrink: 0,
-    }}>
-      {/* Stylized diffraction ring icon */}
-      <svg width={size * 0.6} height={size * 0.6} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8">
-        <circle cx="12" cy="12" r="9" />
-        <circle cx="12" cy="12" r="5" />
-        <circle cx="12" cy="12" r="1.5" fill="white" stroke="none" />
-      </svg>
-    </div>
   )
 }

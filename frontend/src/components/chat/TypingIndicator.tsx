@@ -1,5 +1,5 @@
 import { useChatStore } from '@/stores/chatStore'
-import { ApexaLogo } from '@/components/layout/IconRail'
+import { ApexaLogo } from '@/components/ui/ApexaLogo'
 
 export function TypingIndicator() {
   const { isLoading, progress, activity } = useChatStore()

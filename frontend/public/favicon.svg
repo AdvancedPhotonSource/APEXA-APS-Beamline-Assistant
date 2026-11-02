@@ -1,27 +1,81 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-  <title>APEXA — photon beam, crystal and diffraction rings</title>
-  <rect width="96" height="96" rx="20" fill="#2443b0"/>
-  <!-- The transmitted beam and diffracted cone meet a tilted detector plane. -->
-  <path d="M33 53 66 15 79 79Z" fill="#00d0e5" opacity=".12"/>
-  <g fill="none" stroke="#00d0e5" stroke-linecap="round">
-    <path d="M5 53h28" stroke-width="4"/>
-    <path d="m33 53 37-6m-37 6 33-38m-33 38 46 26" stroke-width="1.8" opacity=".65"/>
-    <g transform="rotate(-12 70 47)" stroke-width="2.3">
-      <ellipse cx="70" cy="47" rx="6" ry="11"/>
-      <ellipse cx="70" cy="47" rx="12" ry="22"/>
-      <ellipse cx="70" cy="47" rx="18" ry="33"/>
+  <title>APEXA — photon beam, diffraction and radiant chakra</title>
+  <desc>A white A and cyan photon beam over a near-black field of diffuse silver diffraction rings, framed by a Sudarshan chakra-inspired radiant rim.</desc>
+  <!-- Original vector artwork inspired by ceria powder diffraction, not a detector image. -->
+  <defs>
+    <clipPath id="tile"><rect width="96" height="96" rx="20"/></clipPath>
+    <path id="ray" d="M46 7Q51 5 56 11L50 9 45 13Z"/>
+    <radialGradient id="field" cx="68%" cy="38%" r="82%">
+      <stop stop-color="#1b2027"/>
+      <stop offset=".5" stop-color="#0a0d12"/>
+      <stop offset="1" stop-color="#020407"/>
+    </radialGradient>
+    <radialGradient id="haze">
+      <stop stop-color="#d9edf2" stop-opacity=".14"/>
+      <stop offset=".45" stop-color="#b9d0db" stop-opacity=".04"/>
+      <stop offset="1" stop-color="#b9d0db" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rings" x1="0" y1="1" x2="1" y2="0">
+      <stop stop-color="#9aadb5" stop-opacity=".16"/>
+      <stop offset=".52" stop-color="#d1e0e5" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#f1f8fa" stop-opacity=".82"/>
+    </linearGradient>
+    <filter id="diffuse" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="1.3"/>
+    </filter>
+    <filter id="soft" x="-15%" y="-15%" width="130%" height="130%">
+      <feGaussianBlur stdDeviation=".35"/>
+    </filter>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="96" height="96" fill="url(#field)"/>
+    <ellipse cx="73" cy="30" rx="46" ry="43" fill="url(#haze)"/>
+    <ellipse cx="22" cy="76" rx="36" ry="31" fill="url(#haze)" opacity=".45"/>
+    <!-- Broad scattering halos and softened powder rings share a detector-plane centre. -->
+    <g fill="none" stroke="url(#rings)" filter="url(#diffuse)" stroke-width="2.5" opacity=".65">
+      <circle cx="50" cy="49" r="17"/>
+      <circle cx="50" cy="49" r="29"/>
+      <circle cx="50" cy="49" r="38"/>
+      <circle cx="50" cy="49" r="49"/>
+      <circle cx="50" cy="49" r="60"/>
+    </g>
+    <g fill="none" stroke="url(#rings)" filter="url(#soft)" stroke-width=".8">
+      <circle cx="50" cy="49" r="17"/>
+      <circle cx="50" cy="49" r="21" opacity=".65"/>
+      <circle cx="50" cy="49" r="29"/>
+      <circle cx="50" cy="49" r="36" opacity=".6"/>
+      <circle cx="50" cy="49" r="38"/>
+      <circle cx="50" cy="49" r="47" opacity=".65"/>
+      <circle cx="50" cy="49" r="49"/>
+      <circle cx="50" cy="49" r="56" opacity=".45"/>
+      <circle cx="50" cy="49" r="60"/>
+    </g>
+    <!-- Tapered rays suggest the motion of a Sudarshan chakra, without animation. -->
+    <circle cx="48" cy="48" r="38.5" fill="none" stroke="#c8e7ed" stroke-width=".65" opacity=".38"/>
+    <g fill="#daf0f5" opacity=".65">
+      <use href="#ray"/>
+      <use href="#ray" transform="rotate(22.5 48 48)"/>
+      <use href="#ray" transform="rotate(45 48 48)"/>
+      <use href="#ray" transform="rotate(67.5 48 48)"/>
+      <use href="#ray" transform="rotate(90 48 48)"/>
+      <use href="#ray" transform="rotate(112.5 48 48)"/>
+      <use href="#ray" transform="rotate(135 48 48)"/>
+      <use href="#ray" transform="rotate(157.5 48 48)"/>
+      <use href="#ray" transform="rotate(180 48 48)"/>
+      <use href="#ray" transform="rotate(202.5 48 48)"/>
+      <use href="#ray" transform="rotate(225 48 48)"/>
+      <use href="#ray" transform="rotate(247.5 48 48)"/>
+      <use href="#ray" transform="rotate(270 48 48)"/>
+      <use href="#ray" transform="rotate(292.5 48 48)"/>
+      <use href="#ray" transform="rotate(315 48 48)"/>
+      <use href="#ray" transform="rotate(337.5 48 48)"/>
     </g>
   </g>
-  <!-- The A remains readable at toolbar size; its crossbar is the beam/sample. -->
-  <path d="M14 76 34 20 54 76M22 55h24" fill="none" stroke="#fff" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="m33 47 6 6-6 6-6-6Z" fill="#00d0e5" stroke="#2443b0" stroke-width="1.5"/>
-  <circle cx="33" cy="53" r="2" fill="#fff"/>
-  <!-- Discrete bright reflections distinguish a diffraction pattern from an orbit. -->
-  <g fill="#fff">
-    <circle cx="63.1" cy="14.7" r="2.6"/>
-    <circle cx="86.4" cy="62.7" r="2.6"/>
-    <circle cx="58.3" cy="49.5" r="2.3"/>
-    <circle cx="74.6" cy="68.5" r="2.3"/>
-    <circle cx="75.9" cy="45.8" r="2"/>
-  </g>
+  <!-- A clean foreground silhouette remains readable in a 24 px toolbar. -->
+  <path d="M22 77 46 20 70 77" fill="none" stroke="#090d12" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M22 77 46 20 70 77" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M9 58h53" stroke="#090d12" stroke-width="7" stroke-linecap="round"/>
+  <path d="M9 58h53" stroke="#00d0e5" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="m46 52 6 6-6 6-6-6Z" fill="#fff"/>
+  <circle cx="46" cy="58" r="2" fill="#00b3ca"/>
 </svg>
