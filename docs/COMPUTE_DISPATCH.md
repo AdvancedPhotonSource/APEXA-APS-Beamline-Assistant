@@ -1,121 +1,86 @@
-# APEXA Compute Dispatch — standard practice
+# Compute planning and dispatch
 
-How APEXA should place data-reduction work on the right compute: **local CPU**,
-**local GPU**, or a **remote GPU endpoint inside ANL**. The goal is that small /
-interactive tasks stay fast and local, and large batch/HEDM jobs stop grinding on a
-CPU-only beamline host.
+APEXA chooses concurrency and a device from the task profile, available host
+resources, existing reservations and the executor's supported paths. Data must
+be accessible on the execution host. A placement recommendation is separate
+from a submitted job and its completion receipt.
 
-## The problem this solves
-Beamline analysis hosts are often **CPU-only**. APEXA's native PyTorch engines
-auto-use a GPU but *refuse to run on CPU* past a pixel budget and fall back to the
-CPU OpenMP path (`integrator.py` → `IntegratorZarrOMP`), one 2880² frame at a time.
-An overnight scan (hundreds–thousands of frames) then takes hours because nothing
-is on a GPU and nothing fans out to a cluster.
+## Inspect a recorded decision
 
-## Compute tiers
-| Tier | Where | Engines | Use for |
-|---|---|---|---|
-| **0 — local CPU** | the APEXA host | `integrator.py`/`IntegratorZarrOMP`, `IndexerOMP`, native PyTorch on CPU (small only) | single-frame integrate/calibrate, viewers, validation, knowledge |
-| **1 — local GPU** | same host, CUDA/MPS present | native `midas_integrate`/`midas_calibrate`, `midas-integrate-v2`, `IntegratorFitPeaksGPUStream`, `IndexerGPU`/`FitPosOrStrainsGPU` | batch integration, FF/PF/NF index+refine when a local GPU exists |
-| **2 — remote GPU endpoint** | ANL GPU node / ALCF Polaris | `midas-pipeline --machine … --device cuda --shard-gpus auto` (parsl), or the same tool run on the GPU host | large batch/HEDM on a CPU-only host |
+Expand a tool result in chat to see **Recorded compute plan** when the tool
+returns a `compute` block. The same explanation appears when that result is
+opened in Canvas. It shows reported workers, threads per worker, device, host,
+estimated memory and the planner's reason. **Inventory and reservation scope**
+expands the recorded inventory and coordination boundary.
 
-## Decision rule
+Series integration returns an initial placement decision plus an `allocation`;
+the display uses the allocation for workers, device and memory. A result marked
+`nothing_was_run` shows **No processing started**. Missing fields stay absent.
+These are recorded planning values, not a live utilization monitor or evidence
+of scientific acceptance. The complete tool result remains available for review.
 
-Two questions, not one. The original version of this document only answered the
-first, which is why APEXA could run for 2.7 hours on a 96-core machine using one
-core.
+## Concurrency and admission
 
-### 1. How many at once? (`apexa_compute.plan()`)
+`apexa_compute.plan()` considers the current resource inventory and the profile
+for the selected task. Independent work items fan out within CPU, host RAM and,
+when used, GPU VRAM limits. `APEXA_COMPUTE_RESERVE` (default 0.25) retains headroom;
+existing reservations reduce the remaining capacity. Requested worker counts
+are upper bounds. A plan with zero workers cannot admit work.
 
-For a batch of independent work items, concurrency is planned from what the host
-has **free right now**:
+CPU planning uses affinity/scheduler/container constraints where supported and
+the one-minute load average. Memory telemetry and per-worker estimates constrain
+fan-out separately. Internally parallel profiles such as FF/NF reconstruction
+receive one worker with a bounded thread budget. The planner's `reason` records
+the limiting resource. Actual admission rechecks shared capacity atomically.
 
-    workers = min( free_cores x (1 - reserve) / threads_per_worker,
-                   free_RAM / rss_per_worker,
-                   n_items )
+[Compute reservations](COMPUTE_RESERVATIONS.md) describe process ownership,
+cleanup, uncertain reservations and the distinction between planning and
+reservation. This registry coordinates cooperating APEXA processes using the
+same local database. Remote plans use controller-side accounting; a host-owned
+worker or facility scheduler is needed to coordinate remote resources.
 
-`free_cores` subtracts the 1-minute load average, so other users on a shared
-beamline host shrink the plan rather than being trampled. `APEXA_COMPUTE_RESERVE`
-(default 0.25) holds back a share. The binding cap is named in the plan's
-`reason`, so a surprising number explains itself.
+## Device selection and supported executors
 
-A task whose profile says `internally_parallel` (FF/NF, which already shard via
-parsl/OMP) gets **one** worker with many threads instead — the same planner,
-opposite strategy, decided by the profile rather than by special-case code.
+Automatic GPU selection requires a task profile whose `gpu_speedup` reaches
+`APEXA_GPU_MIN_SPEEDUP` (default 1.25), adequate profiled VRAM, a visible GPU and
+an executor that supports it. Unmeasured tasks default to a speedup of 1.0.
+Explicit CUDA requests still require admission and engine support. MPS admission
+is currently refused by the shared planner.
 
-### 2. CPU or GPU? — **measured, not inferred**
+The built-in calibration profile records historical copland measurements:
+221.1 seconds with four CPU threads, 230.0 seconds with 48 CPU threads and
+224.7 seconds on an RTX A6000 for the measured fit. Its default therefore favors
+CPU fan-out. These measurements are specific to that workload and host. A
+reviewed `midas_calibrate_series(..., benchmark=True)` run can profile a staged
+representative dataset and save `~/.apexa/task_profiles.json`. It performs real
+calibration work; compare scientific outputs as well as timing before adopting
+new profiles. No new engine benchmark was run for the UI change.
 
-The previous rule here was "a local accelerator is present, therefore use it".
-That is wrong, and measurably so. On copland, one four-stage calibration:
+Current adapter boundaries:
 
-| | wall |
-|---|---|
-| CPU, 48 threads | 230.0 s |
-| CPU, 4 threads | 221.1 s |
-| GPU, RTX A6000 | 224.7 s |
+| Adapter | Compute behavior |
+| --- | --- |
+| `midas_calibrate_series` | Plans independent calibrations from resources/profile and passes bounded worker environments to the calibration executor. |
+| `midas_integrate_series` | Uses the CPU `integrator.py` backend. Accepted targets are `auto`, `local`, `cpu` and `remote`. CUDA/MPS requests are refused by this adapter. |
+| Integration with `compute_target="remote"` | Returns a recommendation and `nothing_was_run=true`; this call does not submit remote work. |
+| FF/PF pipeline adapters | Forward supported `machine`, `n_nodes` and `shard_gpus` settings to the installed MIDAS pipeline. Engine, scheduler, data access and job receipts remain host-specific requirements. |
 
-The fit is not compute-bound at all, and the A6000's float64 throughput
-(0.56 TFLOP/s measured) is **4x below copland's own CPUs** (2.33 TFLOP/s). A
-rule that routes float64 work to that GPU produces a slower run *and* an idle
-machine. For contrast, chiltepin's A100 measures 18.8 TFLOP/s float64 — so
-"has a GPU" is not even a property of the lab, let alone of a job.
+`_pick_compute_target()` keeps automatic placement near accessible data. A cost
+estimate by itself does not establish useful GPU acceleration or remote data
+access. The former `APEXA_GPU_AUTO_DISPATCH`/`APEXA_COST_LOCAL_CPU` dispatch rule
+is no longer the active series-integration placement policy.
 
-So a GPU is used only when `TaskProfile.gpu_speedup` exceeds
-`APEXA_GPU_MIN_SPEEDUP` (default 1.25). **Unmeasured tasks default to 1.0** —
-no benefit — so the layer never gambles on hardware it has not timed.
+## Configuration
 
-Measure a host with:
+| Variable | Purpose |
+| --- | --- |
+| `APEXA_COMPUTE_RESERVE` | Fraction of host capacity held back before admission planning. |
+| `APEXA_GPU_MIN_SPEEDUP` | Minimum profile speedup for automatic GPU selection. |
+| `APEXA_RESOURCE_DB` | Shared local SQLite reservation registry for cooperating processes. |
+| `APEXA_MIDAS_DEVICE` | Calibration device preference; executor/admission checks still apply. |
+| `APEXA_GPU_MACHINE`, `APEXA_GPU_ENDPOINT` | Remote placement metadata; configuring them alone does not submit a job. |
 
-    midas_calibrate_series(images="...", benchmark=True)
-
-which times one frame on CPU, the same frame on GPU, and a small concurrency
-sweep, then writes `~/.apexa/task_profiles.json`. Capability flags published by
-vendors have been wrong in both directions in this stack already (Metis claimed
-tool calling it lacks; Minerva omitted a flag for tool calling it has), which is
-why nothing here is taken on trust.
-
-### 3. Where? (unchanged)
-
-`cost = n_frames x megapixels` still decides local vs a remote GPU endpoint for
-the tools that support it; `prefer` still overrides. `_pick_compute_target()`
-keeps its legacy behaviour for callers that pass no `task`, so integration —
-whose GPU benefit has **not** been measured — is unaffected until someone
-measures it.
-
-## Configuration (env)
-| Var | Meaning |
-|---|---|
-| `APEXA_GPU_MACHINE` | parsl machine name for `midas-pipeline --machine` (e.g. `polaris`) |
-| `APEXA_GPU_ENDPOINT` | ssh `user@host` or a Globus-Compute endpoint id for a GPU node |
-| `APEXA_GPU_AUTO_DISPATCH` | if set, `midas_integrate_series` returns a dispatch recommendation instead of running a large CPU job |
-| `APEXA_COST_LOCAL_CPU` | cost ceiling for staying local on a CPU-only host (default 40) |
-
-## What the tools now expose
-- **FF / PF workflows** (`run_ff_hedm_full_workflow`, `run_pf_hedm_workflow`):
-  `machine`, `n_nodes`, `shard_gpus` → forwarded to `midas-pipeline`
-  (`--machine/--n-nodes/--shard-gpus`). This is the ANL-GPU path (parsl → Polaris
-  or a Slurm cluster from `midas_parsl_configs`).
-- **Series integration** (`midas_integrate_series`): `compute_target`
-  (`auto|local|remote|cpu|cuda|mps`). Every run reports a `compute` block
-  (target + reason + cost). `compute_target="remote"` (or `APEXA_GPU_AUTO_DISPATCH`)
-  returns a dispatch recommendation for a large batch instead of grinding on CPU.
-
-## The binding constraint: data locality
-Put the GPU where it can already see the data. Two ANL options:
-1. **A lab GPU node that mounts the beamline filesystem** (e.g. `/scratch/s1iduser`)
-   — pragmatic, low-latency, no queue, **no data movement**. Register it as
-   `APEXA_GPU_ENDPOINT` (ssh) or a Globus-Compute endpoint. **Best for interactive
-   beamtime.**
-2. **ALCF Polaris** via the shipped `midas_parsl_configs` `polarisConfig`
-   (`--machine polaris`). Best for very large sweeps, but Polaris cannot mount
-   `/scratch`, so **stage data via Globus** first.
-
-## Standard practice (summary)
-- Single frame / calibration / QC → **stay local** (Tier 0/1), never prompt.
-- Batch series / FF-PF-NF on a **GPU host** → run local GPU (Tier 1),
-  `device=cuda`, `--shard-gpus auto`.
-- Batch series / FF-PF-NF on a **CPU-only host** → **Tier 2**: offload to the GPU
-  endpoint that sees the data; only fall back to CPU (with a warning) if no
-  endpoint is configured.
-- Always emit the `compute` decision in the result so the run is auditable, and
-  keep the outcome-manifest + verify-before-report discipline for remote runs.
+Choose an execution host that already sees the complete input dataset, geometry,
+dark/mask and output locations. Facility systems such as Polaris may require
+explicit staging and a reviewed scheduler configuration. Keep the returned
+execution receipt and scientific outcome with the compute decision.

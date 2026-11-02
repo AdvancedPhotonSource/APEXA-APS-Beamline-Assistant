@@ -1,0 +1,8 @@
+{
+  "fixture": "One synthetic Plotly trace with 250000 exact x/y points",
+  "method": "Actual frontend request bodies captured by an in-memory HTTP stub; no browser/network/engine latency claim",
+  "baselineFullSnapshotBytes": 3594744,
+  "initialPatchBytes": 3594738,
+  "draftOnlyPatchBytes": 185,
+  "scientificPayloadsInDraftOnlySave": 0
+}

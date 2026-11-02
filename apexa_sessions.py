@@ -356,13 +356,34 @@ class SessionStore:
             record.update(metadata=metadata, model=model, active_directory=active_directory)
         return self.change(name, update)
 
-    def workspace(self, name, workspace, expected):
-        if len(json.dumps(workspace, allow_nan=False).encode()) > MAX_WORKSPACE_BYTES:
-            raise ValueError("Workspace exceeds 20 MB. Export large plots before saving; the previous workspace is intact.")
+    def workspace(self, name, workspace, expected, *, artifact_slots=None):
+        if artifact_slots is not None and "artifacts" in workspace:
+            raise ValueError("A workspace patch must supply artifacts only through artifact_slots")
         def update(record):
             if expected != record["workspaceRevision"]:
                 raise SessionConflict("Workspace changed in another window. Reload the session before saving your canvas changes.")
-            record["workspace"] = workspace
+            saved = workspace
+            if artifact_slots is not None:
+                # Slots refer only to this session at the checked revision. A
+                # closed/reordered tab cannot accidentally select another
+                # window's artifact. Persist the ordinary, complete snapshot.
+                previous = record.get("workspace", {}).get("artifacts", [])
+                artifacts = []
+                for slot in artifact_slots:
+                    if set(slot) == {"reuse"}:
+                        index = slot["reuse"]
+                        if (type(index) is not int or not isinstance(previous, list)
+                                or not 0 <= index < len(previous)):
+                            raise ValueError("Workspace artifact reference is not present at this revision")
+                        artifacts.append(previous[index])
+                    elif set(slot) == {"value"} and isinstance(slot["value"], dict):
+                        artifacts.append(slot["value"])
+                    else:
+                        raise ValueError("Invalid workspace artifact slot")
+                saved = {**workspace, "artifacts": artifacts}
+            if len(json.dumps(saved, allow_nan=False).encode()) > MAX_WORKSPACE_BYTES:
+                raise ValueError("Workspace exceeds 20 MB. Export large plots before saving; the previous workspace is intact.")
+            record["workspace"] = saved
             record["workspaceRevision"] += 1
         return self.change(name, update, create=True)
 

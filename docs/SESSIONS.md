@@ -42,6 +42,20 @@ draft edits in favor of the last server snapshot. Browser cache preserves pendin
 workspace edits for recovery after reload; it is subject to browser storage quota.
 Wait for saving to finish before closing when disk persistence is required.
 
+After a successful save, later saves reuse unchanged artifact objects from the
+acknowledged server revision. Draft edits and tab changes send small references;
+new or replaced artifacts send their full data. The server resolves references
+under the session lock and writes the same complete, lossless JSON snapshot.
+Reordering and removing results preserve their intended order and contents.
+Conflicts still require reconciliation; a failed or unconfirmed save never
+authorizes reuse of its artifacts.
+
+This transport uses `PATCH /api/sessions/{id}/workspace`. A running older server
+that explicitly returns 405 falls back to the full-snapshot PUT endpoint. Restart
+the backend and refresh the browser to enable the reduced uploads. Network
+failures and conflicts are not automatically retried as full overwrites. Session
+files and the CLI require no storage migration for this change.
+
 ## Storage and migration
 
 Default directory: `~/.apexa/sessions`. Set `APEXA_SESSION_DIR` in both processes
@@ -99,12 +113,12 @@ a guarantee of resuming arbitrary external computation from its last instruction
 
 ## Verification
 
-The 16 October session fallback and refinement-canvas follow-up passed the
-TypeScript and production frontend build. No test suite was run for that
-follow-up. The most recent full test run recorded earlier in this review was
-**393 Python tests passed, 1 skipped; 38 frontend tests passed**; scoped ESLint
-also passed then. Vite still reports large main/Plotly chunks; bundle size
-remains a performance follow-up.
+The 2 November workspace transport follow-up passed **37 targeted Python tests**
+covering sessions, the workspace API and WebUI integration, plus **94 frontend
+tests**, TypeScript, ESLint and a production build. Four synthetic browser checks
+covered the accompanying compute-plan display. The [request-size measurement](FRONTEND_PERFORMANCE.md#workspace-upload-measurement-2-november-2026)
+uses synthetic plot data and does not establish deployed latency. Vite still
+reports large main/Plotly chunks.
 
 Isolated tests exercise legacy migration, CLI/Web model-memory round trips,
 interrupted result recovery, cross-process locks, stale-save rejection, API

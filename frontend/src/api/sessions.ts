@@ -1,4 +1,9 @@
-import type { ChatSession, SessionWorkspace } from './types'
+import type { ChatSession, SessionWorkspace, VizArtifact } from './types'
+
+class SessionRequestError extends Error {
+  status: number
+  constructor(status: number, message: string) { super(message); this.status = status }
+}
 
 export class SessionApiUnavailable extends Error {
   constructor() {
@@ -24,16 +29,71 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
   const data: Record<string, unknown> = await response.json().catch(() => ({}))
   if (!response.ok) {
     if (response.status === 404 && (path === '' || path === '/import')) throw new SessionApiUnavailable()
-    throw new Error(typeof data.detail === 'string' ? data.detail : `Session request failed (${response.status})`)
+    throw new SessionRequestError(response.status, typeof data.detail === 'string' ? data.detail : `Session request failed (${response.status})`)
   }
   return data as T
 }
 
 export const listServerSessions = () => request<{ sessions: ChatSession[]; last_active?: string }> ('')
-export const readServerSession = (id: string) => request<ChatSession>(`/${encodeURIComponent(id)}`)
+export const readServerSession = (id: string) => {
+  confirmedWorkspaces.delete(id)
+  return request<ChatSession>(`/${encodeURIComponent(id)}`)
+}
 export const createServerSession = (id: string) => request<ChatSession>('', 'POST', { id })
 export const importBrowserSession = (session: ChatSession) => request<ChatSession>('/import', 'POST', session)
 export const renameServerSession = (id: string, title: string) => request<ChatSession>(`/${encodeURIComponent(id)}`, 'PATCH', { title })
-export const archiveServerSession = (id: string) => request(`/${encodeURIComponent(id)}`, 'DELETE')
-export const writeServerWorkspace = (id: string, workspace: SessionWorkspace, revision: number) =>
-  request<{ workspaceRevision: number; revision: number }>(`/${encodeURIComponent(id)}/workspace`, 'PUT', { workspace, expected_revision: revision })
+export const archiveServerSession = async (id: string) => {
+  const result = await request(`/${encodeURIComponent(id)}`, 'DELETE')
+  confirmedWorkspaces.delete(id)
+  return result
+}
+
+type WorkspaceReceipt = { workspaceRevision: number; revision: number }
+const confirmedWorkspaces = new Map<string, { revision: number; artifacts: VizArtifact[] }>()
+let patchSupported = true
+let transportEpoch = 0
+
+export function resetWorkspaceTransport() {
+  confirmedWorkspaces.clear()
+  patchSupported = true
+  transportEpoch++
+}
+
+export async function writeServerWorkspace(id: string, workspace: SessionWorkspace, revision: number): Promise<WorkspaceReceipt> {
+  const epoch = transportEpoch
+  const path = `/${encodeURIComponent(id)}/workspace`
+  let result: WorkspaceReceipt
+  if (patchSupported) {
+    const previous = confirmedWorkspaces.get(id)
+    // Store updates are immutable. Compare object identity, never stringify or
+    // hash a scientific array just to find out whether a draft edit changed it.
+    const reusable = new Map<VizArtifact, number>(previous?.revision === revision ? previous.artifacts.map((artifact, index) => [artifact, index]) : [])
+    const { artifacts, ...settings } = workspace
+    const slots = artifacts.map(artifact => {
+      const index = reusable.get(artifact)
+      return index === undefined ? { value: artifact } : { reuse: index }
+    })
+    try {
+      result = await request<WorkspaceReceipt>(path, 'PATCH', { workspace: settings, artifact_slots: slots, expected_revision: revision })
+    } catch (error) {
+      // A running older backend can still serve freshly rebuilt frontend files.
+      // Only an explicit unsupported method permits a full-snapshot fallback.
+      // Never replay an uncertain write or bypass a revision conflict.
+      if (!(error instanceof SessionRequestError) || error.status !== 405) throw error
+      if (epoch === transportEpoch) patchSupported = false
+      result = await request<WorkspaceReceipt>(path, 'PUT', { workspace, expected_revision: revision })
+    }
+  } else {
+    result = await request<WorkspaceReceipt>(path, 'PUT', { workspace, expected_revision: revision })
+  }
+  if (!Number.isSafeInteger(result.workspaceRevision) || result.workspaceRevision !== revision + 1) {
+    throw new Error('The session server did not confirm the expected workspace revision. Reload saved state before retrying.')
+  }
+  if (epoch === transportEpoch) {
+    confirmedWorkspaces.delete(id)
+    confirmedWorkspaces.set(id, { revision: result.workspaceRevision, artifacts: workspace.artifacts })
+    // This is an optimization cache, not another unbounded session store.
+    while (confirmedWorkspaces.size > 32) confirmedWorkspaces.delete(confirmedWorkspaces.keys().next().value!)
+  }
+  return result
+}

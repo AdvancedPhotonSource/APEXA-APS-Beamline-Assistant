@@ -38,8 +38,10 @@ function setup(records, cache = []) {
       data = disk.get(id)
       if (!data) return { ok: false, status: 404, json: async () => ({ detail: 'Missing saved session' }) }
       if (options.method === 'DELETE') { disk.delete(id); data = { archived: true } }
-      else if (options.method === 'PUT') {
+      else if (options.method === 'PUT' || (options.method === 'PATCH' && url.endsWith('/workspace'))) {
         if (payload.expected_revision !== data.workspaceRevision) return { ok: false, status: 409, json: async () => ({ detail: 'Workspace changed in another window' }) }
+        if (options.method === 'PATCH') payload.workspace.artifacts = payload.artifact_slots.map(slot =>
+          'value' in slot ? slot.value : data.workspace.artifacts[slot.reuse])
         data.workspace = payload.workspace; data.workspaceRevision += 1
       }
     }
@@ -88,7 +90,7 @@ test('first launch opens the last CLI session with saved canvas draft attachment
     state.setDraft('Continue reconstruction')
     await state.saveWorkspace()
     assert.equal(disk.get('cli-default').workspace.draft, 'Continue reconstruction')
-    assert.ok(calls.some(c => c.method === 'PUT'))
+    assert.ok(calls.some(c => c.method === 'PATCH' && c.url.endsWith('/workspace')))
   } finally { dispose(); await tick() }
 })
 
@@ -217,7 +219,7 @@ test('a completed save cannot mark a newer unmaterialized edit as saved', async 
     let finish
     let delayFirstWrite = true
     globalThis.fetch = async (url, options) => {
-      if (options?.method === 'PUT' && delayFirstWrite) {
+      if (options?.method === 'PATCH' && url.endsWith('/workspace') && delayFirstWrite) {
         delayFirstWrite = false
         return new Promise(resolve => { finish = () => fetch(url, options).then(resolve) })
       }
@@ -233,7 +235,7 @@ test('a completed save cannot mark a newer unmaterialized edit as saved', async 
     await useChatStore.getState().saveWorkspace()
     assert.equal(disk.get('inflight-edit').workspace.draft, 'Latest snapshot')
     assert.equal(disk.get('inflight-edit').workspaceRevision, 2)
-    assert.equal(calls.filter(call => call.method === 'PUT').length, 2)
+    assert.equal(calls.filter(call => call.method === 'PATCH' && call.url.endsWith('/workspace')).length, 2)
     assert.equal(useChatStore.getState().sessions[0].workspaceDirty, false)
   } finally { dispose(); await tick() }
 })

@@ -3,7 +3,7 @@ import json
 import uuid
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from apexa_sessions import SessionStore, SessionConflict, valid_name
 
@@ -36,6 +36,20 @@ class RenameSession(BaseModel):
 class WorkspaceUpdate(BaseModel):
     workspace: dict
     expected_revision: int = Field(ge=0)
+
+
+class ReusedArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reuse: int = Field(ge=0, strict=True)
+
+
+class NewArtifact(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    value: dict
+
+
+class WorkspacePatch(WorkspaceUpdate):
+    artifact_slots: list[ReusedArtifact | NewArtifact]
 
 
 class BrowserImport(BaseModel):
@@ -87,6 +101,15 @@ def rename_session(session_id: str, payload: RenameSession):
 @router.put("/{session_id}/workspace")
 def save_workspace(session_id: str, payload: WorkspaceUpdate):
     record = _call(lambda store: store.workspace(session_id, payload.workspace, payload.expected_revision))
+    return {"workspaceRevision": record["workspaceRevision"], "revision": record["revision"]}
+
+
+@router.patch("/{session_id}/workspace")
+def patch_workspace(session_id: str, payload: WorkspacePatch):
+    """Reuse unchanged artifacts from the expected revision without re-uploading them."""
+    record = _call(lambda store: store.workspace(
+        session_id, payload.workspace, payload.expected_revision,
+        artifact_slots=[slot.model_dump() for slot in payload.artifact_slots]))
     return {"workspaceRevision": record["workspaceRevision"], "revision": record["revision"]}
 
 

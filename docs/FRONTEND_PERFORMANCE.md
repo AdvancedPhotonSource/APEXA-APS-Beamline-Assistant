@@ -9,6 +9,7 @@ The CLI and React WebUI are the maintained deployment and regression targets. Th
 - The result gallery mounts 60 matching results per page. Search covers the entire in-memory result catalogue and resets pagination. Recorded directory cards show 100 entries per page.
 - File browsing requests 100 entries at a time, displays the total, and supports Previous/Next/Refresh/Cancel. Navigation, session restoration and unmount cancel the request; late responses cannot replace a newer directory. Pages replace existing rows so repeated navigation does not grow the DOM. The API enforces a maximum page size of 500. Directory offsets are not immutable snapshots: refresh after acquisition or file mutations change the listing.
 - Workspace capture remains debounced. Modern browsers use IndexedDB for their fallback session cache. Immutable message arrays, artifact objects and large artifact strings are stored as separate payload records; draft/settings updates reuse their references. The snapshot and new records commit in one transaction. Unreferenced payload records are reclaimed after a successful snapshot update.
+- Server workspace uploads reuse unchanged artifacts from the last acknowledged revision. Each PATCH contains updated settings plus either a reference to a previous artifact slot or a complete new artifact. Reordered results and changed data retain their full values. A 405 response from an older backend falls back to full PUT snapshots; timeouts, conflicts and other failures do not trigger an overwrite retry.
 
 ## Persistence and recovery
 
@@ -53,10 +54,27 @@ node tests/browser-performance.mjs
 
 Use an appropriate Chrome path on Linux or a Playwright-managed Chromium installation. `APEXA_VITE_URL` can override the localhost URL. The optional browser runner is separate from the dependency-locked Node tests in CI; it requires the external browser/tooling environment. Record the installed Playwright/browser versions for comparisons.
 
+## Workspace upload measurement (2 November 2026)
+
+For one synthetic Plotly trace containing 250,000 exact x/y points, the previous
+full-snapshot body for a draft edit was **3,594,744 bytes**. The new draft-only
+PATCH was **185 bytes**, with no scientific payload serialized or uploaded.
+The first save still sends the full data (3,594,738 bytes in this fixture).
+This measures request bodies from the actual frontend transport against an
+in-memory HTTP stub; it does not measure browser, network or engine latency.
+Reproduce with `cd frontend && node tests/measure-workspace-transport.mjs`.
+The [captured request sizes](development/performance/2026-11-02-workspace-transport.json)
+record this fixture's output.
+
 ## Remaining limits
 
-The current server workspace API still serializes and sends complete artifact arrays on a debounced save. Server-side immutable artifact IDs with versioned source/settings references are the next step for reducing network and backend serialization cost. Do not replace numerical arrays with lossy previews in scientific records. Browser cache references alone do not eliminate that server cost.
+The server still loads and serializes complete session JSON on each save, and
+session hydration still transfers full artifacts. Server-side immutable artifact
+storage is the next step for reducing backend disk/serialization cost. These
+transport references are scoped to one session revision; they are not persistent
+artifact IDs or a change to scientific data. Full snapshots retain exact arrays,
+and the existing 20 MB workspace limit applies after resolving references.
 
-All loaded sessions/results still occupy application memory; paging bounds mounted UI, not the full data model. Initial message hydration and the first structured clone of a new large payload still have costs. Downloading a complete result or explicitly opening full text may perform substantial work. Large Plotly traces and scientific viewers need their own data-level decimation/tiling and numerical qualification. The production build still reports a large main chunk (about 617 kB) and Plotly chunk (about 4.61 MB); Plotly remains loaded on demand. Scientific engine, retrieval, model and filesystem latency must be measured separately.
+All loaded sessions/results still occupy application memory; paging bounds mounted UI, not the full data model. Initial message hydration and the first structured clone of a new large payload still have costs. Downloading a complete result or explicitly opening full text may perform substantial work. Large Plotly traces and scientific viewers need their own data-level decimation/tiling and numerical qualification. The production build still reports a main chunk above 500 kB and a Plotly chunk of about 4.61 MB; Plotly remains loaded on demand. Scientific engine, retrieval, model and filesystem latency must be measured separately.
 
 Browser backup storage is not encrypted by this change and follows the browser origin/profile. Deployment data policy must account for shared workstation profiles. The benchmark does not establish accessibility coverage, all-browser equivalence, or commissioned operator workflows.

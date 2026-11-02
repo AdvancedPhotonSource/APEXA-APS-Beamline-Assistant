@@ -41,7 +41,7 @@ window.apexaHarness = {
   renderMessage(message) { flushSync(() => root.render(<MessageBubble message={message} />)) },
   renderLauncher() { flushSync(() => root.render(<VizLauncher />)) },
   renderShell() { flushSync(() => root.render(<AppShell />)) },
-  renderToolCard() { flushSync(() => root.render(<ToolCallBox result={{ tool: 'fixture_summary', status: 'completed', data: { mean: 1 } }} />)) },
+  renderToolCard(result = { tool: 'fixture_summary', status: 'completed', data: { mean: 1 } }) { flushSync(() => root.render(<ToolCallBox result={result} />)) },
   renderWorkflows(sessionId = 'session-a') {
     useChatStore.setState({ currentSessionId: sessionId, messages: [], _pendingToolResults: [] })
     flushSync(() => root.render(<WorkflowPanel />))

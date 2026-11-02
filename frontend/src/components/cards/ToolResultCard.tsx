@@ -10,9 +10,14 @@ import { ToolCardChrome } from './ToolCardChrome'
 import { RefinementCard } from './RefinementCard'
 import { DynamicsCard } from './DynamicsCard'
 import { BackgroundCard } from './BackgroundCard'
+import { ComputeDecision } from './ComputeDecision'
 
 /** Bare card with no chrome — used inside the Canvas (already an artifact). */
 export function ToolResultBody({ result }: { result: ToolResult }) {
+  return <><ComputeDecision result={result} /><DomainToolResultBody result={result} /></>
+}
+
+function DomainToolResultBody({ result }: { result: ToolResult }) {
   switch (result.tool.split(':').pop()) {
     case 'midas_auto_calibrate':
     case 'run_ff_calibration':
@@ -74,7 +79,7 @@ export function ToolResultBody({ result }: { result: ToolResult }) {
 export function ToolResultCard({ result }: { result: ToolResult }) {
   // Errors render bare (no "open in Canvas" — nothing to inspect/reproduce).
   if (result.status === 'error' || result.status === 'failed') {
-    return <ErrorCard result={result} />
+    return <><ComputeDecision result={result} /><ErrorCard result={result} /></>
   }
 
   // Every successful tool result gets shared chrome: provenance + open-in-Canvas.

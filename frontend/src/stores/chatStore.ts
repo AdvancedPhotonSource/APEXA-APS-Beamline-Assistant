@@ -7,7 +7,7 @@ import { useVizStore } from './vizStore'
 import { useConfirmStore, nextConfirmId } from './confirmStore'
 import { canvasContext } from '@/lib/canvasContext'
 import { vizResultId } from '@/lib/canvasIdentity'
-import { listServerSessions, readServerSession, createServerSession, importBrowserSession, renameServerSession, archiveServerSession, writeServerWorkspace, SessionApiUnavailable } from '@/api/sessions'
+import { listServerSessions, readServerSession, createServerSession, importBrowserSession, renameServerSession, archiveServerSession, writeServerWorkspace, resetWorkspaceTransport, SessionApiUnavailable } from '@/api/sessions'
 import { durableWorkspace, hydrateSession, restoredWorkspace, messageArtifacts } from '@/lib/sessionWorkspace'
 import { useFileStore } from './fileStore'
 import { useImageStore } from './imageStore'
@@ -407,6 +407,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   init: (options) => {
+    resetWorkspaceTransport()
     syncEnabled = options?.sync !== false
     set({ sessionLocalOnly: false, browserCacheError: null })
     const epoch = ++lifecycle
