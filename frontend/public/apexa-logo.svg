@@ -5,9 +5,9 @@
   <defs>
     <clipPath id="tile"><rect width="96" height="96" rx="20"/></clipPath>
     <linearGradient id="glass" x2="1" y2="1">
-      <stop stop-color="#edfaff"/>
-      <stop offset=".52" stop-color="#b9dff8"/>
-      <stop offset="1" stop-color="#c4d1f4"/>
+      <stop stop-color="#d8edfc"/>
+      <stop offset=".52" stop-color="#9fc8eb"/>
+      <stop offset="1" stop-color="#a9bce6"/>
     </linearGradient>
     <linearGradient id="edge" x2="1" y2="1">
       <stop stop-color="#fff" stop-opacity=".95"/>

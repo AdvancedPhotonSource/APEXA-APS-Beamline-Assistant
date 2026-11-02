@@ -84,6 +84,11 @@ For frontend-only updates, including the logo, rebuild the frontend (or pull
 the updated tracked `frontend/dist`) and refresh the browser. Use **Cmd+Shift+R**
 on macOS or **Ctrl+Shift+R** on Windows/Linux if it still shows old assets.
 The running Python server does not need a restart for these asset changes.
+An already-open tab retains its loaded UI until refreshed. If the controls still
+look enlarged after a hard refresh, reset browser zoom with **Cmd+0** or
+**Ctrl+0**. At desktop width with a mouse/trackpad, the top bar is 32 px high,
+the model selector is 24 px high, and the navigation rail is 52 px wide.
+Touch screens use larger controls, and a narrow window may wrap the top bar.
 
 For the Python-served UI at `http://localhost:8001`, finish or cancel active work
 through its normal controls before a backend restart, stop the web server in its
