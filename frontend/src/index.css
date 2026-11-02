@@ -140,6 +140,9 @@
   border-bottom: 1px solid var(--apexa-border); background: var(--apexa-surface);
 }
 .apexa-brand { font-size: 15px; font-weight: 800; letter-spacing: -0.5px; color: var(--apexa-accent); }
+:root:not([data-theme]) .apexa-brand-mark, [data-theme="light"] .apexa-brand-mark {
+  filter: drop-shadow(0 1px 1px rgb(27 58 102 / 22%));
+}
 .apexa-header-controls { display: flex; align-items: center; gap: 5px; margin-left: auto; min-width: 0; }
 .apexa-model-select {
   width: clamp(100px, 15vw, 160px); min-width: 0; height: 24px; padding: 1px 4px;
