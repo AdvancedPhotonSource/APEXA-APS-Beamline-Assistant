@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
   <title>APEXA — glass, photon beam and sample</title>
-  <desc>An indigo A on a deep sapphire glass tile with faint diffraction rings, crossed by a metallic gold photon beam and a bright sample diamond.</desc>
+  <desc>An indigo A on a pearl-blue glass tile with faint diffraction rings, crossed by a metallic gold photon beam and a bright sample diamond.</desc>
   <defs>
     <clipPath id="tile"><rect width="96" height="96" rx="20"/></clipPath>
     <linearGradient id="glass" x2="1" y2="1">
-      <stop stop-color="#45678f"/>
-      <stop offset=".52" stop-color="#234572"/>
-      <stop offset="1" stop-color="#162d50"/>
+      <stop stop-color="#f8fbff"/>
+      <stop offset=".52" stop-color="#e3edf7"/>
+      <stop offset="1" stop-color="#c2d2e5"/>
     </linearGradient>
     <linearGradient id="edge" x2="1" y2="1">
       <stop stop-color="#fff" stop-opacity=".95"/>
@@ -28,7 +28,7 @@
   </defs>
   <g clip-path="url(#tile)">
     <rect width="96" height="96" fill="url(#glass)"/>
-    <g fill="none" stroke="#fff" stroke-width=".9" filter="url(#soft)">
+    <g fill="none" stroke="#7695b9" stroke-width=".9" filter="url(#soft)">
       <circle cx="48" cy="48" r="24" opacity=".08"/>
       <circle cx="48" cy="48" r="34" opacity=".14"/>
       <circle cx="48" cy="48" r="43" opacity=".08"/>
@@ -38,8 +38,8 @@
   <rect x=".6" y=".6" width="94.8" height="94.8" rx="19.4" fill="none" stroke="url(#edge)" stroke-width="1.2"/>
   <path d="M24 76 48 20 72 76" fill="none" stroke="#e0edff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity=".55" transform="translate(0 .7)"/>
   <path d="M24 76 48 20 72 76" fill="none" stroke="url(#ink)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  <rect x="10" y="55.5" width="56" height="5" rx="2.5" fill="url(#beam)"/>
+  <rect x="10" y="55.5" width="56" height="5" rx="2.5" fill="url(#beam)" stroke="#b47b17" stroke-width=".45"/>
   <path d="M13 56.4h50" stroke="#fff9db" stroke-width=".65" stroke-linecap="round" opacity=".8"/>
-  <path d="m48 52 5 6-5 6-5-6Z" fill="#fffef5"/>
+  <path d="m48 52 5 6-5 6-5-6Z" fill="#fffef5" stroke="#b78c36" stroke-width=".4"/>
   <path d="m48 52 5 6h-5Z" fill="#f6e5b7"/>
 </svg>
