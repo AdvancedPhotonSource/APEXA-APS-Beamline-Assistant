@@ -58,23 +58,24 @@ its tooltip and accessible label. Touch input keeps larger controls, and narrow
 screens can wrap the header. Panel placement and Chat / Split / Canvas behavior
 are independent of these dimensions.
 
-The APEXA mark combines a white A, a cyan photon beam and sample point, and a
-soft field of concentric diffraction rings. A rim of tapered rays takes visual
-inspiration from Krishna's Sudarshan chakra; it suggests rotation without an
-animation. The diffuse background is original vector artwork inspired by the
-ceria pattern in `test-BISCUIT`; it contains no detector image or acquisition
-data. The background uses deep, muted raincloud blue-grey with soft misty
-highlights, inspired by Krishna's Shyam complexion. Silver diffraction rings,
-a white A and a cyan beam remain clear at toolbar size. These logo colors do
-not alter the application's Classic palette.
+The APEXA mark uses an indigo A on an ice-blue glass tile, crossed by one
+iridescent cyan-to-violet photon beam and a bright sample diamond. A soft sheen
+and fine edge highlight give the tile depth; simple geometry keeps the mark
+clear at toolbar size. The rings and jagged rim are removed. These logo colors
+do not alter the application's Classic palette.
 
 Its canonical SVG is `frontend/public/apexa-mark.svg`, also copied to
-`frontend/public/favicon.svg` and used by the README. The shared `ApexaLogo`
+`frontend/public/favicon.svg` and used by the README. A 1024 × 1024 PNG export
+with transparent corners is saved at `frontend/public/apexa-mark.png` for direct
+preview and reuse in documents. The full wordmark in `frontend/public/apexa-logo.svg`
+combines the same icon with custom geometric vector lettering, so it requires
+no installed font. Its transparent PNG export is `frontend/public/apexa-logo.png`
+(1536 × 448). The shared `ApexaLogo`
 component bundles that source for the header, navigation, welcome screen,
 assistant replies and the Thinking indicator shown after sending a message.
 Chat avatars have an accessible APEXA label. No separate image request, external
 font, runtime image processing or service is needed. When updating the mark,
-keep the favicon copy in sync and rebuild `frontend/dist`.
+keep the favicon, wordmark icon and PNG exports in sync and rebuild `frontend/dist`.
 
 ## See the changes
 
