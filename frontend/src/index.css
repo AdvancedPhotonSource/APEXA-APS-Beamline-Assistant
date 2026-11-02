@@ -139,14 +139,14 @@
 
 .apexa-app-shell { height: 100vh; height: 100dvh; overflow: hidden; }
 .apexa-topbar {
-  display: flex; flex-shrink: 0; align-items: center; min-height: 40px;
-  gap: 10px; padding: 4px 10px; min-width: 0;
+  display: flex; flex-shrink: 0; align-items: center; min-height: 32px;
+  gap: 8px; padding: 2px 8px; min-width: 0;
   border-bottom: 1px solid var(--apexa-border); background: var(--apexa-surface);
 }
-.apexa-brand { font-size: 17px; font-weight: 800; letter-spacing: -0.5px; color: var(--apexa-accent); }
-.apexa-header-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
+.apexa-brand { font-size: 15px; font-weight: 800; letter-spacing: -0.5px; color: var(--apexa-accent); }
+.apexa-header-controls { display: flex; align-items: center; gap: 5px; margin-left: auto; min-width: 0; }
 .apexa-model-select {
-  width: clamp(100px, 19vw, 230px); min-width: 0; height: 28px; padding: 2px 5px;
+  width: clamp(100px, 15vw, 160px); min-width: 0; height: 24px; padding: 1px 4px;
   font-size: 11px; border: 1px solid var(--apexa-border); border-radius: 5px;
   background: var(--apexa-surface-2); color: var(--apexa-text-2); text-overflow: ellipsis;
 }
@@ -159,15 +159,15 @@
 .apexa-compact-button:hover { border-color: var(--apexa-accent); }
 .apexa-compact-button:focus-visible { outline: 2px solid var(--apexa-accent); outline-offset: 1px; }
 .apexa-compact-button:disabled { opacity: 0.4; cursor: default; }
-.apexa-feature-button { width: auto; gap: 5px; padding: 0 7px; font-size: 11px; }
+.apexa-topbar .apexa-compact-button { width: 24px; height: 24px; border-radius: 4px; }
 .apexa-send-button:not(:disabled) { background: var(--apexa-accent); color: white; border-color: var(--apexa-accent); }
 .apexa-layout-switch {
-  display: flex; flex-shrink: 0; padding: 2px; gap: 2px; border-radius: 7px;
+  display: flex; flex-shrink: 0; padding: 1px; gap: 1px; border-radius: 5px;
   border: 1px solid var(--apexa-border); background: var(--apexa-surface-2);
 }
 .apexa-layout-switch button {
-  display: flex; align-items: center; gap: 4px; padding: 3px 10px; min-height: 24px;
-  border: 0; border-radius: 5px; font-size: 11px; cursor: pointer;
+  display: flex; align-items: center; gap: 3px; padding: 1px 7px; min-height: 22px;
+  border: 0; border-radius: 3px; font-size: 11px; cursor: pointer;
   background: transparent; color: var(--apexa-text-muted);
 }
 .apexa-layout-switch button[aria-pressed="true"] {
@@ -175,7 +175,7 @@
 }
 .apexa-layout-switch button:disabled { opacity: 0.4; cursor: default; }
 .apexa-result-count {
-  padding: 1px 5px; border-radius: 5px; font-size: 10px;
+  padding: 0 4px; border-radius: 3px; font-size: 10px;
   background: var(--apexa-accent-soft); color: var(--apexa-accent);
 }
 .apexa-pane-divider {
@@ -234,23 +234,22 @@
 }
 @media (max-width: 900px) {
   .apexa-side-pane {
-    position: absolute; inset: 0 auto 0 68px; z-index: 10; max-width: calc(100% - 92px);
+    position: absolute; inset: 0 auto 0 52px; z-index: 10; max-width: calc(100% - 76px);
     border-right: 1px solid var(--apexa-border); box-shadow: var(--apexa-elev-2);
   }
   .apexa-sidebar-divider { display: none; }
-  .apexa-header-tagline { display: none; }
-  .apexa-feature-label { display: none; }
 }
 @media (max-width: 600px) {
-  .apexa-topbar { flex-wrap: wrap; gap: 4px 8px; padding: 4px 8px; }
-  .apexa-layout-switch button { padding: 3px 7px; }
+  .apexa-topbar { flex-wrap: wrap; gap: 3px 6px; padding: 3px 6px; }
+  .apexa-layout-switch button { padding: 1px 6px; }
   .apexa-composer { padding: 8px; }
   .apexa-connection-label { display: none; }
   .apexa-header-controls { gap: 5px; }
 }
 @media (pointer: coarse) {
-  .apexa-compact-button { width: 36px; height: 36px; }
-  .apexa-feature-button { width: auto; min-width: 36px; }
+  .apexa-compact-button, .apexa-topbar .apexa-compact-button { width: 36px; height: 36px; }
+  .apexa-model-select { height: 36px; }
+  .apexa-layout-switch button { min-height: 36px; }
 }
 
 html, body, #root {

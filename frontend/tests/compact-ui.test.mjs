@@ -11,6 +11,8 @@ import { workflowFixture } from './workflow-fixture.mjs'
 // Component markup checks; these do not claim browser layout/interaction testing.
 registerHooks({
   resolve(specifier, context, next) {
+    if (specifier.endsWith('.svg?raw')) return next(specifier.startsWith('/')
+      ? new URL(`../public${specifier}`, import.meta.url).href : new URL(specifier, context.parentURL).href, context)
     const base = specifier.startsWith('@/') ? new URL(`../src/${specifier.slice(2)}`, import.meta.url)
       : specifier.startsWith('.') && !/\.[a-z]+$/.test(specifier) && context.parentURL ? new URL(specifier, context.parentURL) : null
     if (base) {
@@ -22,6 +24,8 @@ registerHooks({
     return next(specifier, context)
   },
   load(url, context, next) {
+    if (url.endsWith('.svg?raw')) return { format: 'module', shortCircuit: true,
+      source: `export default ${JSON.stringify(readFileSync(new URL(url), 'utf8'))}` }
     if (url.endsWith('.tsx')) return { format: 'module', shortCircuit: true,
       source: ts.transpileModule(readFileSync(new URL(url), 'utf8'), {
         compilerOptions: { jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },

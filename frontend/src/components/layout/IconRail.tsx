@@ -1,3 +1,5 @@
+import { ApexaLogo as BrandMark } from '@/components/ui/ApexaLogo'
+
 export type RailView = 'history' | 'files' | 'workflows' | 'motors' | 'viewers' | null
 
 interface IconRailProps {
@@ -15,12 +17,12 @@ export function IconRail({ activeView, onSelect }: IconRailProps) {
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
-      width: 68,
+      width: 52,
       flexShrink: 0,
       background: 'var(--apexa-rail-bg)',
       borderRight: '1px solid var(--apexa-border)',
-      paddingTop: 10,
-      paddingBottom: 10,
+      paddingTop: 6,
+      paddingBottom: 6,
       gap: 2,
     }}>
       <RailButton active={activeView === 'files'} onClick={() => toggle('files')} label="Data">
@@ -64,7 +66,7 @@ export function IconRail({ activeView, onSelect }: IconRailProps) {
       </RailButton>
 
       {/* APEXA logo mark */}
-      <ApexaLogo size={30} />
+      <BrandMark size={28} />
     </nav>
   )
 }
@@ -93,10 +95,10 @@ function RailButton({
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 3,
-        width: 58,
-        height: 56,
-        borderRadius: 10,
+        gap: 1,
+        width: 44,
+        height: 44,
+        borderRadius: 6,
         border: active ? '1px solid rgba(59,130,246,0.35)' : '1px solid transparent',
         cursor: 'pointer',
         transition: 'all 150ms var(--apexa-ease)',

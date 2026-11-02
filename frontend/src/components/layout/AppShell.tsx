@@ -78,7 +78,7 @@ export function AppShell() {
   const [layoutChoice, setLayoutChoice] = useState<WorkspaceView | null>(() => {
     try { return parseWorkspaceView(localStorage.getItem(WORKSPACE_LAYOUT_KEY)) } catch { return null }
   })
-  const [workspaceWidth, setWorkspaceWidth] = useState(window.innerWidth - 68)
+  const [workspaceWidth, setWorkspaceWidth] = useState(window.innerWidth - 52)
   const workspaceRef = useRef<HTMLDivElement>(null)
   const { canSplit, view } = workspaceLayout(layoutChoice, workspaceWidth)
 
@@ -119,7 +119,7 @@ export function AppShell() {
   }
 
   const handleSideDrag = useCallback((dx: number) => {
-    setSideW(w => Math.max(200, Math.min(420, window.innerWidth - 68 - MIN_CHAT_WIDTH, w + dx)))
+    setSideW(w => Math.max(200, Math.min(420, window.innerWidth - 52 - MIN_CHAT_WIDTH, w + dx)))
   }, [])
   const availableWidth = Math.max(1, workspaceWidth - DIVIDER_WIDTH)
   const maxChatWidth = Math.max(MIN_CHAT_WIDTH, availableWidth - MIN_CANVAS_WIDTH)

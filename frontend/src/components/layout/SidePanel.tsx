@@ -25,7 +25,7 @@ export function SidePanel({ view, onClose }: SidePanelProps) {
   return (
     <div id="apexa-side-panel" className="h-full border-r overflow-hidden flex flex-col"
       style={{ background: 'var(--apexa-surface)', borderColor: 'var(--apexa-border)', boxShadow: 'var(--apexa-elev-1)' }}>
-      <div className="px-3 py-2.5 border-b flex items-center gap-2"
+      <div className="px-2 py-1 border-b flex items-center gap-2"
         style={{
           borderColor: 'var(--apexa-border)',
           background: 'linear-gradient(180deg, var(--apexa-surface-2), transparent)',

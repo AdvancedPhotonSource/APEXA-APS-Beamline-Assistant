@@ -20,8 +20,8 @@ export function Header({ children }: { children?: ReactNode }) {
 
   return (
     <header className="apexa-topbar">
-      <span className="flex shrink-0 items-center gap-2" title="Advanced Photon EXperiment Assistant">
-        <ApexaLogo /><span className="apexa-brand">APEXA</span>
+      <span className="flex shrink-0 items-center gap-1.5" title="Advanced Photon EXperiment Assistant">
+        <ApexaLogo size={24} /><span className="apexa-brand">APEXA</span>
       </span>
       {children}
       <div className="apexa-header-controls">
@@ -35,7 +35,6 @@ export function Header({ children }: { children?: ReactNode }) {
           <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
             <path d="M9 18h6m-5 3h4M8 14a6 6 0 1 1 8 0c-1 .8-1 1.8-1 4H9c0-2.2 0-3.2-1-4Z" />
           </svg>
-          <span className="apexa-feature-label">Request a feature</span>
         </button>
         <button type="button" className="apexa-compact-button" onClick={() => setMode(nextTheme.value)}
           aria-label={`Theme: ${theme.label}. Switch to ${nextTheme.label}`} title={`Theme: ${theme.label} · switch to ${nextTheme.label}`}>

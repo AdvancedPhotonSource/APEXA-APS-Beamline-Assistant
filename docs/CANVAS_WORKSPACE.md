@@ -52,9 +52,18 @@ respected. Choose Classic light if a returning browser still shows a dark theme.
 The palette is independent of the Chat / Split / Canvas layout: changing colors
 does not change panel arrangement or controls.
 
-The APEXA mark combines an A-shaped peak with an incoming photon beam and outgoing
-diffraction arcs. Its SVG source is `frontend/public/apexa-mark.svg`, shared by
-the header and favicon. No external font, image request or image model is needed.
+Desktop controls use compact sizing: a 32 px top bar, a model selector up to
+160 × 24 px, and a 52 px navigation rail. The feature-request lightbulb retains
+its tooltip and accessible label. Touch input keeps larger controls, and narrow
+screens can wrap the header. Panel placement and Chat / Split / Canvas behavior
+are independent of these dimensions.
+
+The APEXA mark combines a white A with an incoming photon beam, a crystal/sample
+interaction point, and concentric elliptical diffraction rings with discrete
+reflections. Its SVG source is `frontend/public/apexa-mark.svg`, also used for the
+favicon and documentation. Header and navigation marks embed that source in the
+frontend bundle, so they remain visible without a separate logo request. No
+external font or image-generation service is needed.
 
 ## See the changes
 
