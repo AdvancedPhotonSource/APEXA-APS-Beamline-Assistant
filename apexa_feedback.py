@@ -3,9 +3,9 @@
 
 Feedback without context is noise. "It gave a wrong answer" is unactionable a week
 later; "run X, model Y, engine `native` because APEXA_MIDAS_BIN was unset, these
-four tool calls" is a bug report. So every record carries the turn's machine
-context automatically, and the UI shows the user exactly what that is before
-anything is written.
+four tool calls" is a bug report. Answer reports accept caller-supplied diagnostic
+context that the UI shows before saving. Standalone feature requests use the
+same persistent store without attaching turn context.
 
 Design constraints that are specific to APEXA, not generic product advice:
 
@@ -177,8 +177,8 @@ def _apexa_versions() -> Dict[str, str]:
     return out
 
 
-def read_all(limit: int = 0) -> List[Dict[str, Any]]:
-    """Every record, newest last. Bad lines are skipped, not fatal."""
+def read_all(limit: int = 0, *, category: str = "") -> List[Dict[str, Any]]:
+    """Matching records, newest last. Filter before limiting; skip bad lines."""
     out: List[Dict[str, Any]] = []
     d = feedback_dir()
     if not d.exists():
@@ -190,7 +190,9 @@ def read_all(limit: int = 0) -> List[Dict[str, Any]]:
                 if not ln:
                     continue
                 try:
-                    out.append(json.loads(ln))
+                    rec = json.loads(ln)
+                    if isinstance(rec, dict) and (not category or rec.get("category") == category):
+                        out.append(rec)
                 except Exception:
                     continue
         except Exception:
@@ -198,10 +200,10 @@ def read_all(limit: int = 0) -> List[Dict[str, Any]]:
     return out[-limit:] if limit else out
 
 
-def summarize() -> Dict[str, Any]:
+def summarize(*, category: str = "") -> Dict[str, Any]:
     """Counts a maintainer actually wants: volume, direction, and what is being
     reported against."""
-    recs = read_all()
+    recs = read_all(category=category)
     by_kind: Dict[str, int] = {}
     by_cat: Dict[str, int] = {}
     by_tool: Dict[str, int] = {}
@@ -230,13 +232,17 @@ if __name__ == "__main__":                       # tiny triage CLI
     ap = argparse.ArgumentParser(description="APEXA feedback triage")
     ap.add_argument("cmd", choices=("summary", "list", "export"))
     ap.add_argument("-n", type=int, default=20)
+    ap.add_argument("--category", choices=CATEGORIES, default="",
+                    help="Only show this feedback category (for example feature_request)")
     a = ap.parse_args()
+    if a.n < 0:
+        ap.error("-n must be zero (all records) or positive")
     if a.cmd == "summary":
-        print(json.dumps(summarize(), indent=2))
+        print(json.dumps(summarize(category=a.category), indent=2))
     elif a.cmd == "list":
-        for r in read_all(limit=a.n):
+        for r in read_all(limit=a.n, category=a.category):
             mark = {"up": "+", "down": "-", "report": "!"}.get(r.get("kind"), "?")
-            print(f"{mark} {r.get('ts','')[:19]}  {r.get('category') or r.get('kind'):<16}"
+            print(f"{mark} {r.get('ts','')[:19]}  {r.get('id', '?')}  {r.get('category') or r.get('kind'):<16}"
                   f" {(r.get('comment') or '')[:72]}")
     else:
-        print(json.dumps(read_all(), indent=2, default=str))
+        print(json.dumps(read_all(category=a.category), indent=2, default=str))

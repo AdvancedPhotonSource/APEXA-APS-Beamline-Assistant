@@ -101,9 +101,8 @@ export async function fetchColormaps(): Promise<{ colormaps: string[] }> {
 }
 
 // ── Feedback ────────────────────────────────────────────────────────────────
-// Records stay on this machine (JSONL under ~/.apexa/feedback). Nothing is
-// posted outside ANL — beamline hosts run at network tier `internal` or `data`
-// and may reach nothing external at all.
+// Records stay on the APEXA server (JSONL under ~/.apexa/feedback by default).
+// Feature requests and answer reports share this persistent store.
 
 export type FeedbackKind = 'up' | 'down' | 'report'
 
@@ -136,10 +135,19 @@ export async function sendFeedback(payload: {
   context?: FeedbackContext | Record<string, unknown>
   redact?: boolean
 }): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const res = await fetch(`${BASE}/api/feedback`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
-  return res.json()
+  try {
+    const res = await fetch(`${BASE}/api/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
+    })
+    const data = await res.json()
+    if (res.ok && data?.ok === true && typeof data.id === 'string' && data.id) {
+      return { ok: true, id: data.id }
+    }
+    return { ok: false, error: typeof data?.error === 'string' ? data.error : 'The server could not confirm the save. Please try again.' }
+  } catch {
+    return { ok: false, error: 'Could not confirm the save. Check your connection and try again.' }
+  }
 }

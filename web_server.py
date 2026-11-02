@@ -1137,7 +1137,7 @@ async def health_ready():
 
 @app.post("/api/feedback")
 async def post_feedback(payload: dict = Body(...)):
-    """Record user feedback on a specific answer.
+    """Record answer feedback or a standalone feature request.
 
     The client sends what the USER saw and approved, not whatever the server
     could scrape: the web UI shows the attached context in the dialog and lets it

@@ -57,6 +57,7 @@ nav:
       - Windows Setup: WINDOWS_SETUP.md
   - User Guide:
       - Canvas Workspace: CANVAS_WORKSPACE.md
+      - Feature Requests: FEATURE_REQUESTS.md
       - Scientific Workflows: SCIENTIFIC_WORKFLOWS.md
       - Powder Refinement: powder-refinement.md
       - GSAS-II Canvas Workbench: gsas2-workbench.md

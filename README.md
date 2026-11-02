@@ -310,6 +310,7 @@ to `MIDAS_PATH` — a clone, required only by the legacy C++ / AutoCalibrateZarr
 ## Documentation
 
 - **[Canvas workspace](docs/CANVAS_WORKSPACE.md)** — Tabs, comparison, Classic light, and how to load updates
+- **[Feature requests](docs/FEATURE_REQUESTS.md)** — Request improvements in the Web UI; review and export the persistent feedback queue
 - **[Shared scientific workflows](docs/SCIENTIFIC_WORKFLOWS.md)** — Eight reviewed LangGraph recipes, explicit approvals and durable recovery
 - **[Repository layout](docs/REPOSITORY_LAYOUT.md)** — Source locations and preserved local outputs
 
