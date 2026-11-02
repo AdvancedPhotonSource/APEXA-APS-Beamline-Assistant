@@ -70,9 +70,9 @@ function WelcomeScreen() {
   return (
     <div className="apexa-chat-welcome flex-1 min-h-0 overflow-y-auto px-5 py-6 animate-fade-in">
       <div className="flex min-h-full flex-col items-center justify-center">
-      <div className="relative mb-6 flex items-center gap-3">
-        <ApexaLogo size={48} decorative />
-        <div className="text-[56px] font-extrabold tracking-tight"
+      <div className="relative mb-4 flex items-center gap-2">
+        <ApexaLogo decorative />
+        <div className="text-xl font-bold tracking-tight"
           style={{
             background: 'var(--apexa-accent-grad)',
             WebkitBackgroundClip: 'text',

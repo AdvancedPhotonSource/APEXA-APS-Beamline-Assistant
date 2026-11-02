@@ -75,7 +75,10 @@ chat avatars and toolbar controls. Its transparent PNG export is `frontend/publi
 (1536 × 448). The shared `ApexaLogo`
 component bundles that source for the header, navigation, welcome screen,
 assistant replies and the Thinking indicator shown after sending a message.
-Chat avatars use 28 px, while the header mark uses 24 px.
+All WebUI logo icons use one shared 20 px size: header, navigation, welcome
+screen, replies and Thinking. The welcome wordmark is also 20 px. The high
+resolution PNG files remain available for document reuse; their resolution does
+not control their displayed size in the app.
 Chat avatars have an accessible APEXA label. No separate image request, external
 font, runtime image processing or service is needed. When updating the mark,
 keep the favicon, wordmark icon and PNG exports in sync and rebuild `frontend/dist`.

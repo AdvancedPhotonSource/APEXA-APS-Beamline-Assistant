@@ -66,7 +66,7 @@ export function IconRail({ activeView, onSelect }: IconRailProps) {
       </RailButton>
 
       {/* APEXA logo mark */}
-      <ApexaLogo size={28} />
+      <ApexaLogo />
     </nav>
   )
 }
