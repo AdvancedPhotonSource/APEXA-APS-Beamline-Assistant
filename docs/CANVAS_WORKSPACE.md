@@ -58,11 +58,11 @@ its tooltip and accessible label. Touch input keeps larger controls, and narrow
 screens can wrap the header. Panel placement and Chat / Split / Canvas behavior
 are independent of these dimensions.
 
-The APEXA mark uses a pale silver A on a deep sapphire glass tile, crossed by one
+The APEXA mark uses an indigo A on a deep sapphire glass tile, crossed by one
 metallic gold photon beam and a bright sample diamond. Three faint, smooth
 diffraction rings sit behind the glass sheen. A fine edge highlight gives the
-tile depth; the dark field contrasts with the light A and golden beam to keep
-the mark clear at toolbar size. These logo colors do not alter the application's
+tile depth; a subtle light edge defines the indigo A against the dark field.
+The golden beam remains bright. These logo colors do not alter the application's
 Classic palette.
 
 Its canonical SVG is `frontend/public/apexa-mark.svg`, also copied to
@@ -75,6 +75,7 @@ chat avatars and toolbar controls. Its transparent PNG export is `frontend/publi
 (1536 × 448). The shared `ApexaLogo`
 component bundles that source for the header, navigation, welcome screen,
 assistant replies and the Thinking indicator shown after sending a message.
+Chat avatars use 28 px, while the header mark uses 24 px.
 Chat avatars have an accessible APEXA label. No separate image request, external
 font, runtime image processing or service is needed. When updating the mark,
 keep the favicon, wordmark icon and PNG exports in sync and rebuild `frontend/dist`.

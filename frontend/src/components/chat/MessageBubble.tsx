@@ -98,7 +98,7 @@ export const MessageBubble = memo(function MessageBubble({ message }: { message:
     }}>
       {!isUser && (
         <div style={{ marginTop: 4, flexShrink: 0 }}>
-          <ApexaLogo size={32} />
+          <ApexaLogo size={28} />
         </div>
       )}
 

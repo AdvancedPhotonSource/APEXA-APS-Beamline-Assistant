@@ -9,7 +9,7 @@ export function TypingIndicator() {
   return (
     <div style={{ display: 'flex', gap: 12, padding: '14px 20px' }}>
       <div style={{ marginTop: 4, flexShrink: 0 }}>
-        <ApexaLogo size={32} />
+        <ApexaLogo size={28} />
       </div>
       <div className="rounded-2xl shadow-sm animate-fade-in" style={{
         padding: '12px 16px',
