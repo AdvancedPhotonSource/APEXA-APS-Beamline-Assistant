@@ -57,6 +57,7 @@ nav:
       - Windows Setup: WINDOWS_SETUP.md
   - User Guide:
       - Canvas Workspace: CANVAS_WORKSPACE.md
+      - Scientific Workflows: SCIENTIFIC_WORKFLOWS.md
       - Powder Refinement: powder-refinement.md
       - GSAS-II Canvas Workbench: gsas2-workbench.md
       - Diffraction Software Survey: diffraction-software-survey.md
@@ -65,6 +66,10 @@ nav:
       - Tomography Setup: TOMO_SETUP.md
   - Technical Reference:
       - Compute Dispatch: COMPUTE_DISPATCH.md
+      - Compute Reservations: COMPUTE_RESERVATIONS.md
+      - Acquisition Runtime: ACQUISITION_RUNTIME.md
+      - Alignment Runtime: ALIGNMENT_RUNTIME.md
+      - Runtime and Retrieval: OPERATIONS_AND_RETRIEVAL.md
       - APS Readiness: APS_READINESS.md
   - Setup & Deployment:
       - Beamline Setup: setup/beamline-setup.md

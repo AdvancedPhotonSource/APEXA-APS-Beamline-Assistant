@@ -38,6 +38,7 @@ window.apexaHarness = {
   renderResults() { flushSync(() => root.render(<ResultsPanel />)) },
   renderFiles() { flushSync(() => root.render(<FileBrowser />)) },
   renderCanvas() { flushSync(() => root.render(<VizPanel />)) },
+  renderMessage(message) { flushSync(() => root.render(<MessageBubble message={message} />)) },
   renderLauncher() { flushSync(() => root.render(<VizLauncher />)) },
   renderShell() { flushSync(() => root.render(<AppShell />)) },
   renderToolCard() { flushSync(() => root.render(<ToolCallBox result={{ tool: 'fixture_summary', status: 'completed', data: { mean: 1 } }} />)) },

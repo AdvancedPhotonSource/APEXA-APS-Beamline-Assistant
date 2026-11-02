@@ -72,14 +72,14 @@ function WelcomeScreen() {
       <div className="relative mb-6">
         <div className="text-[56px] font-extrabold tracking-tight"
           style={{
-            background: 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 40%, #06b6d4 100%)',
+            background: 'var(--apexa-accent-grad)',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
           }}>
           APEXA
         </div>
         <div className="absolute -inset-4 rounded-full opacity-20 blur-2xl"
-          style={{ background: 'linear-gradient(135deg, #3b82f6, #8b5cf6, #06b6d4)' }} />
+          style={{ background: 'var(--apexa-app-glow)' }} />
       </div>
 
       <p className="text-sm text-center max-w-md mb-8 leading-relaxed" style={{ color: 'var(--apexa-text-muted)' }}>

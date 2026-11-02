@@ -5,6 +5,7 @@ const browser = await chromium.launch({ headless: true, executablePath: process.
 const page = await browser.newPage({ viewport: { width: 1200, height: 1000 } })
 page.setDefaultTimeout(15000)
 const errors = [], dialogs = [], passed = []
+const structureRequests = []
 page.on('pageerror', error => errors.push(String(error)))
 page.on('dialog', async dialog => { dialogs.push(dialog.message()); await dialog.dismiss() })
 const imageData = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" fill="cyan"/></svg>')
@@ -14,6 +15,10 @@ const send = (route, body, status = 200) => route.fulfill({ status, contentType:
 const waitFor = async check => { for (let i = 0; i < 100 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 10)); assert.ok(check()) }
 await page.route(url => /^\/(?:api|local\/api|remote\/api)\//.test(url.pathname), async route => {
   const url = new URL(route.request().url())
+  if (url.pathname.endsWith('/api/science/structure')) {
+    structureRequests.push(url.pathname)
+    return send(route, { detail: `Synthetic ${url.pathname.startsWith('/remote/') ? 'remote' : 'local'} structure unavailable` }, 503)
+  }
   if (url.pathname === '/api/upload') {
     uploadCount++
     if (holdUpload) { delayedUpload = route; return }
@@ -115,6 +120,38 @@ try {
   assert.equal((await state()).activeId, firstGeneric)
   assert.equal((await state()).ids.filter(id => id === firstGeneric).length, 1)
   passed.push('generic tool card remounts reuse the same explicit result tab')
+
+  // Saved chats can retain pre-migration artifact IDs while Canvas uses the
+  // shared file identity. Their shortcut must still select the restored view.
+  await page.evaluate(() => {
+    const h = window.apexaHarness
+    const legacy = { id: 'old-cif-shortcut', type: 'structure', title: 'Legacy CIF',
+      data: { path: '/synthetic/legacy.cif' }, sourceMessageId: 'old-message' }
+    h.useVizStore.getState().addArtifact(legacy)
+    h.useVizStore.getState().closeTab(h.useVizStore.getState().activeId)
+    h.renderMessage({ id: 'old-message', role: 'assistant', content: 'Saved structure', timestamp: 1, artifacts: [legacy] })
+  })
+  await page.getByRole('button', { name: 'View in panel', exact: true }).click()
+  assert.equal((await state()).activeId, 'canvas-structure-local-/synthetic/legacy.cif')
+  assert.ok((await state()).openIds.includes((await state()).activeId))
+  passed.push('legacy chat shortcut opens the migrated file viewer')
+
+  const beforeStructure = structureRequests.length
+  await page.evaluate(() => {
+    const h = window.apexaHarness
+    h.useVizStore.getState().addArtifact({ id: 'remote-cif', type: 'structure', title: 'Remote CIF',
+      data: { path: '/synthetic/location.cif', location: 'remote' }, sourceMessageId: '' })
+    h.renderCanvas()
+  })
+  await page.getByRole('alert').filter({ hasText: 'Synthetic remote structure unavailable' }).waitFor()
+  assert.deepEqual(structureRequests.slice(beforeStructure), ['/remote/api/science/structure'])
+  await page.evaluate(() => window.apexaHarness.useVizStore.getState().addArtifact({
+    id: 'local-cif', type: 'structure', title: 'Local CIF',
+    data: { path: '/synthetic/location.cif', location: 'local' }, sourceMessageId: '',
+  }))
+  await page.getByRole('alert').filter({ hasText: 'Synthetic local structure unavailable' }).waitFor()
+  assert.deepEqual(structureRequests.slice(beforeStructure), ['/remote/api/science/structure', '/local/api/science/structure'])
+  passed.push('remote and local CIF viewers use their own host without fallback')
 
   await page.evaluate(() => window.apexaHarness.renderShell())
   const layouts = page.getByRole('group', { name: 'Workspace layout' })

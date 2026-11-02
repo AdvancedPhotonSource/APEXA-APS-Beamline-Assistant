@@ -175,3 +175,87 @@ test('explicit report opening reveals the canvas and restores from recorded tool
     assert.equal(useVizStore.getState().artifacts[0].data.path, '/fixture/report.html')
   } finally { dispose(); wsManager.disconnect(); useVizStore.getState().clear() }
 })
+
+function liveChatFixture() {
+  const saved = new Map()
+  globalThis.localStorage = { getItem: k => saved.get(k) ?? null, setItem: (k, v) => saved.set(k, v), removeItem: k => saved.delete(k) }
+  globalThis.window = { location: { protocol: 'http:', host: 'fixture' } }
+  let socket
+  globalThis.WebSocket = class {
+    static OPEN = 1; static CONNECTING = 0
+    readyState = 1
+    constructor() { socket = this }
+    send() {}
+    close() { this.readyState = 3 }
+  }
+  useVizStore.getState().clear()
+  const dispose = useChatStore.getState().init({ sync: false })
+  wsManager.connect()
+  const thread = useChatStore.getState().currentSessionId
+  return {
+    thread,
+    event: data => socket.onmessage({ data: JSON.stringify({ thread_id: thread, ...data }) }),
+    close: () => { dispose(); wsManager.disconnect(); useVizStore.getState().clear() },
+  }
+}
+const settle = async () => { for (let i = 0; i < 5; i++) await new Promise(resolve => setImmediate(resolve)) }
+
+test('streamed and final-answer integration plots reuse folder identity without reopening a closed tab', async context => {
+  const live = liveChatFixture()
+  const plotly = { data: [{ x: [1, 2], y: [3, 4] }] }
+  context.mock.method(globalThis, 'fetch', async () => ({ ok: true, json: async () => ({ title: 'Lineout', plotly }) }))
+  const payload = { tool: 'midas_integrate_series', status: 'success', lineout_xy: '/synthetic/lineout.xy' }
+  try {
+    live.event({ type: 'tool_result', tool: payload.tool, result: JSON.stringify(payload) })
+    await settle()
+    const { vizResultId } = await import('../src/lib/canvasIdentity.ts')
+    const id = vizResultId('lineout', payload.lineout_xy, plotly)
+    assert.equal(useVizStore.getState().activeId, id)
+    useVizStore.getState().closeTab(id)
+    const revision = useVizStore.getState().canvasRevision
+    live.event({ type: 'chat_response', message: JSON.stringify(payload) })
+    await settle()
+    assert.equal(useVizStore.getState().artifacts.length, 1)
+    assert.deepEqual(useVizStore.getState().openIds, [])
+    assert.equal(useVizStore.getState().canvasRevision, revision)
+    assert.deepEqual(useVizStore.getState().artifacts[0].provenance.inputs, [payload.lineout_xy])
+  } finally { live.close() }
+})
+
+test('automatic integration plot ignores a delayed response after switching away and back', async context => {
+  const live = liveChatFixture()
+  let resolve
+  let signal
+  context.mock.method(globalThis, 'fetch', (_url, options) => {
+    signal = options.signal
+    return new Promise(done => { resolve = done })
+  })
+  try {
+    live.event({ type: 'tool_result', tool: 'midas_integrate_series', result: JSON.stringify({ status: 'success', lineout_xy: '/synthetic/late.xy' }) })
+    useChatStore.getState().newChat()
+    useChatStore.getState().switchSession(live.thread)
+    assert.equal(signal.aborted, true)
+    resolve({ ok: true, json: async () => ({ plotly: { data: [{ x: [1], y: [2] }] } }) })
+    await settle()
+    assert.equal(useVizStore.getState().artifacts.length, 0)
+  } finally { live.close() }
+})
+
+test('a repeated native-view payload in chat cannot reopen a closed view but a new explicit invocation can', () => {
+  const live = liveChatFixture()
+  const payload = { tool: 'open_science_view', status: 'success',
+    canvas: { schema_version: 1, type: 'html-report', title: 'QC', data: { path: '/synthetic/qc.html' } } }
+  const event = { type: 'tool_result', tool: payload.tool, result: JSON.stringify(payload) }
+  try {
+    live.event(event)
+    const id = useVizStore.getState().activeId
+    useVizStore.getState().closeTab(id)
+    const revision = useVizStore.getState().canvasRevision
+    live.event({ type: 'chat_response', message: JSON.stringify(payload) })
+    assert.deepEqual(useVizStore.getState().openIds, [])
+    assert.equal(useVizStore.getState().canvasRevision, revision)
+    live.event(event)
+    assert.deepEqual(useVizStore.getState().openIds, [id])
+    assert.equal(useVizStore.getState().activeId, id)
+  } finally { live.close() }
+})

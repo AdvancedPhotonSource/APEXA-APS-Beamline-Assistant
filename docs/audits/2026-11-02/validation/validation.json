@@ -1,0 +1,129 @@
+{
+  "review_date": "2026-11-02",
+  "base_commit": "90a139fc80fc0753e92f942858f580efbc7e8938",
+  "scope": "Combined-source consistency follow-up; local checks apply to the source fingerprints in this directory.",
+  "checks": [
+    {
+      "check": "offline Python suite",
+      "cwd": ".",
+      "command": ".venv/bin/python -m pytest tests/ -q -ra",
+      "result": "passed",
+      "passed": 963,
+      "skipped": 1,
+      "warnings": 3,
+      "log": "pytest.txt",
+      "skip_reason": "Optional midas_calibrate_v2 module unavailable"
+    },
+    {
+      "check": "frontend Node suite",
+      "cwd": "frontend",
+      "command": "node --test tests/*.test.mjs",
+      "result": "passed",
+      "passed": 81,
+      "log": "frontend-tests.txt"
+    },
+    {
+      "check": "TypeScript",
+      "cwd": "frontend",
+      "command": "./node_modules/.bin/tsc -b --noEmit",
+      "result": "passed",
+      "log": "types.txt"
+    },
+    {
+      "check": "ESLint",
+      "cwd": "frontend",
+      "command": "./node_modules/.bin/eslint .",
+      "result": "passed",
+      "log": "lint.txt"
+    },
+    {
+      "check": "production build",
+      "cwd": "frontend",
+      "command": "./node_modules/.bin/vite build --outDir /tmp/apexa-consistency-20261102/frontend-build --emptyOutDir",
+      "result": "passed",
+      "log": "build.txt"
+    },
+    {
+      "check": "dependency lock",
+      "cwd": ".",
+      "command": "uv lock --check --offline",
+      "result": "passed",
+      "log": "lockfile.txt"
+    },
+    {
+      "check": "canvas browser interactions",
+      "cwd": "frontend",
+      "command": "node tests/browser-canvas.mjs",
+      "result": "passed",
+      "passed": 16,
+      "log": "browser-canvas.json"
+    },
+    {
+      "check": "workflow browser interactions",
+      "cwd": "frontend",
+      "command": "node tests/browser-workflows.mjs",
+      "result": "passed",
+      "passed": 10,
+      "log": "browser-workflows.json"
+    },
+    {
+      "check": "synthetic desktop/phone preview",
+      "result": "passed",
+      "log": "preview.json"
+    },
+    {
+      "check": "source inventory",
+      "command": ".venv/bin/python scripts/runtime_readiness.py",
+      "result": "matches documented inventory",
+      "servers": 7,
+      "declared_mcp_tools": 134,
+      "additional_client_workflow_tools": 3,
+      "log": "inventory.json"
+    },
+    {
+      "check": "relative documentation targets and MkDocs navigation",
+      "result": "passed",
+      "log": "documentation-links.txt"
+    },
+    {
+      "check": "scoped whitespace",
+      "command": "git diff --check",
+      "result": "passed"
+    }
+  ],
+  "browser_runtime": {
+    "chrome": "156.0.8078.80",
+    "playwright": "1.64.1",
+    "vite_url": "http://127.0.0.1:5179",
+    "environment_variables": [
+      "APEXA_PLAYWRIGHT_MODULE",
+      "APEXA_CHROME"
+    ],
+    "service_responses": "Synthetic fixtures intercept API requests"
+  },
+  "production_assets": {
+    "synchronized": true,
+    "compared_to": "/tmp/apexa-consistency-20261102/frontend-build",
+    "file_count": 14,
+    "http_verification": "GET http://127.0.0.1:8001/ served /assets/index-BqJcEOHK.js after synchronization"
+  },
+  "boundaries": {
+    "live_engines_models_or_hardware_jobs_run": false,
+    "python_service_restarted": false,
+    "local_chroma_database_preserved_and_excluded": true,
+    "existing_cleanup_archive_preserved": true
+  },
+  "hosted_ci": {
+    "scope": "Previous combined source, before this consistency follow-up",
+    "head_sha": "90a139fc80fc0753e92f942858f580efbc7e8938",
+    "result": "success",
+    "url": "https://github.com/AdvancedPhotonSource/APEXA-APS-Beamline-Assistant/actions/runs/41172913158",
+    "follow_up": "Check the new commit separately after push; this record does not claim its hosted CI result."
+  },
+  "limitations": [
+    "Offline and synthetic interface checks do not qualify scientific engines, numerical results, beamline connectivity or hardware operations.",
+    "The production build retains Vite warnings for large main/Plotly chunks; these checks do not measure deployed latency.",
+    "The optional midas_calibrate_v2 test was skipped."
+  ],
+  "log_format": "Text logs have terminal escape sequences and trailing whitespace removed. Empty TypeScript/ESLint logs record successful silent commands."
+}

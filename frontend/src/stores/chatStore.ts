@@ -6,6 +6,7 @@ import { parseToolResults, extractArtifacts, parseDirectToolResult } from '@/lib
 import { useVizStore } from './vizStore'
 import { useConfirmStore, nextConfirmId } from './confirmStore'
 import { canvasContext } from '@/lib/canvasContext'
+import { vizResultId } from '@/lib/canvasIdentity'
 import { listServerSessions, readServerSession, createServerSession, importBrowserSession, renameServerSession, archiveServerSession, writeServerWorkspace, SessionApiUnavailable } from '@/api/sessions'
 import { durableWorkspace, hydrateSession, restoredWorkspace, messageArtifacts } from '@/lib/sessionWorkspace'
 import { useFileStore } from './fileStore'
@@ -220,13 +221,11 @@ async function flushWorkspace(id: string): Promise<void> {
 }
 
 
-function presentArtifacts(artifacts: VizArtifact[]) {
+function presentArtifacts(artifacts: VizArtifact[], explicitOpen = false) {
   if (!artifacts.length) return
-  const canvas = useVizStore.getState()
-  canvas.addArtifacts(artifacts)
-  // An explicit agent "open" request should also reveal a hidden canvas.
-  // Restoring history above retains the user's saved workspace preference.
-  if (artifacts.some(a => a.provenance?.tool?.split(':').pop() === 'open_science_view')) canvas.showCanvas()
+  // Only a new tool invocation can explicitly reopen an existing view. Its
+  // repeated payload in the final answer remains ordinary background delivery.
+  useVizStore.getState().addArtifacts(artifacts, { activate: explicitOpen })
 }
 
 function processResponse(text: string, msgId: string) {
@@ -255,25 +254,33 @@ async function renderVizFile(
   extras?: Record<string, string>,
 ) {
   const originThread = useChatStore.getState().currentSessionId
+  const epoch = lifecycle
+  const controller = new AbortController()
+  const unsubscribe = useChatStore.subscribe((state, previous) => {
+    if (state.currentSessionId !== previous.currentSessionId) controller.abort()
+  })
   try {
     const body = new FormData()
     body.append('file', file)
     if (extras) for (const [k, v] of Object.entries(extras)) body.append(k, v)
-    const res = await fetch(`/api/viz/${endpoint}`, { method: 'POST', body })
+    const res = await fetch(`/api/viz/${endpoint}`, { method: 'POST', body, signal: controller.signal })
     if (!res.ok) return
     const r = await res.json()
-    if (useChatStore.getState().currentSessionId !== originThread) return
+    if (controller.signal.aborted || epoch !== lifecycle || useChatStore.getState().currentSessionId !== originThread) return
     if (r && r.plotly) {
-      useVizStore.getState().addArtifact({
-        id: `autoviz-${endpoint}-${genId()}`,
+      useVizStore.getState().addArtifacts([{
+        id: vizResultId(endpoint, file, r.plotly, extras),
         type: 'plotly',
         title: (r.title as string) || (file.split('/').pop() ?? file),
         data: r.plotly,
         sourceMessageId: messageId,
-      })
+        provenance: { tool: `viz:${endpoint}`, inputs: [file, ...Object.values(extras ?? {})], params: { endpoint, ...extras } },
+      }])
     }
   } catch {
     // best-effort: a failed auto-plot must never break the chat turn
+  } finally {
+    unsubscribe()
   }
 }
 
@@ -593,7 +600,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
             const tempId = genId()
             const artifacts = extractArtifacts([toolResult], tempId)
             if (artifacts.length > 0) {
-              presentArtifacts(artifacts)
+              presentArtifacts(artifacts, toolResult.tool.split(':').pop() === 'open_science_view')
             }
             // Integration tools carry only file paths — fetch + render them.
             autoRenderIntegration(toolResult, tempId)
@@ -701,7 +708,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           const allResults = [...directResults, ...toolResults]
           const artifacts = extractArtifacts(allResults, msgId)
           if (active) {
-            presentArtifacts(artifacts)
+            presentArtifacts(artifacts, directResults.some(result => result.tool.split(':').pop() === 'open_science_view'))
             allResults.forEach(result => autoRenderIntegration(result, msgId))
           }
           get().addAssistantMessage(response, allResults, artifacts, threadId)

@@ -7,16 +7,16 @@ interface Structure {
   atoms: { element: string; position: number[]; occupancy: number }[]
 }
 
-export function StructureView({ path, source }: { path: string; source?: string }) {
+export function StructureView({ path, source, location = 'local' }: { path: string; source?: string; location?: 'local' | 'remote' }) {
   const [structure, setStructure] = useState<Structure | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
     const controller = new AbortController()
-    fetch(`/local/api/science/structure?path=${encodeURIComponent(path)}`, { signal: controller.signal })
+    fetch(`/${location === 'remote' ? 'remote' : 'local'}/api/science/structure?path=${encodeURIComponent(path)}`, { signal: controller.signal })
       .then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.detail); return data })
       .then(setStructure).catch(e => { if (e.name !== 'AbortError') setError(String(e)) })
     return () => controller.abort()
-  }, [path])
+  }, [path, location])
   const plot = useMemo(() => {
     if (!structure) return null
     const elements = [...new Set(structure.atoms.map(a => a.element))]

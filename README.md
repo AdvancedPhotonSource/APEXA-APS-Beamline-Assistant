@@ -44,7 +44,7 @@ No winget? Use the installers: https://astral.sh/uv, https://nodejs.org (LTS), h
 (uv alt: `powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"`).
 
 The `.sh` scripts need bash. On Windows use the `.bat`/`.ps1` launchers (or run the
-Python directly) — everything else is the same:
+Python directly). These launchers do not qualify native Windows worker ownership or scientific engines:
 ```bat
 copy .env.template .env          :: then edit ANL_USERNAME / ARGO_MODEL
 uv sync                          :: install deps
@@ -53,7 +53,7 @@ start_gradio_ui.bat              :: Gradio UI
 start_web_viewer.bat             :: Web UI (needs Node.js/npm; http://localhost:8001)
 ```
 PowerShell: `.\start_beamline_assistant.ps1` (add `-ExecutionPolicy Bypass` if blocked).
-`launch.py` is a cross-platform launcher that works everywhere via `uv run python launch.py`.
+`launch.py` is a Python launcher, available through `uv run python launch.py`. The maintained runtime targets Linux/macOS; use WSL2 for a Linux environment on Windows.
 
 > **If `uv sync` fails to build `midas-index`** (`cmake_minimum_required < 3.5 removed`):
 > it compiles native code, so it needs **CMake** + a **C/C++ compiler**
@@ -63,11 +63,7 @@ PowerShell: `.\start_beamline_assistant.ps1` (add `-ExecutionPolicy Bypass` if b
 > this box, use the base `uv sync` install without the optional `midas` extra, or run MIDAS
 > under WSL2/Linux (below).
 
-> **Note:** the **motor (EPICS)** server needs `caget`/`caput` (Unix) and **MIDAS** needs a
-> platform build, so native Windows runs the CLI, agent, and core tools; for full HEDM
-> calibration/integration + motor control use **WSL2 (Ubuntu)** or Linux, where the `.sh`
-> scripts run as-is. For a core-only setup on Windows, keep just
-> `core:beamline_core_server.py` in `servers.config`.
+> **Runtime boundary:** the process-group cleanup and durable worker/reservation contracts target Linux/macOS. Native Windows is not qualified for those contracts. EPICS access additionally requires Channel Access utilities, a reachable IOC and separately commissioned device policy. Installing MIDAS or alignment extras does not authorize motor motion.
 
 ---
 
@@ -86,6 +82,8 @@ User (natural language)
                   |   motor (13 tools)  |
                   |   gsas2 (26 tools)  |
                   |   tomo (2 tools)    |
+                  | alignment (14 tools)|
+                  | synthesis (6 tools) |
                   +---------------------+
 ```
 
@@ -106,12 +104,17 @@ Set `APEXA_AGENT_MODE=legacy` to use these keyword-routed agents. The default
 |---|---|---|
 | core | `beamline_core_server.py` | 13 tools: file ops, document reading, local + remote (SSH) shell commands, X-ray calculations |
 | midas | `midas_comprehensive_server.py` | 60 tools: FF/NF/PF-HEDM, calibration, integration, TIFF background combining, powder refinement, series contours and peak trajectories, visualization, validation, stress, reports and capability adapters |
-| motor | `epics_motor_server.py` | 13 tools: EPICS motor control (read/move/jog/limits) |
+| motor | `epics_motor_server.py` | 13 tools: EPICS inspection and separately commissioned motor operations |
+| alignment | `apexa_alignment_server.py` | 14 tools: analysis/history and bounded simulation, replay or read-only shadow alignment; no hardware broker |
 | gsas2 | `gsas2_server.py` | 26 tools: tutorial workbench, native operations, pattern/batch refinement, policy optimization, candidate search, evidence, versioned sessions and bounded improvement loops |
 | tomo | `tomo_server.py` | 2 tools: tomography stack pre-flight and TomoPy reconstruction, when a compatible native environment is configured |
+| synthesis | `synthesis_server.py` | 6 tools: series inspection, PCA, phase fitting, kinetics, advisory recommendations and reporting |
 
-These are source-declared tool counts from the active `servers.config`; they do not
-mean each optional engine or external dependency is installed and ready.
+These are the 134 source-declared tools in the seven configured servers, checked on
+2 November 2026; registration does not establish engine readiness. The three
+client-owned workflow preparation/list/status tools are additional to that MCP
+count. See [the source inventory](docs/analysis-tool-inventory.json); regenerate a
+local capability record with `python scripts/runtime_readiness.py`.
 
 ### Agent Skills (`.agents/skills/`)
 Workflow skills describe supported procedures and boundaries; engine readiness is host-specific:
@@ -261,7 +264,10 @@ APEXA_MIDAS_BIN=/home/beams12/S1IDUSER/opt/envs/midas/bin   # pip midas-suite en
 core:beamline_core_server.py
 midas:midas_comprehensive_server.py
 motor:epics_motor_server.py
+alignment:apexa_alignment_server.py
 gsas2:gsas2_server.py
+tomo:tomo_server.py
+synthesis:synthesis_server.py
 ```
 
 ---
@@ -304,6 +310,7 @@ to `MIDAS_PATH` — a clone, required only by the legacy C++ / AutoCalibrateZarr
 ## Documentation
 
 - **[Canvas workspace](docs/CANVAS_WORKSPACE.md)** — Tabs, comparison, Classic light, and how to load updates
+- **[Shared scientific workflows](docs/SCIENTIFIC_WORKFLOWS.md)** — Eight reviewed LangGraph recipes, explicit approvals and durable recovery
 - **[Repository layout](docs/REPOSITORY_LAYOUT.md)** — Source locations and preserved local outputs
 
 - **[USER_MANUAL.md](USER_MANUAL.md)** — Complete guide with examples

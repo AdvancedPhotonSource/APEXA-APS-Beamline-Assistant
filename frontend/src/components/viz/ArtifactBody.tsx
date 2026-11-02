@@ -42,7 +42,7 @@ export function ArtifactBody({ artifact }: { artifact: VizArtifact }) {
   if (a.type === 'html-report') return <HtmlReportView key={a.id} {...a.data as { path: string; location?: 'local' | 'remote' }} updatedAt={a.createdAt} />
 
   if (a.type === 'structure') {
-    const data = a.data as { path: string; source?: string }
+    const data = a.data as { path: string; source?: string; location?: 'local' | 'remote' }
     return <StructureView key={a.id} {...data} />
   }
   if (a.type === 'sequence') return <SequenceView key={a.id} artifact={a} />

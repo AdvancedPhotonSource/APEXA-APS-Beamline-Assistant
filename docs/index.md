@@ -120,11 +120,11 @@ User → Argo Gateway → OrchestratorAgent (single-loop default)
                          ↓
                     MCP tool registry
                          ↓
-       core (13) · midas (60) · gsas2 (13) · tomo (2) · motor (13)
+       core · midas · gsas2 · tomo · motor · alignment · synthesis
 ```
 
-Counts are source-declared tools from active `servers.config`; they do not
-guarantee that optional engines or hardware are available. Set
+The [source inventory](analysis-tool-inventory.json) records the configured
+servers and declared tools; it does not establish engine or hardware readiness. Set
 `APEXA_AGENT_MODE=legacy` for the older keyword-routed specialist agents. See
 [the current architecture](development/architecture.md).
 
@@ -145,8 +145,10 @@ APEXA_MIDAS_BIN=/path/to/midas-suite/bin  # optional native MIDAS environment
 core:beamline_core_server.py
 midas:midas_comprehensive_server.py
 motor:epics_motor_server.py
+alignment:apexa_alignment_server.py
 gsas2:gsas2_server.py
 tomo:tomo_server.py
+synthesis:synthesis_server.py
 ```
 
 ---

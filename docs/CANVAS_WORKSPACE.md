@@ -87,3 +87,6 @@ These references were checked on 30 October 2026. APEXA adds result provenance,
 stable file views, retained plot snapshots, explicit two-result comparison and
 session-aware asynchronous delivery. These are product design choices, not a
 claim of benchmark superiority or scientific validation.
+
+The [2 November consistency check](audits/2026-11-02/CONSISTENCY.md) covers the
+combined release, including automatic integration plots and saved-chat shortcuts.

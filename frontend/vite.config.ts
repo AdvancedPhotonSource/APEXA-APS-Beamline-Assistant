@@ -13,6 +13,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8001',
       '/local': 'http://localhost:8001',
+      '/remote': 'http://localhost:8001',
       '/ws': { target: 'ws://localhost:8001', ws: true },
     },
   },

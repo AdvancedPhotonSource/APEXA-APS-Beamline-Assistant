@@ -17,25 +17,30 @@ User (CLI / Gradio / Web UI)
          |
     MCP tool registry
          |
-    +----------+----------+----------+----------+----------+
-    | core     | midas    | gsas2    | tomo     | motor    |
-    | 13 tools | 60 tools | 13 tools | 2 tools  | 13 tools |
-    +----------+----------+----------+----------+----------+
+    core · midas · gsas2 · tomo · motor · alignment · synthesis
 ```
 
-Counts reflect `@mcp.tool` definitions in the active `servers.config` on
-2026-10-15. They do not establish that optional engine dependencies or hardware
-are installed and ready.
+The [source inventory](../analysis-tool-inventory.json) records the seven
+configured servers. `scripts/runtime_readiness.py` captures current declared
+tools and package/source identity without launching engines. Registration does
+not establish scientific qualification or hardware readiness.
+
+Reviewed multistep work uses the shared LangGraph runtime in
+`apexa_workflow_graph.py`, with immutable recipes, explicit operator gates and
+JobStore receipts. `APEXA_WORKFLOW_MODE=graph` makes the planner prefer preparation
+for supported recipes; simple inspection stays direct. Model-callable workflow
+tools prepare/list/read. Typed WebUI/CLI actions advance gates, independently of
+ordinary chat. See [scientific workflows](../SCIENTIFIC_WORKFLOWS.md).
 
 ## Entry Points
 
 | Interface | File | Start Command |
 |---|---|---|
 | CLI | `argo_mcp_client.py` | `./start_beamline_assistant.sh` |
-| Gradio UI | `gradio_ui.py` | `./start_gradio_ui.sh` |
+| Gradio UI (experimental) | `gradio_ui.py` | `./start_gradio_ui.sh` |
 | Web server | `web_server.py` | `python web_server.py` |
 
-All three call `run_query()` as the single entry point.
+Conversation turns use `run_query()`. Explicit workflow actions use the separate typed workflow API/CLI boundary; they do not invoke a model chat turn.
 
 ## Core Files
 
@@ -65,7 +70,7 @@ gateway always strips native calls.
 
 **Execution-integrity guards** (both agent modes) stop the model from reporting work it did not do:
 - *Anti-confabulation* -- a final answer containing broken tool-call syntax (no parsed call) is forced to retry, then fails honestly rather than confabulating results.
-- *Phantom-launch / false-async* -- "launched / I'll report once it completes" with no tool call is rejected: tools are synchronous, so the model must emit the call now.
+- *Phantom-launch / false-async* -- "launched / I'll report once it completes" with no tool call is rejected: a launch claim requires an actual tool call and recorded receipt; submitted external jobs remain distinct from completed work.
 - *Refusal-to-execute* -- a false "I can't run commands / please run it yourself" is rejected and the real tool call is forced (common model-drift failure).
 - *Verify-before-report* -- integration/calibration tools return only outputs found on disk and write an `APEXA_*.json` manifest; an exit-0 with no lineout is reported `incomplete`, never a fabricated path.
 
@@ -91,7 +96,9 @@ server's `@mcp.tool` definitions. The current source inventory is summarized in
 | `midas` | HEDM, detector calibration/integration and materials analysis | MIDAS build, data formats and optional packages vary by host |
 | `gsas2` | Agentic powder refinement, job control, reports and evidence | Needs the configured GSAS-II interpreter and Agentic-GSAS-II checkout |
 | `tomo` | Tomography pre-flight and reconstruction | Needs `APEXA_TOMO_PYTHON` with TomoPy and dxchange |
-| `motor` | EPICS motor read/write/control | Needs Channel Access utilities, IOC connectivity and safety configuration |
+| `motor` | EPICS inspection and commissioned motor operations | Needs Channel Access utilities, IOC connectivity and exact device policy |
+| `alignment` | Analysis/history plus bounded simulation, replay and read-only shadow | No commissioned hardware broker; optional packages do not enable motion |
+| `synthesis` | Phase-evolution analysis and advisory recommendations | Needs its native environment and the configured collaborator code for phase fitting |
 
 The optional MAUD backend is reached through MIDAS `run_gsas_refinement`; it is
 not a separate active MCP server. MAUD is limited to the supported MIDAS caked
@@ -142,7 +149,7 @@ Canonical MIDAS workflow reference files (agentskills.io format):
 
 ## Server Configuration (`servers.config`)
 
-The current file enables `core`, `midas`, `motor`, `gsas2` and `tomo`.
+The current file enables `core`, `midas`, `motor`, `alignment`, `gsas2`, `tomo` and `synthesis`.
 
 The startup script reads this file, validates server existence, and passes them to `argo_mcp_client.py`.
 
