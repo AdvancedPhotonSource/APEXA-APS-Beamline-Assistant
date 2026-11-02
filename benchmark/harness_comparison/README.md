@@ -31,6 +31,18 @@ APEXA's rotation driver connects only the **core and MIDAS** analysis servers. I
 
 Current Pi supports **native MCP**, including stdio/HTTP configuration; the earlier “Pi has no MCP” assumption was outdated. An adapter failing to expose MCP is a separate limitation. A publication comparison should add a deliberately tool-matched condition or a common shell/CLI condition and verify each adapter's actual permissions, context, model settings and budget. The current rotation script does not implement those conditions automatically.
 
+## Paired trial order and cohort accounting
+
+The runner now uses a seeded, position-balanced schedule (`seeded_cyclic_latin_blocks_v1`) instead of completing all trials for one arm before starting another. Each block contains every selected arm for the same `(scan, trial)`. Block order is shuffled. Within each cycle of N blocks, where N is the number of arms, shuffled cyclic Latin-square rows put each arm in every position once. Across the complete schedule, including a partial last cycle, each arm's position counts differ by at most one. Runs remain sequential; the runner does not start competing trials in parallel.
+
+`--seed` defaults to `0` and controls trial order only. It does not seed a model or numerical engine. Arms and scans are sorted before randomization, so rearranging the same CLI selections does not change the schedule. Choose the cohort, repeats and order seed before observing outcomes. Position balance reduces systematic order differences; it does not equalize elapsed time, guarantee equal load/cache conditions, balance all predecessor effects, or establish statistical independence.
+
+An explicit `--scans` selection must have one matching input file and a usable consistency reference per scan. Missing requested scans, duplicate arm/scan selections and ambiguous input matches fail before trials. Use `--trials` for repeats and narrow `--glob` to distinguish duplicate acquisitions. Without `--scans`, the runner uses the intersection of matching input files and usable references; `selected_scans` in `config.json` records that resolved cohort. A partial cohort must not be described as the entire acquisition.
+
+Before staging the first trial, the runner writes `schedule.json` with the complete intended order and records its SHA-256 in `config.json`. Every `runs.jsonl` result has `schedule_index`, `schedule_block` and `schedule_position` (all one-based); `trial` retains its existing zero-based convention. Compare completed records with the schedule after interruptions: unrecorded trials remain **unobserved**, not successful or excluded. There is no automatic resumption or replay. Study directories have a unique suffix so two launches in the same second cannot mix their results.
+
+The schedule is an order/cohort receipt, not a dataset fingerprint or engine qualification. It does not hash raw inputs or verify their hydration, freeze scientific binaries, or capture actual provider model identity. The explicit saved entries are the authoritative ordering record even if a future Python randomization implementation changes.
+
 ## Adopted artifact and decision contract
 
 Every arm is instructed to produce `result_manifest.json` with a final scientific decision:
@@ -91,21 +103,33 @@ Run on an analysis identity with no EPICS write rights. Shell access inside an a
 No model calls are required for the regression suite:
 
 ```bash
-APEXA_NETWORK=data APEXA_OFFLINE=1 .venv/bin/python -m pytest tests/test_rotation_benchmark.py tests/test_knowledge_policy.py -q
+APEXA_NETWORK=data APEXA_OFFLINE=1 .venv/bin/python -m pytest tests/test_rotation_schedule.py tests/test_rotation_benchmark.py tests/test_knowledge_policy.py -q
 APEXA_KNOWLEDGE_MANIFEST=/path/to/reviewed-manifest.json \
 APEXA_KNOWLEDGE_MANIFEST_SHA256=<exact-manifest-sha256> \
   .venv/bin/python benchmark/harness_comparison/_apexa_driver.py --preflight
 ```
 
-For a prepared, sanitized acquisition copy, first inspect a dry run:
+Preview just the trial order without a dataset, manifest, credentials, model call or subprocess:
+
+```bash
+.venv/bin/python benchmark/harness_comparison/rotation_benchmark.py \
+  --plan-only --arms A1 A2 A3 A4 A5 A6 \
+  --scans 261 262 263 --trials 2 --seed 42
+```
+
+This prints JSON containing a qualified preview and its `schedule` object. It needs explicit scan numbers and does not inspect data directories, read reference/manifest files, create a study directory, or verify readiness. Even supplied data/manifest paths are ignored in this mode. It is suitable for reviewing order before hydrating cloud-backed acquisitions. Preview scan numbers are examples, not a scientifically selected cohort.
+
+For a prepared, sanitized acquisition copy, inspect a dry run with the same cohort, arms, repeats and seed:
 
 ```bash
 .venv/bin/python benchmark/harness_comparison/rotation_benchmark.py \
   --ground-truth /path/to/existing_summary.csv --value-col tz_deg \
   --data-root /path/to/raw --manuals knowledge_base/study_manuals/rotation \
   --knowledge-manifest /path/to/reviewed-manifest.json \
-  --arms A1 A2 A3 A4 A5 A6 --trials 1 --dry-run
+  --arms A1 A2 A3 A4 A5 A6 --scans 261 262 263 --trials 2 --seed 42 --dry-run
 ```
+
+`--dry-run` stages raw inputs and performs sandbox/driver checks, so it can copy or hydrate large files. It is distinct from `--plan-only`; the two flags cannot be combined.
 
 `--ground-truth` is a retained CLI name; with this loader it supplies prior fits for a consistency reference. Do not interpret its name as a guarantee of independent truth. The 0.1° default is a diagnostic tolerance, not a universally qualified physical acceptance threshold. Remove `--dry-run` only after fixing the intended model, budget, installed versions, engine builds, knowledge, sandbox and scientific evaluator.
 

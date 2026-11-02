@@ -16,7 +16,7 @@ Historical results from run_comparison.py remain withdrawn. See README.md and th
 """
 from __future__ import annotations
 
-import argparse, csv, hashlib, json, math, os, re, shutil, statistics, subprocess, sys, tempfile, time
+import argparse, csv, hashlib, json, math, os, random, re, shutil, statistics, subprocess, sys, tempfile, time
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -46,6 +46,73 @@ ARMS: Dict[str, Arm] = {
     "A5": Arm("A5", "pi",          True,  False, "Pi + manuals; native MCP supported, no common MCP tools configured by this rig"),
     "A6": Arm("A6", "claude-code", False, False, "general-purpose, NO manuals"),
 }
+
+
+# ── reproducible paired trial schedule ────────────────────────────────────────
+SCHEDULE_ALGORITHM = "seeded_cyclic_latin_blocks_v1"
+
+
+def make_schedule(arms: List[str], scans: List[int], trials: int, seed: int) -> Dict:
+    """Pair arms within a scan/repeat and balance their position across blocks.
+
+    Shuffle the blocks, then assign shuffled cyclic Latin-square rows in cycles
+    of len(arms) blocks. Each arm occupies every position once per full cycle;
+    counts differ by at most one for an incomplete final cycle. This balances
+    position, not predecessor/carryover effects or elapsed wall-clock time.
+    The saved entries, rather than a Python RNG implementation, define the order.
+    """
+    if not arms or len(set(arms)) != len(arms):
+        raise ValueError("arms must be nonempty and unique")
+    unknown = set(arms) - ARMS.keys()
+    if unknown:
+        raise ValueError(f"unknown arms: {sorted(unknown)}")
+    if not scans or len(set(scans)) != len(scans):
+        raise ValueError("scans must be nonempty and unique")
+    if trials <= 0:
+        raise ValueError("trials must be positive")
+    arms, scans = sorted(arms), sorted(scans)
+    rng = random.Random(seed)  # does not change model/solver or global RNG state
+    blocks = [(scan, trial) for scan in scans for trial in range(trials)]
+    rng.shuffle(blocks)
+    entries = []
+    for cycle_start in range(0, len(blocks), len(arms)):
+        base = list(arms)
+        offsets = list(range(len(arms)))
+        rng.shuffle(base)
+        rng.shuffle(offsets)
+        for row, (scan, trial) in enumerate(blocks[cycle_start:cycle_start + len(arms)]):
+            offset = offsets[row]
+            for position, arm in enumerate(base[offset:] + base[:offset], start=1):
+                entries.append({"schedule_index": len(entries) + 1,
+                                "schedule_block": cycle_start + row + 1,
+                                "schedule_position": position,
+                                "arm": arm, "scan": scan, "trial": trial})
+    return {"schema_version": 1, "algorithm": SCHEDULE_ALGORITHM, "seed": seed,
+            "arms": arms, "scans": scans, "trials": trials,
+            "block_count": len(blocks), "run_count": len(entries), "entries": entries}
+
+
+def select_exposures(data_root: Path, pattern: str, truth: Dict,
+                     requested: Optional[List[int]]) -> Dict[int, Path]:
+    """Resolve the cohort without silently dropping requested or ambiguous scans."""
+    candidates: Dict[int, List[Path]] = {}
+    for path in sorted(data_root.glob(pattern)):
+        match = re.search(r"_(\d{6})(?:_|\.)", path.name)
+        if match and path.is_file():
+            candidates.setdefault(int(match.group(1)), []).append(path)
+    scans = sorted(requested if requested is not None else candidates.keys() & truth.keys())
+    missing_input = [scan for scan in scans if scan not in candidates]
+    missing_reference = [scan for scan in scans if scan not in truth]
+    if missing_input or missing_reference:
+        raise ValueError(f"requested scans unavailable: missing input={missing_input}; "
+                         f"missing consistency reference={missing_reference}")
+    if not scans:
+        raise ValueError("no exposures matched both the data glob and the ground truth")
+    ambiguous = {scan: [str(path) for path in candidates[scan]] for scan in scans
+                 if len(candidates[scan]) != 1}
+    if ambiguous:
+        raise ValueError(f"multiple input files match selected scans; narrow --glob: {ambiguous}")
+    return {scan: candidates[scan][0] for scan in scans}
 
 
 # ── ground truth ──────────────────────────────────────────────────────────────
@@ -400,6 +467,9 @@ class Run:
     artifact_path: Optional[str] = None
     artifact_sha256: Optional[str] = None
     policy_bundle: Dict[str, str] = field(default_factory=dict)
+    schedule_index: Optional[int] = None
+    schedule_block: Optional[int] = None
+    schedule_position: Optional[int] = None
 
 
 def score(r: Run, tol: float) -> str:
@@ -690,19 +760,21 @@ def summarise(runs: List[Run]) -> Dict:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
           formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ground-truth", type=Path, required=True,
+    ap.add_argument("--ground-truth", type=Path,
                     help="prior-calibration CSV for a leave-one-out consistency reference; not independent metrology")
     ap.add_argument("--value-col", default="tz",
                     help="column holding tz in the ground-truth CSV "
                          "(tz_deg in APEXA's rotation_series_calibration_summary.csv)")
-    ap.add_argument("--data-root", type=Path, required=True)
+    ap.add_argument("--data-root", type=Path)
     ap.add_argument("--glob", default="*.h5")
     ap.add_argument("--manuals", type=Path, default=REPO/"knowledge_base"/"capsules")
     ap.add_argument("--knowledge-manifest", type=Path,
                     help="reviewed SHA-256 allowlist for manuals, APEXA injection and optional frozen retrieval")
     ap.add_argument("--arms", nargs="+", default=["A1", "A3", "A6"])
-    ap.add_argument("--scans", nargs="*", type=int)
+    ap.add_argument("--scans", nargs="+", type=int)
     ap.add_argument("--trials", type=int, default=1)
+    ap.add_argument("--seed", type=int, default=0,
+                    help="trial-order seed only; does not seed the model or scientific engine (default: 0)")
     ap.add_argument("--tol-deg", type=float, default=0.10,
                     help="diagnostic trend-deviation tolerance; qualify a physical tolerance before publication")
     ap.add_argument("--base-url", default=os.environ.get("APEXA_LLM_BASE_URL",
@@ -717,7 +789,11 @@ def main() -> int:
                     help="extra paths the agents must not read (answers kept elsewhere)")
     ap.add_argument("--outdir", type=Path, default=None,
                     help="where results go (default: benchmark/harness_comparison/runs)")
-    ap.add_argument("--dry-run", action="store_true")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true",
+                      help="stage inputs and check sandbox/driver without model calls")
+    mode.add_argument("--plan-only", action="store_true",
+                      help="print schedule JSON for explicit --scans without reading inputs or starting processes")
     a = ap.parse_args()
 
     if a.timeout <= 0 or a.trials <= 0 or not math.isfinite(a.tol_deg) or a.tol_deg <= 0:
@@ -725,6 +801,20 @@ def main() -> int:
     unknown = set(a.arms) - ARMS.keys()
     if unknown:
         ap.error(f"unknown arms: {sorted(unknown)}")
+    if len(set(a.arms)) != len(a.arms):
+        ap.error("arms must be unique; use --trials for repeats")
+    if a.scans is not None and len(set(a.scans)) != len(a.scans):
+        ap.error("scans must be unique; use --trials for repeats")
+    if a.plan_only:
+        if not a.scans:
+            ap.error("--plan-only requires explicit --scans; no data directories are inspected")
+        schedule = make_schedule(a.arms, a.scans, a.trials, a.seed)
+        print(json.dumps({"mode": "plan_only",
+                          "qualification": "Order preview only; inputs, reference, knowledge, engines and model access are not checked.",
+                          "schedule": schedule}, indent=2))
+        return 0
+    if a.ground_truth is None or a.data_root is None:
+        ap.error("--ground-truth and --data-root are required except with --plan-only")
     if any(ARMS[arm].manuals or ARMS[arm].harness == "apexa" for arm in a.arms) and not a.knowledge_manifest:
         ap.error("these arms require --knowledge-manifest; do not stage the full notebook/capsule tree")
     policy = load_manifest(a.knowledge_manifest) if a.knowledge_manifest else None
@@ -735,25 +825,30 @@ def main() -> int:
     print(f"consistency reference (not independent truth): {len(truth)} exposures, leave-one-out LMedS, "
           f"median slope {slope:.4f} deg/scan")
 
-    files: Dict[int, Path] = {}
-    for p in sorted(a.data_root.glob(a.glob)):
-        m = re.search(r"_(\d{6})(?:_|\.)", p.name)
-        if m:
-            files.setdefault(int(m.group(1)), p)
-    scans = [s for s in (a.scans or sorted(files)) if s in files and s in truth]
-    if not scans:
-        raise SystemExit("no exposures matched both the data glob and the ground truth")
+    try:
+        files = select_exposures(a.data_root, a.glob, truth, a.scans)
+    except ValueError as exc:
+        ap.error(str(exc))
+    scans = sorted(files)
+    schedule = make_schedule(a.arms, scans, a.trials, a.seed)
     print(f"exposures {len(scans)} | arms {a.arms} | trials {a.trials} | tol {a.tol_deg} deg")
+    print(f"order {SCHEDULE_ALGORITHM} | seed {a.seed} | {schedule['run_count']} planned runs")
 
     # Results can live with the data (e.g. the Box folder) rather than in the
     # repo. Written by this process, after each sandboxed run -- the agents
     # themselves are denied reads AND writes there.
-    outdir = (a.outdir or HERE/"runs")/f"rotation_{time.strftime('%Y%m%d_%H%M%S')}"
-    outdir.mkdir(parents=True, exist_ok=True)
+    output_root = a.outdir or HERE / "runs"
+    output_root.mkdir(parents=True, exist_ok=True)
+    outdir = Path(tempfile.mkdtemp(prefix=f"rotation_{time.strftime('%Y%m%d_%H%M%S')}_", dir=output_root))
+    # Freeze the complete intended order before any staging, startup or trial.
+    schedule_bytes = (json.dumps(schedule, indent=2) + "\n").encode("utf-8")
+    (outdir / "schedule.json").write_bytes(schedule_bytes)
     config = {key: value for key, value in vars(a).items() if key != "api_key"}
     config.update(api_key="[REDACTED]", reference_kind="apexa_derived_leave_one_out_consistency",
                   comparison_kind="native_systems_with_bundled_ablation",
                   actual_response_model="not captured; verify provider metadata before publication",
+                  selected_scans=scans, schedule_file="schedule.json",
+                  schedule_sha256=hashlib.sha256(schedule_bytes).hexdigest(),
                   runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                   driver_sha256=hashlib.sha256((HERE / "_apexa_driver.py").read_bytes()).hexdigest())
     if policy is not None:
@@ -762,21 +857,23 @@ def main() -> int:
         load_manifest(outdir / "knowledge-manifest.json", policy["manifest_sha256"])
     (outdir/"config.json").write_text(json.dumps(config, indent=2, default=str))
     runs: List[Run] = []
-    for arm_id in a.arms:
-        for scan in scans:
-            for t in range(a.trials):
-                r = run_one(ARMS[arm_id], files[scan], scan, t, truth, a.manuals,
-                            a.base_url, a.api_key, a.model, a.tol_deg, a.timeout,
-                            outdir, a.dry_run, ground_truth=a.ground_truth,
-                            extra_deny=a.deny,
-                            knowledge_manifest=outdir / "knowledge-manifest.json" if policy else None,
-                            knowledge_manifest_sha256=policy["manifest_sha256"] if policy else None)
-                runs.append(r)
-                with open(outdir/"runs.jsonl", "a") as fh:
-                    fh.write(json.dumps(asdict(r)) + "\n")
-                pt = None if r.predicted_tz is None else round(r.predicted_tz, 3)
-                print(f"  {arm_id} scan {scan} t{t}: {r.outcome:15s} "
-                      f"tz={r.reported_tz} pred={pt} ({r.tz_source})")
+    for entry in schedule["entries"]:
+        arm_id, scan, trial = entry["arm"], entry["scan"], entry["trial"]
+        r = run_one(ARMS[arm_id], files[scan], scan, trial, truth, a.manuals,
+                    a.base_url, a.api_key, a.model, a.tol_deg, a.timeout,
+                    outdir, a.dry_run, ground_truth=a.ground_truth,
+                    extra_deny=a.deny,
+                    knowledge_manifest=outdir / "knowledge-manifest.json" if policy else None,
+                    knowledge_manifest_sha256=policy["manifest_sha256"] if policy else None)
+        r.schedule_index = entry["schedule_index"]
+        r.schedule_block = entry["schedule_block"]
+        r.schedule_position = entry["schedule_position"]
+        runs.append(r)
+        with open(outdir/"runs.jsonl", "a") as fh:
+            fh.write(json.dumps(asdict(r)) + "\n")
+        pt = None if r.predicted_tz is None else round(r.predicted_tz, 3)
+        print(f"  [{r.schedule_index}/{schedule['run_count']}] {arm_id} scan {scan} t{trial}: "
+              f"{r.outcome:15s} tz={r.reported_tz} pred={pt} ({r.tz_source})")
 
     summary = summarise(runs)
     (outdir/"summary.json").write_text(json.dumps(summary, indent=2))

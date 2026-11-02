@@ -313,6 +313,7 @@ to `MIDAS_PATH` — a clone, required only by the legacy C++ / AutoCalibrateZarr
 - **[Feature requests](docs/FEATURE_REQUESTS.md)** — Request improvements in the Web UI; review and export the persistent feedback queue
 - **[Shared scientific workflows](docs/SCIENTIFIC_WORKFLOWS.md)** — Eight reviewed LangGraph recipes, explicit approvals and durable recovery
 - **[Repository layout](docs/REPOSITORY_LAYOUT.md)** — Source locations and preserved local outputs
+- **[Harness comparison rig](benchmark/harness_comparison/README.md)** — Offline schedule previews, paired trials and the limits of the rotation-series consistency reference
 
 - **[USER_MANUAL.md](USER_MANUAL.md)** — Complete guide with examples
 - **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** — Command cheat sheet
