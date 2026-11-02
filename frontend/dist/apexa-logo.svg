@@ -18,23 +18,31 @@
       <stop offset="1" stop-color="#263b94"/>
     </linearGradient>
     <linearGradient id="beam">
-      <stop stop-color="#009acb"/>
-      <stop offset=".38" stop-color="#16cbd8"/>
-      <stop offset=".76" stop-color="#8c82ee"/>
-      <stop offset="1" stop-color="#6557cf"/>
+      <stop stop-color="#b47b17"/>
+      <stop offset=".35" stop-color="#e5b74b"/>
+      <stop offset=".62" stop-color="#fff0ad"/>
+      <stop offset="1" stop-color="#ce942a"/>
     </linearGradient>
+    <filter id="soft" x="-15%" y="-15%" width="130%" height="130%">
+      <feGaussianBlur stdDeviation=".4"/>
+    </filter>
   </defs>
   <g clip-path="url(#tile)">
     <rect width="96" height="96" fill="url(#glass)"/>
+    <g fill="none" stroke="#fff" stroke-width=".9" filter="url(#soft)">
+      <circle cx="48" cy="48" r="24" opacity=".18"/>
+      <circle cx="48" cy="48" r="34" opacity=".32"/>
+      <circle cx="48" cy="48" r="43" opacity=".16"/>
+    </g>
     <path d="M0 0h96v27C66 22 34 43 0 35Z" fill="#fff" opacity=".26"/>
   </g>
   <rect x=".6" y=".6" width="94.8" height="94.8" rx="19.4" fill="none" stroke="url(#edge)" stroke-width="1.2"/>
   <path d="M24 76 48 20 72 76" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity=".45" transform="translate(0 .7)"/>
   <path d="M24 76 48 20 72 76" fill="none" stroke="url(#ink)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
   <rect x="10" y="55.5" width="56" height="5" rx="2.5" fill="url(#beam)"/>
-  <path d="M13 56.4h50" stroke="#fff" stroke-width=".65" stroke-linecap="round" opacity=".65"/>
-  <path d="m48 52 5 6-5 6-5-6Z" fill="#f9feff"/>
-  <path d="m48 52 5 6h-5Z" fill="#d9dfff"/>
+  <path d="M13 56.4h50" stroke="#fff9db" stroke-width=".65" stroke-linecap="round" opacity=".8"/>
+  <path d="m48 52 5 6-5 6-5-6Z" fill="#fffef5"/>
+  <path d="m48 52 5 6h-5Z" fill="#f6e5b7"/>
   </g>
   <!-- Custom vector lettering: no installed or external font is required. -->
   <g transform="translate(128 32)" fill="none" stroke="#2b439c" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round">

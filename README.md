@@ -1,4 +1,4 @@
-<img src="frontend/public/apexa-mark.svg" width="64" height="64" alt="APEXA photon beam and sample mark">
+<img src="frontend/public/apexa-logo.svg" width="384" height="112" alt="APEXA — Advanced Photon EXperiment Assistant">
 
 # APEXA - Advanced Photon EXperiment Assistant
 

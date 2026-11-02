@@ -59,17 +59,18 @@ screens can wrap the header. Panel placement and Chat / Split / Canvas behavior
 are independent of these dimensions.
 
 The APEXA mark uses an indigo A on an ice-blue glass tile, crossed by one
-iridescent cyan-to-violet photon beam and a bright sample diamond. A soft sheen
-and fine edge highlight give the tile depth; simple geometry keeps the mark
-clear at toolbar size. The rings and jagged rim are removed. These logo colors
-do not alter the application's Classic palette.
+metallic gold photon beam and a bright sample diamond. Three faint, smooth
+diffraction rings sit behind the glass sheen. A fine edge highlight gives the
+tile depth; simple geometry keeps the mark clear at toolbar size. These logo
+colors do not alter the application's Classic palette.
 
 Its canonical SVG is `frontend/public/apexa-mark.svg`, also copied to
-`frontend/public/favicon.svg` and used by the README. A 1024 × 1024 PNG export
+`frontend/public/favicon.svg`. A 1024 × 1024 PNG export
 with transparent corners is saved at `frontend/public/apexa-mark.png` for direct
 preview and reuse in documents. The full wordmark in `frontend/public/apexa-logo.svg`
 combines the same icon with custom geometric vector lettering, so it requires
-no installed font. Its transparent PNG export is `frontend/public/apexa-logo.png`
+no installed font. The README uses this full wordmark; the compact icon fits
+chat avatars and toolbar controls. Its transparent PNG export is `frontend/public/apexa-logo.png`
 (1536 × 448). The shared `ApexaLogo`
 component bundles that source for the header, navigation, welcome screen,
 assistant replies and the Thinking indicator shown after sending a message.
