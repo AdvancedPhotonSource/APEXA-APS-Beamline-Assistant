@@ -593,3 +593,41 @@ def test_tilt_tolerance_is_controllable():
     # the bound advice must name the lever that matches the railed parameter
     assert "raise tol_tilts_deg" in src
     assert "raise lsd_tol_um" in src
+
+
+# ── seed tilts and the solver log (20-ID rotation series, scan 269) ──────────
+def _auto_calibrate_fn():
+    import ast
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "midas_comprehensive_server.py").read_text()
+    t = ast.parse(src)
+    return src, next(n for n in ast.walk(t)
+                     if isinstance(n, ast.AsyncFunctionDef) and n.name == "midas_auto_calibrate")
+
+
+def test_seed_tilt_note_is_initialised_on_every_path_that_reads_it():
+    """A read on a path that skipped the initialisation would turn every
+    seed-less calibration into a NameError."""
+    import ast
+    _, fn = _auto_calibrate_fn()
+    init = next(n for n in ast.walk(fn) if isinstance(n, ast.Assign)
+                and any(getattr(x, "id", "") == "_seed_tilt_note" for x in n.targets)
+                and isinstance(n.value, ast.Constant))
+    reads = [n.lineno for n in ast.walk(fn)
+             if isinstance(n, ast.Name) and n.id == "_seed_tilt_note" and isinstance(n.ctx, ast.Load)]
+    holder = next(p for p in ast.walk(fn) if isinstance(getattr(p, "body", None), list) and init in p.body)
+    assert all(holder.lineno <= r <= holder.end_lineno and r > init.lineno for r in reads)
+
+
+def test_seed_file_tilts_are_parsed_and_reported_not_silently_dropped():
+    """At 20-ID an agent 'seeded tz=-3.5' to test a railed scan; only BC/Lsd were
+    seeded, the box stayed [-3, 3], and the run was indistinguishable from a real
+    tilt-seed test. The tilts must at least be read and the payload must say so."""
+    src, _ = _auto_calibrate_fn()
+    assert 'elif _p[0] in ("ty", "tz")' in src
+    assert "seed_tilts_applied" in src and "were NOT applied" in src
+
+
+def test_the_solver_trace_is_kept_with_the_run():
+    src, _ = _auto_calibrate_fn()
+    assert 'calibrate_runner.log' in src and '"solver_log"' in src

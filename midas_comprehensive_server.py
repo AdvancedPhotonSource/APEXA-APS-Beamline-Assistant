@@ -6297,6 +6297,12 @@ async def midas_auto_calibrate(
         # can't wander into a false basin. Reads the CORRECT complete geometry
         # (both BC coords, Lsd already in µm) — the seed the agent tried to hand-
         # write and got wrong. Only fills guesses the caller left at defaults.
+        # A seed file's tilts are NOT applied: seed_from_params seeds BC and Lsd,
+        # and the canonical recipe starts ty/tz at 0. That used to happen
+        # silently -- at 20-ID an agent "seeded tz = -3.5" to test a railed scan,
+        # the box stayed [-3, 3], and the test was another default run that
+        # nobody could tell apart from a real result. Now the payload says so.
+        _seed_tilt_note = ""
         if seed_from_params:
             _sp = Path(seed_from_params).expanduser().absolute()
             if not _sp.exists():
@@ -6312,6 +6318,8 @@ async def midas_auto_calibrate(
                         _seed["bc_y"] = float(_p[1]); _seed["bc_x"] = float(_p[2])
                     elif _p[0] == "Lsd" and len(_p) >= 2:
                         _seed["lsd"] = float(_p[1])
+                    elif _p[0] in ("ty", "tz") and len(_p) >= 2:
+                        _seed[_p[0]] = float(_p[1])
                 if lsd_guess >= 1000000.0 and "lsd" in _seed:
                     lsd_guess = _seed["lsd"]            # µm, as written in the params file
                 if bc_x_guess == 0.0 and "bc_x" in _seed:
@@ -6320,6 +6328,14 @@ async def midas_auto_calibrate(
                     bc_y_guess = _seed["bc_y"]
                 print(f"  ↳ seeded from {_sp.name}: Lsd={_seed.get('lsd')} µm, "
                       f"BC=({_seed.get('bc_x')}, {_seed.get('bc_y')})", file=sys.stderr)
+                _tilts = {k: _seed[k] for k in ("ty", "tz") if abs(_seed.get(k, 0.0)) > 1e-6}
+                if _tilts:
+                    _seed_tilt_note = (
+                        f"seed_from_params tilts {_tilts} were NOT applied: only BC and Lsd "
+                        f"are seeded, and the canonical recipe starts ty/tz at 0, so the "
+                        f"tilt box is 0 +/- tol_tilts_deg. To reach a tilt outside that "
+                        f"box, raise tol_tilts_deg; do not read this run as a tilt-seed test.")
+                    print(f"  ⚠ {_seed_tilt_note}", file=sys.stderr)
             except Exception as _e:
                 return format_result({"tool": "midas_auto_calibrate", "status": "error",
                                       "error": f"could not parse seed_from_params {_sp}: {_e}"})
@@ -6869,12 +6885,30 @@ async def midas_auto_calibrate(
                 _out_t["outcome_manifest"] = _write_calibration_outcome(_v2_out, _out_t)
                 return format_result(_out_t)
 
+            # Keep the solver's own trace -- every capture iteration, each tilt-box
+            # re-centring and why capture stopped. It used to be dropped (only a
+            # 12-line tail survived, and only on error), so "why did this scan rail
+            # at exactly 3.000 while its neighbour at 4.5 converged?" could not be
+            # answered from the run that produced it.
+            _solver_log = None
+            if _pv2 is not None and (_pv2.stderr or "").strip():
+                try:
+                    _solver_log = _v2_out / "calibrate_runner.log"
+                    _solver_log.write_text(_pv2.stderr)
+                except Exception:
+                    _solver_log = None
             _payload = None
             if _pv2 is not None and (_pv2.stdout or "").strip():
                 try:
                     _payload = json.loads(_pv2.stdout)
                 except Exception:
                     _payload = None
+            if isinstance(_payload, dict):
+                if _solver_log is not None:
+                    _payload["solver_log"] = str(_solver_log)
+                if _seed_tilt_note:
+                    _payload.setdefault("notes", []).append(_seed_tilt_note)
+                    _payload["seed_tilts_applied"] = False
             if _payload is None:
                 _tail = "\n".join((_pv2.stderr or "").strip().splitlines()[-12:]) \
                     if _pv2 is not None else ""
