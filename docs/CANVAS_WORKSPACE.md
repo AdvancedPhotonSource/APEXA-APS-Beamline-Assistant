@@ -62,10 +62,11 @@ The APEXA mark combines a white A, a cyan photon beam and sample point, and a
 soft field of concentric diffraction rings. A rim of tapered rays takes visual
 inspiration from Krishna's Sudarshan chakra; it suggests rotation without an
 animation. The diffuse background is original vector artwork inspired by the
-ceria pattern in `test-BISCUIT`; it contains no
-detector image or acquisition data. A near-black field and soft silver rings
-recall a diffraction image, with a white A and cyan beam for contrast at toolbar
-size. These logo colors do not alter the application's Classic palette.
+ceria pattern in `test-BISCUIT`; it contains no detector image or acquisition
+data. The background uses deep, muted raincloud blue-grey with soft misty
+highlights, inspired by Krishna's Shyam complexion. Silver diffraction rings,
+a white A and a cyan beam remain clear at toolbar size. These logo colors do
+not alter the application's Classic palette.
 
 Its canonical SVG is `frontend/public/apexa-mark.svg`, also copied to
 `frontend/public/favicon.svg` and used by the README. The shared `ApexaLogo`
