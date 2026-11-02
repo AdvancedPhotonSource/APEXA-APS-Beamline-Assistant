@@ -58,13 +58,12 @@ its tooltip and accessible label. Touch input keeps larger controls, and narrow
 screens can wrap the header. Panel placement and Chat / Split / Canvas behavior
 are independent of these dimensions.
 
-The APEXA mark uses an indigo A on a glass tile with a pale centre and blue
-edges, crossed by one metallic gold photon beam and a bright sample diamond.
-Three faint, smooth diffraction rings sit behind the glass sheen. A defined blue rim separates the
-tile from white surfaces, with a subtle shadow in Classic light. The pale centre
-keeps the indigo A clear. A fine gold edge defines the beam against the pale
-glass. These logo colors do not alter
-the application's Classic palette.
+The APEXA mark uses a metallic gold A on indigo glass, crossed by a golden
+photon beam and a bright sample diamond. The background uses the original A's
+indigo gradient. Three faint, smooth diffraction rings sit behind the glass
+sheen. The bright gold letter contrasts with the indigo tile, while a defined
+blue rim and a subtle shadow in Classic light separate the tile from white
+surfaces. These logo colors do not alter the application's Classic palette.
 
 Its canonical SVG is `frontend/public/apexa-mark.svg`, also copied to
 `frontend/public/favicon.svg`. A 1024 × 1024 PNG export
