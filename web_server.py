@@ -500,6 +500,13 @@ async def initialize_mcp_client():
 
     try:
         mcp_client = APEXAClient()
+        # Match CLI profile selection before connecting servers or accepting a
+        # query. Without this, an unpinned WebUI quietly stayed on legacy /chat/
+        # while the same user's CLI selected structured Argo /v1 tool calls.
+        # Resolution may check a cached/expired network probe; keep it off-loop.
+        profile_line = await asyncio.to_thread(mcp_client._init_profile)
+        if profile_line:
+            print(f"  {profile_line}")
 
         # Read server configurations from servers.config
         server_configs = []
@@ -539,16 +546,23 @@ async def initialize_mcp_client():
         mcp_client = None
 
 # Mount React frontend static assets if build exists
-_frontend_dist = Path("frontend/dist")
+_frontend_dist = Path(__file__).resolve().parent / "frontend" / "dist"
 if (_frontend_dist / "assets").exists():
     app.mount("/assets", StaticFiles(directory=_frontend_dist / "assets"), name="frontend_assets")
-if _frontend_dist.exists():
-    @app.get("/favicon.svg")
-    async def serve_favicon():
-        fav = _frontend_dist / "favicon.svg"
-        if fav.exists():
-            return FileResponse(fav, media_type="image/svg+xml")
-        raise HTTPException(404)
+
+@app.get("/apexa-mark.svg")
+async def serve_apexa_mark():
+    mark = _frontend_dist / "apexa-mark.svg"
+    if mark.is_file():
+        return FileResponse(mark, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
+    raise HTTPException(404)
+
+@app.get("/favicon.svg")
+async def serve_favicon():
+    fav = _frontend_dist / "favicon.svg"
+    if fav.is_file():
+        return FileResponse(fav, media_type="image/svg+xml")
+    raise HTTPException(404)
 
 @app.get("/debug", response_class=HTMLResponse)
 async def serve_debug():
@@ -572,7 +586,7 @@ fetch('/api/status').then(r=>r.json()).then(d=>{
 @app.get("/", response_class=HTMLResponse)
 async def serve_web_ui():
     """Serve the React app (or fall back to legacy HTML)"""
-    react_index = Path("frontend/dist/index.html")
+    react_index = _frontend_dist / "index.html"
     if react_index.exists():
         return FileResponse(react_index, headers={"Cache-Control": "no-cache"})
     html_file = Path("beamline_web_ui.html")

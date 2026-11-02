@@ -5,6 +5,8 @@ The maintained UI is the React workspace served by `web_server.py` at
 
 - [Canvas workspace](docs/CANVAS_WORKSPACE.md): tabs, automatic opening, comparison,
   favorites, keyboard controls, themes, and rebuild/restart instructions.
+- [Model connection and replies without execution](docs/ARGO_NATIVE_ENDPOINT.md#webui-startup-and-replies-that-do-not-execute):
+  shared CLI/WebUI profiles, legacy Argo retries, and inspection recovery.
 - [Shared sessions](docs/SESSIONS.md): resume between WebUI and CLI, saved viewer
   state, recovery and storage limits.
 - [Scientific workflows](docs/SCIENTIFIC_WORKFLOWS.md): reviewed workflow recipes,

@@ -28,6 +28,47 @@ profile `anl`               → preset argo, APEXA_LLM_MODE=proxy
 An operator who explicitly sets `APEXA_LLM_MODE=argo` keeps the legacy transport — the
 profile never silently changes an existing install's transport.
 
+### WebUI startup and replies that do not execute
+
+The WebUI now applies the same connection-profile initialization as the CLI before
+connecting MCP servers. Profile resolution runs off the event loop. Previously,
+only the interactive CLI initialized profiles, so a WebUI with no explicit mode
+could keep using legacy `/chat/` even when the ANL profile selected structured
+`/v1` for the CLI. A pinned `APEXA_LLM_PRESET` and an explicit legacy mode retain
+their existing precedence; the change does not rewrite `.env`.
+
+For the ANL profile, launch explicitly with:
+
+```bash
+APEXA_PROFILE=anl APEXA_LLM_MODE=proxy ./start_web_viewer.sh
+```
+
+Restart an existing backend with Ctrl+C in its terminal before launching the
+replacement, then reload the browser. Refreshing the browser alone cannot load
+Python changes. A separately pinned preset or base URL still takes precedence;
+check those settings if the startup profile/endpoint differs from the intended one.
+
+Repeated `Argo 400 with tools` warnings show that legacy requests were rejected
+and retried without native tools; that log line alone does not identify the
+gateway's validation error. `/api/status` returning 200 every 15 seconds is the
+browser's health poll, not evidence of an active analysis. `active_chat_turns`
+reports the server's current in-flight chat tasks.
+
+An inspection that ends with only “Listing the current working directory” or
+“Inspecting the configured environment” may have executed nothing. The agent now
+checks terse inspection acknowledgments against this turn's execution ledger on
+both transports. For an explicit inspection request with no dispatched tool, it
+allows one corrective model turn within the existing iteration budget. If the
+same acknowledgment persists, it returns an explicit **No inspection ran** result.
+It never fabricates or automatically dispatches a tool call, and permission gates
+remain in effect. This is a narrow recovery check, not a general completion or
+scientific-validity classifier. A corrected request can also report missing
+information or a blocker instead of executing.
+
+These startup/recovery paths are covered by offline tests with mocked profile
+resolution and scripted model responses. They do not establish that a particular
+live gateway/model or beamline executor is currently healthy.
+
 ### Moving a host off the sidecar
 
 Remove these from `.env` if present, then stop the sidecar:

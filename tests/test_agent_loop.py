@@ -194,6 +194,58 @@ def test_ledger_allows_conversational_answer_with_no_tools():
         "HEDM stands for high-energy diffraction microscopy. It maps grains in 3D.") == []
 
 
+@pytest.mark.parametrize("provider_type", [StubProvider, TextProvider])
+@pytest.mark.parametrize("query,ack", [
+    ("List current directory", "Listing the current working directory."),
+    ("Perform a read-only analysis readiness review", "Inspecting the configured environment and registered scientific executors read-only."),
+])
+def test_inspection_acknowledgment_must_continue_or_report_no_execution(provider_type, query, ack):
+    calls = []
+    provider = provider_type([AgentResponse(content=ack)] * 3)
+    out = _run(_runner(record=calls), _agent(), provider, query=query)
+    assert "No inspection ran" in out and "Nothing is running" in out
+    assert len(provider.seen_messages) == 2 and calls == []
+    correction = provider.seen_messages[1][-1]["content"]
+    assert "permission" in correction and "hardware restrictions" in correction
+
+
+@pytest.mark.parametrize("provider_type", [StubProvider, TextProvider])
+def test_inspection_recovery_executes_once_and_keeps_real_results(provider_type):
+    calls = []
+    tool_reply = (AgentResponse(content="", tool_calls=[ToolCall(id="list", name="list_directory", arguments={"path": "."})])
+                  if provider_type.structured_tools else
+                  AgentResponse(content='TOOL_CALL: list_directory\nARGUMENTS: {"path": "."}'))
+    provider = provider_type([
+        AgentResponse(content="Listing the current working directory."), tool_reply,
+        AgentResponse(content="Found one file: sample.h5."),
+    ])
+    out = _run(_runner({"list_directory": '{"files": ["sample.h5"]}'}, record=calls),
+               _agent(), provider, query="List current directory")
+    assert out == "Found one file: sample.h5."
+    assert calls == [("list_directory", {"path": "."})]
+    if provider_type.structured_tools:
+        assert "TOOL_CALL:" not in provider.seen_messages[1][-1]["content"]
+
+
+def test_inspection_acknowledgment_does_not_escape_at_iteration_cap():
+    provider = StubProvider([AgentResponse(content="Listing the current directory.")])
+    out = _run(_runner(), _agent(), provider, query="List current directory", max_iterations=1)
+    assert "No inspection ran" in out and len(provider.seen_messages) == 1
+
+
+def test_inspection_check_excludes_questions_explanations_and_executed_turns():
+    ledger = ToolLedger()
+    assert not ledger.is_unexecuted_inspection("Explain this term", "Listing the current directory.")
+    assert not ledger.is_unexecuted_inspection("List files", "Which directory should I inspect?")
+    assert not ledger.is_unexecuted_inspection("List files", "I need a directory path before I can inspect it.")
+    assert not ledger.is_unexecuted_inspection("Move the motor", "Checking the motor.")
+    assert not ledger.is_unexecuted_inspection("Scan the motor", "Scanning the motor.")
+    assert not ledger.is_unexecuted_inspection("List files", "Files: sample.h5, dark.tif.")
+    ledger.dispatch("list", "list_directory", {})
+    ledger.complete("list", "sample.h5")
+    assert not ledger.is_unexecuted_inspection("List files", "Listing the current directory.")
+
+
 def test_ledger_flags_ungrounded_path_but_allows_grounded_one():
     L = ToolLedger()
     L.dispatch("c1", "list_directory", {})

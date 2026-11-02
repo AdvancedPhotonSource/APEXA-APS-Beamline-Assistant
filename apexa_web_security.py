@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -15,6 +16,8 @@ import uuid
 
 from fastapi import HTTPException
 from starlette.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 def allowed_origins():
@@ -89,6 +92,9 @@ class SingleOperatorBoundary:
         if os.environ.get("APEXA_WEB_MODE", "single_operator") != "single_operator":
             reason = "Only single_operator mode is qualified; shared identities are not implemented"
         if reason:
+            # Uvicorn's access line only says "403". Log the fixed policy reason
+            # without copying request headers, credentials or URL parameters.
+            logger.warning("Rejected %s request (%s): %s", scope["type"], code, reason)
             if scope["type"] == "websocket":
                 await send({"type": "websocket.close", "code": 1008, "reason": reason})
             else:

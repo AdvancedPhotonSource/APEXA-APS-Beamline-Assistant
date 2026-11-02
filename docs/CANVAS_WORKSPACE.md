@@ -49,6 +49,8 @@ session switch cannot insert its result into the new chat. See
 buttons and selected controls, cyan accents and dark text. The header theme
 button cycles Classic light, Dark and Midnight; an existing saved preference is
 respected. Choose Classic light if a returning browser still shows a dark theme.
+The palette is independent of the Chat / Split / Canvas layout: changing colors
+does not change panel arrangement or controls.
 
 The APEXA mark combines an A-shaped peak with an incoming photon beam and outgoing
 diffraction arcs. Its SVG source is `frontend/public/apexa-mark.svg`, shared by
@@ -77,6 +79,21 @@ npm run build
 The repository includes the production `frontend/dist` so a deployment can use
 reviewed assets without installing Node. During frontend development, Vite
 updates the UI automatically; it does not restart the Python backend.
+
+### Interpreting web-server logs
+
+- `PATCH .../workspace` → 405 followed by `PUT` → 200 means the new frontend is
+  using its compatible autosave fallback with an older backend. Restart the backend
+  to enable smaller PATCH saves; the successful PUT still saved the workspace.
+- `/apexa-mark.svg` → 404 requires the current backend's named logo route and a
+  built `frontend/dist/apexa-mark.svg`. The production server serves that SVG
+  explicitly; a working Vite preview alone does not verify production routing.
+- A 403 can come from the Host/Origin boundary. Open `http://127.0.0.1:8001`
+  consistently. Current backends log the rejection's policy reason without
+  printing request headers or credentials; keep the boundary enabled.
+- WebSocket close code 1001 during a browser refresh is a normal disconnect.
+- Repeated status polls do not mean a chat job is running. For Argo retries or
+  acknowledgments without tool results, see [LLM transport troubleshooting](ARGO_NATIVE_ENDPOINT.md#webui-startup-and-replies-that-do-not-execute).
 
 ## Design basis
 

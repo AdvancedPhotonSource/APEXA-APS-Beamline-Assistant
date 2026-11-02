@@ -3029,6 +3029,7 @@ class AgentRunner:
         _async_strikes = 0    # phantom-launch guard: false "launched / will report later"
         _refusal_strikes = 0  # refusal guard: false "I can't execute / you run it"
         _empty_strikes = 0    # empty-response guard: model returned nothing this turn
+        _inspection_narration_retries = 0
 
         # ── Stage-scoped guardrails (Component C) ────────────────────────────
         # As the model moves through pipeline stages within ONE turn, (C1) load
@@ -3053,7 +3054,7 @@ class AgentRunner:
         # first FF/NF/PF tool fires.
         _injected_techniques: set = set(preloaded_techniques or ())
 
-        for _ in range(max_iterations):
+        for iteration in range(max_iterations):
             # `tools` is passed unconditionally; ArgoProvider only attaches it to
             # the payload when APEXA_NATIVE_TOOLS is set, so the OFF path is
             # byte-for-byte identical to the text-based flow.
@@ -3148,6 +3149,29 @@ class AgentRunner:
                             pass
                 continue
 
+            # Acknowledging an inspection is not executing it. Give one bounded
+            # correction on either transport, with the actual empty ledger as a
+            # precondition. Never manufacture a tool call from the user's text.
+            text = response.content or ""
+            text_calls = [] if structured else self._parse_text_tool_calls(text)
+            if not text_calls and ledger.is_unexecuted_inspection(query, text):
+                if _inspection_narration_retries == 0 and iteration + 1 < max_iterations:
+                    _inspection_narration_retries += 1
+                    messages.append({"role": "assistant", "content": text})
+                    instruction = (
+                        "No inspection tool ran this turn. Your reply only announced an action; "
+                        "nothing is running in the background. Complete the authorized inspection "
+                        "using the available tools, answer directly if the supplied information is "
+                        "sufficient, or state the missing information/blocker. Existing permission "
+                        "and hardware restrictions still apply. Do not end with another promise.")
+                    if not structured:
+                        instruction += " To call a tool, use TOOL_CALL: <name> followed by ARGUMENTS: <JSON object>."
+                    messages.append({"role": "user", "content": instruction})
+                    continue
+                return _persist(
+                    "No inspection ran. The model returned an acknowledgment without a tool call. "
+                    "Nothing is running in the background. Check the model connection and retry the request.")
+
             # ── Structured path: no tool_calls ⇒ this IS the final answer ──
             # Tool intent can only arrive as real `tool_calls` here, so there is no
             # text protocol to parse and nothing for the drift guards to catch.
@@ -3179,9 +3203,6 @@ class AgentRunner:
                 return _persist(text)
 
             # ── Mode 2: Text-based TOOL_CALL: parsing ──
-            text = response.content or ""
-            text_calls = self._parse_text_tool_calls(text)
-
             if text_calls:
                 # Add assistant text (with tool calls stripped) to history AND
                 # show it to the user before the ▸ tool markers fire — this is the
@@ -3509,9 +3530,13 @@ class AgentRunner:
                 #    parallel dispatch is always safe here.
                 async def _run_one(tc: ToolCall):
                     _emit_tool_marker(tc.name)
+                    call_id = f"text_{len(ledger.entries)}"
+                    ledger.dispatch(call_id, tc.name, tc.arguments)
                     t0 = time.monotonic()
                     result = await self._execute(tc.name, tc.arguments)
-                    return tc, result, int((time.monotonic() - t0) * 1000)
+                    duration = time.monotonic() - t0
+                    ledger.complete(call_id, result, elapsed_s=duration)
+                    return tc, result, int(duration * 1000)
 
                 exec_results: List = []
                 if to_execute:

@@ -97,6 +97,17 @@ _PATH_ALLOWLIST_PARTS = (
 # would raise a false ungrounded-path violation on any answer citing a link.
 _URL_RE = re.compile(r"\b(?:https?|ftp|s3|globus)://\S+", re.IGNORECASE)
 
+# Narrow recovery for an inspection request that received only an acknowledgment.
+# Explanations/questions, approvals and motion/acquisition commands are outside
+# this narrow check. It never dispatches a tool; normal authorization still applies.
+_INSPECTION_REQUEST = re.compile(
+    r"^\s*(?:(?:please|can you|could you|would you)\s+)?"
+    r"(?:list\b|inspect\b|read\b|check\b|perform\s+(?:a\s+)?read[- ]only\b)", re.I)
+_INSPECTION_NARRATION = re.compile(
+    r"\s*(?:(?:I(?: am|'m|’m)\s+)?(?:listing|inspecting|checking|reading|scanning)"
+    r"|(?:I(?: will|'ll|’ll)|let me)\s+(?:list|inspect|check|read|scan))"
+    r"\s+[^\n?:]{1,400}\s*", re.I)
+
 
 def _digest(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:12]
@@ -223,6 +234,16 @@ class ToolLedger:
                 + ", ".join(dict.fromkeys(self.names())))
 
     # ── the integrity gate ──────────────────────────────────────────────────
+
+    def is_unexecuted_inspection(self, query: str, answer: str) -> bool:
+        """An empty turn ended with a short promise to inspect, not a result.
+
+        This deliberately covers only terse present/future inspection narration
+        for an explicit inspection request. It is not a general intent classifier.
+        """
+        return (not self._entries
+                and bool(_INSPECTION_REQUEST.match(query or ""))
+                and bool(_INSPECTION_NARRATION.fullmatch(answer or "")))
 
     def check_final_answer(self, text: str) -> List[Dict[str, str]]:
         """Verify a proposed final answer against what actually executed.

@@ -51,6 +51,15 @@ def test_foreign_http_origin_and_host_are_rejected(client):
     assert http.get("/api/status", headers={"host": "evil.invalid"}).status_code == 403
 
 
+def test_rejection_logs_reason_without_echoing_credentials(client, caplog):
+    http, _ = client
+    response = http.get("/api/status", headers={
+        "origin": "https://private-host.invalid", "authorization": "Bearer private-secret"})
+    assert response.status_code == 403
+    assert "Browser origin is not allowed" in caplog.text
+    assert "private-secret" not in caplog.text and "private-host.invalid" not in caplog.text
+
+
 def test_token_covers_http_and_websocket(client, monkeypatch):
     http, _ = client
     monkeypatch.setenv("APEXA_WEB_TOKEN", "test-only-secret")
