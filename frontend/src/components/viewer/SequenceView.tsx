@@ -9,9 +9,11 @@ interface Frame {
   stats: { min: number; max: number; mean: number; excluded_pixels: number }
   context: { sequence_frame: number; file_frame: number; settings: { center_x: number; center_y: number }; [key: string]: unknown }
   profile?: { radius_px: number[]; intensity: number[] }
+  statistics_scope?: string
+  region?: { x: number; y: number; width: number; height: number; step: number }
 }
 interface Rings { rings: { hkl: number[]; radius_px: number; d_angstrom: number; two_theta_deg: number }[]; model: string; signature: string }
-const DEFAULT_SETTINGS = { dark_path: '', dark_dataset: '', dark_frame: 0, mask_path: '', mask_dataset: '', corrected: true, log: false, colormap: 'viridis', vmin: '', vmax: '', center_x: '', center_y: '', preview_max_side: 1024 }
+const DEFAULT_SETTINGS = { dark_path: '', dark_dataset: '', dark_frame: 0, mask_path: '', mask_dataset: '', corrected: true, log: false, colormap: 'viridis', vmin: '', vmax: '', center_x: '', center_y: '', preview_max_side: 1024, preview_only: true }
 interface SavedView {
   settings: typeof DEFAULT_SETTINGS; index: number; source: { pattern: string; dataset: string; path: string }
   geometry: { path: string; energy_kev: string; distance_mm: string; pixel_um: string; location: string }; rings: Rings | null
@@ -45,6 +47,8 @@ export function SequenceView({ artifact }: { artifact: VizArtifact }) {
   const geometrySignature = JSON.stringify(geometry)
   const currentRings = rings?.signature === geometrySignature ? rings : null
   const reportId = `inspection-report-${artifact.id}`
+  const [zoom, setZoom] = useState(1)
+  const [focus, setFocus] = useState<[number, number] | null>(null)
 
   useEffect(() => {
     const store = useVizStore.getState()
@@ -68,7 +72,12 @@ export function SequenceView({ artifact }: { artifact: VizArtifact }) {
     const controller = new AbortController()
     setLoading(true); setError('')
     const timer = setTimeout(() => {
-      post<Frame>('frame', { ...settings, sequence_id: manifest.sequence_id, index,
+      const width = Math.max(1, Math.floor(manifest.shape[1] / zoom))
+      const height = Math.max(1, Math.floor(manifest.shape[0] / zoom))
+      const x = Math.max(0, Math.min(manifest.shape[1] - width, Math.floor((focus?.[0] ?? manifest.shape[1] / 2) - width / 2)))
+      const y = Math.max(0, Math.min(manifest.shape[0] - height, Math.floor((focus?.[1] ?? manifest.shape[0] / 2) - height / 2)))
+      post<Frame>(settings.preview_only ? 'tile' : 'frame', { ...settings, sequence_id: manifest.sequence_id, index,
+        ...(settings.preview_only ? { x, y, width, height } : {}),
         vmin: settings.vmin === '' ? null : Number(settings.vmin), vmax: settings.vmax === '' ? null : Number(settings.vmax),
         center_x: settings.center_x === '' ? (manifest.shape[1] - 1) / 2 : Number(settings.center_x),
         center_y: settings.center_y === '' ? (manifest.shape[0] - 1) / 2 : Number(settings.center_y),
@@ -76,7 +85,7 @@ export function SequenceView({ artifact }: { artifact: VizArtifact }) {
         .catch(e => { if (e.name !== 'AbortError') { setError(String(e)); setLoading(false); setPlaying(false) } })
     }, 150)
     return () => { clearTimeout(timer); controller.abort() }
-  }, [manifest, index, settings, localData])
+  }, [manifest, index, settings, localData, zoom, focus])
 
   useEffect(() => {
     if (!playing || loading || !manifest || !frame || error) return
@@ -87,7 +96,7 @@ export function SequenceView({ artifact }: { artifact: VizArtifact }) {
   const makeReport = () => ({
     title: `Detector inspection · ${artifact.title}`, eyebrow: 'SYNCHRONIZED VIEWER REPORT',
     subtitle: 'Inspection and display corrections; this is not a reconstruction acceptance verdict.',
-    header_pairs: [['Source', frame?.filename ?? input.path], ['Frame (1-based)', String((frame?.context.sequence_frame ?? 0) + 1)], ['Analysis key', frame?.analysis_key ?? 'pending']],
+    header_pairs: [['Source', frame?.filename ?? input.path], ['Frame (1-based)', String((frame?.context.sequence_frame ?? 0) + 1)], ['Analysis key', frame?.analysis_key ?? 'pending'], ['Statistics scope', frame?.statistics_scope ?? 'full frame']],
     tiles: frame ? Object.entries(frame.stats).map(([key, value]) => ({ key, value: String(value) })) : [],
     plates: frame ? [{ key: 'detector', title: 'Detector frame (ring guides documented below)', subtitle: 'Corrections and display limits are recorded in the provenance below.', png_b64: frame.preview.split(',')[1] }] : [],
     findings: [
@@ -161,6 +170,8 @@ export function SequenceView({ artifact }: { artifact: VizArtifact }) {
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 12 }}>
         <label><input type="checkbox" checked={settings.corrected} onChange={e => setSettings(s => ({ ...s, corrected: e.target.checked }))} /> Corrected view</label>
         <label><input type="checkbox" checked={settings.log} onChange={e => setSettings(s => ({ ...s, log: e.target.checked }))} /> Log display</label>
+        <label><input type="checkbox" checked={!!settings.preview_only} onChange={e => { setPlaying(false); setZoom(1); setSettings(s => ({ ...s, preview_only: e.target.checked })) }} /> Fast preview</label>
+        {settings.preview_only && <label>Zoom <select aria-label="Detector preview zoom" value={zoom} onChange={e => setZoom(Number(e.target.value))}>{[1, 2, 4, 8].map(n => <option key={n} value={n}>{n}×</option>)}</select></label>}
         <label>Colormap <select value={settings.colormap} onChange={e => setSettings(s => ({ ...s, colormap: e.target.value }))}>{['viridis', 'gray', 'inferno', 'magma'].map(c => <option key={c}>{c}</option>)}</select></label>
         <label>Preview <select value={settings.preview_max_side ?? 1024} onChange={e => setSettings(s => ({ ...s, preview_max_side: Number(e.target.value) }))}>{[512, 1024, 2048, 4096].map(n => <option key={n} value={n}>{n} px</option>)}</select></label>
         <button className="apexa-gallery-button" disabled={!frame} onClick={() => frame && setSettings(s => ({ ...s, vmin: String(frame.vmin), vmax: String(frame.vmax) }))}>Lock contrast</button>
@@ -172,12 +183,20 @@ export function SequenceView({ artifact }: { artifact: VizArtifact }) {
       </div>
       {frame && <>
         <div style={{ height: 'clamp(280px, 48vh, 620px)', background: '#08090b', borderRadius: 8, overflow: 'hidden' }}>
-          <svg role="img" aria-label={`Detector frame ${frame.context.sequence_frame + 1} with optional predicted rings`} viewBox={`0 0 ${frame.shape[1]} ${frame.shape[0]}`} width="100%" height="100%">
-            <image href={frame.preview} width={frame.shape[1]} height={frame.shape[0]} />
+          <svg role="img" aria-label={`Detector frame ${frame.context.sequence_frame + 1} with optional predicted rings`} viewBox={frame.region ? `${frame.region.x} ${frame.region.y} ${frame.region.width} ${frame.region.height}` : `0 0 ${frame.shape[1]} ${frame.shape[0]}`} width="100%" height="100%"
+            onClick={event => {
+              if (!settings.preview_only) return
+              const transform = event.currentTarget.getScreenCTM()
+              if (!transform) return
+              const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(transform.inverse())
+              setFocus([point.x, point.y])
+            }}>
+            <image href={frame.preview} x={frame.region?.x ?? 0} y={frame.region?.y ?? 0} width={frame.region?.width ?? frame.shape[1]} height={frame.region?.height ?? frame.shape[0]} />
             {currentRings?.rings.map((r, i) => <circle key={i} cx={frame.context.settings.center_x} cy={frame.context.settings.center_y} r={r.radius_px} fill="none" stroke="#22d3ee" strokeWidth={1.5} vectorEffect="non-scaling-stroke"><title>{`hkl ${r.hkl.join(' ')} · d ${r.d_angstrom.toFixed(4)} Å · 2θ ${r.two_theta_deg.toFixed(3)}°`}</title></circle>)}
           </svg>
         </div>
-        <div style={{ fontSize: 11, color: 'var(--apexa-text-muted)', overflowWrap: 'anywhere' }}>{frame.filename} · file frame {frame.context.file_frame} · mean {frame.stats.mean.toFixed(2)} · excluded {frame.stats.excluded_pixels} pixels · preview {frame.preview_shape?.join(' × ') ?? frame.shape.join(' × ')} (nearest pixel); statistics/profile use full data</div>
+        <div style={{ fontSize: 11, color: 'var(--apexa-text-muted)', overflowWrap: 'anywhere' }}>{frame.filename} · file frame {frame.context.file_frame} · mean {frame.stats.mean.toFixed(2)} · excluded {frame.stats.excluded_pixels} pixels · preview {frame.preview_shape?.join(' × ') ?? frame.shape.join(' × ')} · {frame.statistics_scope ?? 'statistics/profile use full data'}</div>
+        {settings.preview_only && <p className="text-xs text-[var(--apexa-text-muted)]">Click the image to center the zoom. Fast preview reports sampled pixels only; turn it off for full-frame statistics and the radial profile.</p>}
       </>}
       <details><summary>Inspect and simulate rings</summary>
         <div className="apexa-viewer-fields">

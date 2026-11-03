@@ -89,8 +89,13 @@ def import_browser_session(payload: BrowserImport):
 
 
 @router.get("/{session_id}")
-def read_session(session_id: str):
-    return _call(lambda store: _public(store.get(session_id)))
+def read_session(session_id: str, lazy_artifacts: bool = False):
+    return _call(lambda store: _public(store.get(session_id, lazy_artifacts=lazy_artifacts, include_history=False)))
+
+
+@router.get("/{session_id}/artifacts/{digest}")
+def read_artifact(session_id: str, digest: str):
+    return _call(lambda store: store.artifact(session_id, digest))
 
 
 @router.patch("/{session_id}")

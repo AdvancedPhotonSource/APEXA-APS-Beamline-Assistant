@@ -212,3 +212,22 @@ def test_facility_presets_never_read_the_keyring():
 def test_every_builtin_profile_names_a_real_preset():
     for prof in P.BUILTIN_PROFILES:
         assert prof.preset in E.PRESETS, prof.name
+
+
+def test_generic_key_does_not_qualify_a_different_endpoint(monkeypatch):
+    monkeypatch.setenv('APEXA_LLM_PRESET', 'custom')
+    monkeypatch.setenv('APEXA_LLM_BASE_URL', 'https://university.example/v1')
+    monkeypatch.setenv('APEXA_LLM_API_KEY', 'university-secret')
+    monkeypatch.setattr(E, 'keyring_get', lambda account: '')
+    assert not P.has_credential(P.load_profiles()['openai-personal'])
+    with pytest.raises(E.EndpointRejected, match='generic environment credential'):
+        P.apply(P.load_profiles()['openai-personal'])
+    assert E.active_endpoint().base_url == 'https://university.example/v1'
+
+
+def test_initial_explicit_profile_can_bind_its_generic_key(monkeypatch):
+    monkeypatch.delenv('APEXA_ACTIVE_PROFILE', raising=False)
+    monkeypatch.setenv('APEXA_PROFILE', 'openai-personal')
+    monkeypatch.setenv('APEXA_LLM_API_KEY', 'personal-secret')
+    P.apply(P.load_profiles()['openai-personal'])
+    assert E.active_endpoint().resolve_key() == 'personal-secret'

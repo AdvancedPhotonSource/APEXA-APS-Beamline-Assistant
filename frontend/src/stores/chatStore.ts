@@ -1,4 +1,6 @@
 import { create } from 'zustand'
+import { boundSessionMemory } from '@/lib/sessionMemory'
+import { releaseWorkspaceCache } from '@/api/sessions'
 import type { ChatMessage, ToolResult, VizArtifact, ChatSession, SessionWorkspace, SessionAttachment } from '@/api/types'
 import { wsManager } from '@/api/websocket'
 import { sendChatHttp } from '@/api/endpoints'
@@ -363,7 +365,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
         session.workspaceRevision = workspaceVersions.get(id)
       }
       else if (!restore && previousWorkspace) session.workspace = previousWorkspace
-      set(s => ({ sessions: s.sessions.map(old => old.id === id ? session : old) }))
+      set(s => {
+        const next = s.sessions.map(old => old.id === id ? session : old)
+        const protectedIds = new Set([...workspaceSources.keys(), ...workspacePending.keys(), ...workspaceInflight.keys(),
+          ...[...pendingByThread].filter(([, count]) => count > 0).map(([key]) => key)])
+        const bounded = boundSessionMemory(next, s.currentSessionId, protectedIds)
+        bounded.forEach((entry, index) => { if (entry !== next[index]) releaseWorkspaceCache(entry.id) })
+        return { sessions: bounded }
+      })
       if (request === selection && get().currentSessionId === id && !(pendingByThread.get(id) ?? 0)) {
         set({ messages: session.messages, isLoading: session.status === 'running', pendingCount: 0,
           activity: session.status === 'running' ? 'A request is running in another connection…' : null,

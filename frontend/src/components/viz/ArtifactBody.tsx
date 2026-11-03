@@ -13,6 +13,7 @@ import { StructureView } from './StructureView'
 import { SequenceView } from '@/components/viewer/SequenceView'
 import { HtmlReportView } from './HtmlReportView'
 import { RefinementView } from './RefinementView'
+import { readServerArtifact } from '@/api/sessions'
 const ReportView = lazy(() => import('./ReportView').then(m => ({ default: m.ReportView })))
 
 function SavedDiffractionView({ artifact }: { artifact: VizArtifact }) {
@@ -38,6 +39,29 @@ function SavedDiffractionView({ artifact }: { artifact: VizArtifact }) {
  * Artifact Canvas can render two side-by-side in compare mode.
  */
 export function ArtifactBody({ artifact }: { artifact: VizArtifact }) {
+  if (artifact.artifactRef && artifact.data == null) return <StoredArtifactBody key={`${artifact.artifactRef.sessionId}:${artifact.artifactRef.digest}`} artifact={artifact} />
+  return <ArtifactContent artifact={artifact} />
+}
+
+function StoredArtifactBody({ artifact }: { artifact: VizArtifact }) {
+  const [loaded, setLoaded] = useState<VizArtifact | null>(null)
+  const [error, setError] = useState('')
+  const [retry, setRetry] = useState(0)
+  const ref = artifact.artifactRef!
+  useEffect(() => {
+    const controller = new AbortController()
+    readServerArtifact(ref, controller.signal).then(value => {
+      if (!controller.signal.aborted) setLoaded(value)
+    }).catch(e => { if (!controller.signal.aborted) setError(String(e)) })
+    return () => controller.abort()
+  }, [ref, retry])
+  if (loaded) return <ArtifactContent artifact={loaded} />
+  return <div className="p-4 text-sm" role={error ? 'alert' : 'status'}>{error || 'Loading saved result…'}
+    {error && <button className="apexa-gallery-button ml-2" onClick={() => { setError(''); setRetry(n => n + 1) }}>Retry</button>}
+  </div>
+}
+
+function ArtifactContent({ artifact }: { artifact: VizArtifact }) {
   const a = artifact
   if (a.type === 'html-report') return <HtmlReportView key={a.id} {...a.data as { path: string; location?: 'local' | 'remote' }} updatedAt={a.createdAt} />
 

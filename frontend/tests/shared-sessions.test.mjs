@@ -34,7 +34,7 @@ function setup(records, cache = []) {
     else if (url === '/api/sessions/import') { data = record(payload.id, payload); disk.set(data.id, data) }
     else if (url === '/api/sessions' && options.method === 'POST') { data = record(payload.id, { messages: [], workspace: {} }); disk.set(data.id, data) }
     else {
-      const id = url.split('/')[3]
+      const id = new URL(url, 'http://localhost').pathname.split('/')[3]
       data = disk.get(id)
       if (!data) return { ok: false, status: 404, json: async () => ({ detail: 'Missing saved session' }) }
       if (options.method === 'DELETE') { disk.delete(id); data = { archived: true } }
@@ -124,7 +124,7 @@ test('slow session reads cannot replace the canvas after switching sessions', as
     await until(() => useChatStore.getState().currentSessionId === 'slow' && useChatStore.getState().sessionSync === 'ready')
     const fetch = globalThis.fetch
     let resolve
-    globalThis.fetch = async (url, options) => url === '/api/sessions/slow' ? new Promise(r => { resolve = r }) : fetch(url, options)
+    globalThis.fetch = async (url, options) => url.split('?')[0] === '/api/sessions/slow' ? new Promise(r => { resolve = r }) : fetch(url, options)
     const pending = useChatStore.getState().reloadSession('slow')
     useChatStore.getState().switchSession('fast')
     await until(() => useChatStore.getState().draft === 'Second session')
@@ -150,7 +150,7 @@ test('archiving the active session selects the next session and restores its can
 test('failed initial history read remains visibly failed', async () => {
   setup([record('broken')])
   const fetch = globalThis.fetch
-  globalThis.fetch = async (url, options) => url === '/api/sessions/broken'
+  globalThis.fetch = async (url, options) => url.split('?')[0] === '/api/sessions/broken'
     ? { ok: false, status: 422, json: async () => ({ detail: 'Unreadable session file' }) } : fetch(url, options)
   const dispose = useChatStore.getState().init()
   try {
@@ -198,7 +198,7 @@ test('edits made during a slow refresh survive the arriving server snapshot', as
     await until(() => useChatStore.getState().currentSessionId === 'refresh-edit' && useChatStore.getState().sessionSync === 'ready')
     const fetch = globalThis.fetch
     let finish
-    globalThis.fetch = async (url, options) => url === '/api/sessions/refresh-edit' && options?.method === 'GET'
+    globalThis.fetch = async (url, options) => url.split('?')[0] === '/api/sessions/refresh-edit' && options?.method === 'GET'
       ? new Promise(resolve => { finish = resolve }) : fetch(url, options)
     const reading = useChatStore.getState().reloadSession('refresh-edit')
     useChatStore.getState().setDraft('Edited during refresh')

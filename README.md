@@ -30,40 +30,31 @@ sessions, explicit workflow approvals and results that open automatically.
 header theme button preserves optional dark modes. See the [Canvas guide](docs/CANVAS_WORKSPACE.md)
 for tab reuse, comparison, favorites and the exact rebuild/restart steps.
 
-### Windows
+### Platforms and LLM access
 
-**Install the prerequisites once** (PowerShell; `winget` ships with Win 10/11). npm comes
-bundled with Node.js, which is only needed for the Web UI:
-```powershell
-winget install --id=astral-sh.uv -e          # uv (Python package/venv manager)
-winget install --id=OpenJS.NodeJS.LTS -e     # Node.js + npm (Web UI only)
-winget install --id=Python.Python.3.13 -e    # Python 3.13 (skip if already installed)
+The WebUI can be used from Windows, Linux or macOS browsers. Linux and macOS
+are maintained runtime targets. Windows offers a native coordinator and a WSL2
+Linux route; local scientific engines require separate qualification.
+
+```bash
+uv sync --locked
+uv run --no-sync python scripts/platform_smoke.py
 ```
-Close and reopen the terminal, then verify: `uv --version`, `node --version`, `npm --version`.
-No winget? Use the installers: https://astral.sh/uv, https://nodejs.org (LTS), https://python.org
-(uv alt: `powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"`).
 
-The `.sh` scripts need bash. On Windows use the `.bat`/`.ps1` launchers (or run the
-Python directly). These launchers do not qualify native Windows worker ownership or scientific engines:
-```bat
-copy .env.template .env          :: then edit ANL_USERNAME / ARGO_MODEL
-uv sync                          :: install deps
-start_beamline_assistant.bat     :: CLI  (or: uv run python launch.py)
-start_gradio_ui.bat              :: Gradio UI
-start_web_viewer.bat             :: Web UI (needs Node.js/npm; http://localhost:8001)
-```
-PowerShell: `.\start_beamline_assistant.ps1` (add `-ExecutionPolicy Bypass` if blocked).
-`launch.py` is a Python launcher, available through `uv run python launch.py`. The maintained runtime targets Linux/macOS; use WSL2 for a Linux environment on Windows.
+Use **gear → LLM connection** for personal API accounts, institutional gateways
+or local models. ANL_USERNAME is required only for Argo. Verify the connection,
+save it, then restart APEXA. Personal chat-subscription sign-in is not implemented.
 
-> **If `uv sync` fails to build `midas-index`** (`cmake_minimum_required < 3.5 removed`):
-> it compiles native code, so it needs **CMake** + a **C/C++ compiler**
-> (`winget install Kitware.CMake Microsoft.VisualStudio.2022.BuildTools`, pick "Desktop
-> development with C++"), and `set CMAKE_POLICY_VERSION_MINIMUM=3.5` before `uv sync`
-> (the `.bat`/`.ps1` launchers already set this). If you don't need MIDAS HEDM tools on
-> this box, use the base `uv sync` install without the optional `midas` extra, or run MIDAS
-> under WSL2/Linux (below).
+- [Connection setup](docs/CONNECTION_SETUP.md)
+- [Windows and WSL2 installation](docs/WINDOWS_SETUP.md)
+- [Facility SSO and isolated operator instances](docs/SHARED_DEPLOYMENT.md)
+- [Slurm submission, cancellation and recovery](docs/REMOTE_EXECUTION.md)
+- [Scientific acceptance and profiling](docs/SCIENTIFIC_QUALIFICATION.md)
 
-> **Runtime boundary:** the process-group cleanup and durable worker/reservation contracts target Linux/macOS. Native Windows is not qualified for those contracts. EPICS access additionally requires Channel Access utilities, a reachable IOC and separately commissioned device policy. Installing MIDAS or alignment extras does not authorize motor motion.
+The Quality workflow tests Ubuntu, macOS and Windows. Those checks establish
+software behavior; target-host engine, SSO, GPU and scientific qualification
+remain separate release gates. Prebuilt `frontend/dist` runs without Node;
+Node 24 is needed only to rebuild the frontend.
 
 ---
 
@@ -72,7 +63,7 @@ PowerShell: `.\start_beamline_assistant.ps1` (add `-ExecutionPolicy Bypass` if b
 ```
 User (natural language)
          |
-    Argo Gateway (GPT-4o / Claude / Gemini)
+    Configured LLM (Argo / institutional / API / local)
          |
     OrchestratorAgent (single-loop default)
                              |
@@ -275,13 +266,13 @@ synthesis:synthesis_server.py
 ## Requirements
 
 - **Python:** 3.13+ (with [`uv`](https://github.com/astral-sh/uv) package manager)
-- **Network:** ANL access for Argo Gateway
+- **Network:** Access to the configured LLM endpoint; Argo requires ANL access/VPN
 - **MIDAS:** `midas-suite` (pip) — set `APEXA_MIDAS_BIN`. A repo clone plus `diplib`
   is needed only for the legacy C++ / zarr paths.
 - **Memory:** 16+ GB RAM (64+ GB recommended for FF-HEDM)
 
 `uv` handles the virtual environment automatically — users never need to activate it.
-`uv sync` installs the locked dependency set in ~1 second. Optional extras:
+`uv sync --locked` installs the committed dependency set; first-install time depends on the host and cache. Optional extras:
 `uv sync --extra extra` (pyfai, vtk, seaborn…), `--extra mp` (Materials Project;
 online-only), `--extra alcf`.
 

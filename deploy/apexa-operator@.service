@@ -1,0 +1,39 @@
+# One Linux OS identity and one assigned proposal per instance.
+# Install as /etc/systemd/system/apexa-operator@.service, then provision
+# /etc/apexa/USERNAME.env from operator.env.example. See SHARED_DEPLOYMENT.md.
+[Unit]
+Description=APEXA assigned operator instance (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/opt/apexa
+EnvironmentFile=/etc/apexa/%i.env
+Environment=PYTHON_DOTENV_DISABLED=1
+Environment=APEXA_WEB_HOST=127.0.0.1
+Environment=APEXA_HOME=/var/lib/apexa-%i
+Environment=APEXA_SESSION_DIR=/var/lib/apexa-%i/sessions
+Environment=APEXA_WORKFLOW_DIR=/var/lib/apexa-%i/workflows
+Environment=APEXA_RUN_DIR=/var/lib/apexa-%i/runs
+Environment=APEXA_RESOURCE_DB=/var/lib/apexa-%i/resources.sqlite3
+Environment=APEXA_TRACE_DB=/var/lib/apexa-%i/traces.sqlite3
+Environment=APEXA_UPLOAD_DIR=/var/lib/apexa-%i/uploads
+StateDirectory=apexa-%i
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/opt/apexa/.venv/bin/python /opt/apexa/web_server.py
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=45
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+# Native engines and proposal writes need site-reviewed ReadWritePaths drop-ins.
+ReadWritePaths=%h /var/lib/apexa-%i
+
+[Install]
+WantedBy=multi-user.target

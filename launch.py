@@ -24,8 +24,8 @@ if not cfg.exists():
     sys.exit("Error: servers.config not found")
 
 if not (ROOT / ".env").exists():
-    print("Warning: .env not found. Create it (see README) with at least "
-          "ANL_USERNAME and ARGO_MODEL, or copy .env.example.", file=sys.stderr)
+    print("No .env file. Use saved Connection settings or configure an LLM profile "
+          "(see docs/CONNECTION_SETUP.md). ANL_USERNAME is needed only for Argo.", file=sys.stderr)
 
 server_args = []
 for line in cfg.read_text().splitlines():

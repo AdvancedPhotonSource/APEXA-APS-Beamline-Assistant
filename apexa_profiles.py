@@ -225,7 +225,14 @@ def has_credential(profile: Profile) -> bool:
         ep = PRESETS[profile.preset]()
     except KeyError:
         return False
-    return ep.has_credential(os.environ.get("ANL_USERNAME", ""))
+    ep.base_url = profile.base_url or ep.base_url
+    from apexa_llm_endpoints import active_endpoint
+    try:
+        active = active_endpoint()
+        matching = (active.name, active.base_url.rstrip("/")) == (ep.name, ep.base_url.rstrip("/"))
+    except EndpointRejected:
+        matching = False
+    return ep.has_credential(os.environ.get("ANL_USERNAME", ""), use_environment=matching)
 
 
 # ── resolution ───────────────────────────────────────────────────────────────
@@ -290,9 +297,21 @@ def apply(profile: Profile) -> None:
     ``select_provider``, ``argo_mcp_client``) keeps reading exactly what it reads
     today, so profiles are a front end, not a fork.
     """
+    # A generic environment secret belongs to the configured endpoint. Do not
+    # carry it to another host when auto-selection or a CLI switch picks one.
+    if any(os.environ.get(k) for k in ("APEXA_LLM_API_KEY", "APEXA_LLM_TOKEN_CMD")):
+        explicit_initial = (os.environ.get("APEXA_PROFILE") == profile.name
+                            and not any(os.environ.get(k) for k in
+                                ("APEXA_ACTIVE_PROFILE", "APEXA_LLM_PRESET", "APEXA_LLM_BASE_URL")))
+        from apexa_llm_endpoints import active_endpoint
+        current = active_endpoint()
+        destination = (profile.preset, (profile.base_url or PRESETS[profile.preset]().base_url).rstrip("/"))
+        if not explicit_initial and (current.name, current.base_url.rstrip("/")) != destination:
+            raise EndpointRejected("A generic environment credential belongs to the current endpoint. "
+                "Use a provider-specific key/keyring, or configure the new profile and credential together and restart.")
     os.environ["APEXA_LLM_PRESET"] = profile.preset
-    if profile.base_url:
-        os.environ["APEXA_LLM_BASE_URL"] = profile.base_url
+    os.environ["APEXA_LLM_BASE_URL"] = profile.base_url or PRESETS[profile.preset]().base_url
+    os.environ.pop("APEXA_LLM_KEYRING_ACCOUNT", None)
     # An operator who explicitly chose the legacy Argo transport keeps it on the
     # Argo profile: that choice is only meaningful there (the legacy transport
     # reaches nothing but Argo), and silently switching an existing install's

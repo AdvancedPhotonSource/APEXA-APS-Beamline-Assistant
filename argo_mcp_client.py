@@ -1502,7 +1502,7 @@ class APEXAClient:
         self.plotting = PlottingEngine()
 
         # Determine environment based on model (dev models require dev endpoint)
-        self.anl_username = os.getenv("ANL_USERNAME")
+        self.anl_username = os.getenv("ANL_USERNAME", "")
         self.selected_model = os.getenv("ARGO_MODEL", "claudeopus5")
 
         # All current models on PROD (March 2026 Argo update)
@@ -1525,9 +1525,6 @@ class APEXAClient:
         # access to this process's single orchestrator across web sessions.
         self._active_web_thread: Optional[str] = None
         self._web_thread_lock = asyncio.Lock()
-
-        if not self.anl_username:
-            raise ValueError("ANL_USERNAME must be set in environment (.env file)")
 
         self.available_models = {
             "OpenAI": {
@@ -1699,7 +1696,14 @@ class APEXAClient:
                 proxy_mode_enabled as _proxy_on,
                 strict_mode as _llm_strict,
             )
-            _ok, _detail = await _llm_preflight(self.anl_username, self.selected_model)
+            from apexa_llm_endpoints import active_endpoint
+            _endpoint = active_endpoint()
+            if not _endpoint.has_credential(self.anl_username):
+                _ok, _detail = True, "LLM not configured. Open Connection settings or select a CLI profile."
+            elif _endpoint.wire != "openai":
+                _ok, _detail = True, "Use Connection settings → Verify for this provider's native tool protocol."
+            else:
+                _ok, _detail = await _llm_preflight(self.anl_username, self.selected_model)
             if not _ok:
                 if _llm_strict():
                     print(f"  {C.RED}✗ LLM transport unavailable{C.RESET}: {_detail}")
@@ -2275,18 +2279,29 @@ class APEXAClient:
         Fail-open: any error here leaves the environment untouched rather than
         blocking startup over a configuration nicety.
         """
+        from apexa_connection import apply_saved
+        saved = apply_saved()
         if (os.environ.get("APEXA_LLM_PRESET") or "").strip():
-            return ""
+            self.anl_username = os.environ.get("ANL_USERNAME", "")
+            self.selected_model = os.environ.get("ARGO_MODEL", self.selected_model)
+            if os.environ["APEXA_LLM_PRESET"] != "argo":
+                self.available_models = {"Configured endpoint": {self.selected_model: self.selected_model}}
+            return "Connection settings loaded" if saved else ""
         try:
             import apexa_profiles as PR
             prof, how = PR.resolve_active()
             if prof is None:
                 return ""
             PR.apply(prof)
+            self.anl_username = os.environ.get("ANL_USERNAME", "")
             if os.environ.get("ARGO_MODEL"):
                 self.selected_model = os.environ["ARGO_MODEL"]
+            if prof.preset != "argo":
+                self.available_models = {"Configured endpoint": {self.selected_model: self.selected_model}}
             return PR.describe(prof, how)
         except Exception:
+            if os.environ.get("APEXA_PROFILE"):
+                raise
             return ""
 
     async def interactive_analysis_session(self):
@@ -3173,6 +3188,8 @@ async def main():
         sys.exit(1)
 
     client = APEXAClient()
+    # Resolve provider identity before transport checks in CLI as in WebUI.
+    await asyncio.to_thread(client._init_profile)
     
     try:
         server_configs = []

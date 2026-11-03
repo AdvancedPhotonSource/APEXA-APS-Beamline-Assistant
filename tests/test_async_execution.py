@@ -197,6 +197,7 @@ async def test_real_calibration_series_overlaps_canonical_workers_with_thread_li
         originals.append(str(image))
     active = peak = 0
     seen_images, environments = [], []
+    all_started = asyncio.Event()
 
     async def fake_engine(command, **kwargs):
         nonlocal active, peak
@@ -204,7 +205,9 @@ async def test_real_calibration_series_overlaps_canonical_workers_with_thread_li
         peak = max(peak, active)
         seen_images.append(command[command.index("--image") + 1])
         environments.append(kwargs["env"])
-        await asyncio.sleep(0.03)
+        if active == 3:
+            all_started.set()
+        await asyncio.wait_for(all_started.wait(), timeout=5)
         if one_failure and command[command.index("--image") + 1].endswith("CeO2_102.tif"):
             active -= 1
             return subprocess.CompletedProcess(command, 1, json.dumps({"status": "error", "error": "fixture failure"}), "")
@@ -254,13 +257,16 @@ async def test_integration_series_uses_async_workers_and_cpu_allocation(scientif
         images.append(str(image))
     active = peak = 0
     budgets = []
+    all_started = asyncio.Event()
 
     async def fake_engine(command, **kwargs):
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
         budgets.append((command[command.index("-nCPUsLocal") + 1], kwargs["env"]["OMP_NUM_THREADS"]))
-        await asyncio.sleep(0.03)
+        if active == 3:
+            all_started.set()
+        await asyncio.wait_for(all_started.wait(), timeout=5)
         output = Path(command[command.index("-resultFolder") + 1])
         (output / "sample_lineout.xy").write_text("1 10\n2 20\n3 30\n")
         active -= 1

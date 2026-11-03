@@ -1,0 +1,17 @@
+# Use a site-approved oauth2-proxy release. Secrets belong in protected service
+# environment variables, not in this example or the APEXA source checkout.
+provider = "oidc"
+oidc_issuer_url = "https://sso.example.edu"
+client_id = "REGISTERED_APEXA_CLIENT_ID"
+redirect_url = "https://alice-apexa.example.edu/oauth2/callback"
+scope = "openid profile email"
+email_domains = ["example.edu"]
+set_xauthrequest = true
+reverse_proxy = true
+cookie_secure = true
+cookie_httponly = true
+cookie_samesite = "lax"
+http_address = "127.0.0.1:4180"
+upstreams = ["static://202"]
+# OAUTH2_PROXY_CLIENT_SECRET and OAUTH2_PROXY_COOKIE_SECRET are supplied by the
+# service manager. APEXA independently checks the exact assigned operator email.

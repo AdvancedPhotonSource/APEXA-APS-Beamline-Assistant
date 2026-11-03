@@ -1,6 +1,6 @@
 # Running APEXA locally
 
-**Reviewed:** 2026-10-15
+**Reviewed:** 2026-11-02
 
 This page covers starting the CLI and Web UI from a checkout. For an always-on
 service, use the [Web UI deployment guide](../DEPLOYMENT.md). For SSH, internal
@@ -16,7 +16,11 @@ uv sync --locked
 ./start_beamline_assistant.sh
 ```
 
-The setup script creates `.env` with the selected Argo model and host settings.
+The setup script creates `.env` with Argo and host settings for an ANL install.
+For a personal API, university gateway or local model, follow
+[LLM connection setup](../CONNECTION_SETUP.md); the web gear dialog saves settings
+without requiring an ANL username. Explicit `.env` provider settings take
+precedence, so remove or update those when adopting saved connection settings.
 Review `servers.config` before startup: it controls which MCP servers APEXA
 launches. The tool inventory records source registrations; it does not confirm
 that an engine, its data, or beamline hardware is ready.

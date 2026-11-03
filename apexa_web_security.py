@@ -87,6 +87,12 @@ class SingleOperatorBoundary:
                 reason, code = "Authentication required", 401
         elif external and not reason:
             reason, code = "Non-loopback access requires APEXA_WEB_TOKEN", 401
+        operator = os.environ.get("APEXA_OPERATOR_ID", "").strip()
+        if operator:
+            if not token or not os.environ.get("APEXA_PROPOSAL_ID") or not os.environ.get("APEXA_DATA_ROOTS"):
+                reason = "An assigned instance requires token, proposal identity and data roots"
+            elif not secrets.compare_digest(headers.get("x-apexa-principal", "").encode(), operator.encode()):
+                reason = "Authenticated identity does not own this APEXA instance"
         if external and not os.environ.get("APEXA_DATA_ROOTS") and not reason:
             reason = "Non-loopback access requires configured APEXA_DATA_ROOTS"
         if os.environ.get("APEXA_WEB_MODE", "single_operator") != "single_operator":

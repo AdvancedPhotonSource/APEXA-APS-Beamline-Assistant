@@ -62,7 +62,7 @@ Current adapter boundaries:
 | --- | --- |
 | `midas_calibrate_series` | Plans independent calibrations from resources/profile and passes bounded worker environments to the calibration executor. |
 | `midas_integrate_series` | Uses the CPU `integrator.py` backend. Accepted targets are `auto`, `local`, `cpu` and `remote`. CUDA/MPS requests are refused by this adapter. |
-| Integration with `compute_target="remote"` | Returns a recommendation and `nothing_was_run=true`; this call does not submit remote work. |
+| Integration with `compute_target="remote"` | Submits through the configured data-host Slurm supervisor; without `APEXA_SLURM_CONFIG` it refuses before execution. See [remote execution](REMOTE_EXECUTION.md). |
 | FF/PF pipeline adapters | Forward supported `machine`, `n_nodes` and `shard_gpus` settings to the installed MIDAS pipeline. Engine, scheduler, data access and job receipts remain host-specific requirements. |
 
 `_pick_compute_target()` keeps automatic placement near accessible data. A cost

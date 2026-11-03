@@ -7,6 +7,7 @@ Existing JSON/JSONL sessions and web_threads are imported without deleting them.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -22,7 +23,7 @@ if os.name == "nt":
 else:
     import fcntl
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_RECORD_BYTES = 64_000_000
 MAX_WORKSPACE_BYTES = 20_000_000
 
@@ -154,6 +155,85 @@ class SessionStore:
         self.root.mkdir(parents=True, exist_ok=True)
         self.legacy_web_root = legacy_web_root or self.root.parent / "web_threads"
 
+    def _put_payload(self, value):
+        encoded = json.dumps(value, allow_nan=False).encode("utf-8")
+        if len(encoded) > MAX_RECORD_BYTES:
+            raise ValueError("Session payload exceeds 64 MB")
+        digest = hashlib.sha256(encoded).hexdigest()
+        root = self.root / "payloads" / digest[:2]
+        root.mkdir(parents=True, exist_ok=True)
+        target = root / (digest + ".json")
+        if not target.exists():
+            fd, temporary = tempfile.mkstemp(prefix=".payload-", dir=root)
+            try:
+                with os.fdopen(fd, "wb") as stream:
+                    stream.write(encoded)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, target)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        return {"sha256": digest, "bytes": len(encoded), "count": len(value) if isinstance(value, list) else None}
+
+    def _payload(self, ref):
+        digest = ref.get("sha256", "")
+        if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+            raise ValueError("Invalid session payload reference")
+        path = self.root / "payloads" / digest[:2] / (digest + ".json")
+        if path.stat().st_size != ref["bytes"] or path.stat().st_size > MAX_RECORD_BYTES:
+            raise ValueError("Saved session payload size changed")
+        encoded = path.read_bytes()
+        if hashlib.sha256(encoded).hexdigest() != digest:
+            raise ValueError("Saved session payload integrity check failed")
+        return json.loads(encoded)
+
+    def _pack(self, record, *, previous=None):
+        packed = dict(record)
+        for key in ("messages", "conversation_history"):
+            packed[key] = self._put_payload(record[key])
+        workspace = dict(record.get("workspace", {}))
+        if "artifacts" in workspace:
+            old = {ref.get("sha256"): ref for ref in (previous or {}).get("workspace", {}).get("artifacts", [])}
+            artifacts = []
+            for value in workspace["artifacts"]:
+                link = value.get("artifactRef")
+                if link and value.get("data") is None:
+                    ref = old.get(link.get("digest"))
+                    if link.get("sessionId") != record["id"] or not ref:
+                        raise ValueError("Artifact does not belong to this saved session")
+                    summary = {k: v for k, v in value.items() if k not in ("data", "artifactRef")}
+                    artifacts.append(ref if summary == ref["summary"] else self._pack_artifact({**self._payload(ref), **summary}))
+                else:
+                    artifacts.append(self._pack_artifact(value))
+            workspace["artifacts"] = artifacts
+        packed.update(schema_version=SCHEMA_VERSION, workspace=workspace)
+        return packed
+
+    def _pack_artifact(self, value):
+        if not isinstance(value, dict):
+            raise ValueError("Workspace artifacts must be objects")
+        return {**self._put_payload(value), "summary": {k: v for k, v in value.items() if k not in ("data", "artifactRef")}}
+
+    def _unpack(self, record, *, lazy_artifacts=False, include_history=True):
+        unpacked = dict(record)
+        for key in ("messages", "conversation_history"):
+            if isinstance(record[key], dict):
+                unpacked[key] = self._payload(record[key]) if key == "messages" or include_history else []
+        workspace = dict(record.get("workspace", {}))
+        artifacts = []
+        for ref in workspace.get("artifacts", []):
+            if "summary" not in ref or "sha256" not in ref:
+                artifacts.append(ref)  # legacy inline snapshot
+            elif lazy_artifacts and ref["summary"].get("type") in {"plotly", "image", "table", "text", "report"}:
+                artifacts.append({**ref["summary"], "data": None,
+                    "artifactRef": {"sessionId": record["id"], "digest": ref["sha256"]}})
+            else:
+                artifacts.append(self._payload(ref))
+        if "artifacts" in workspace:
+            workspace["artifacts"] = artifacts
+        unpacked["workspace"] = workspace
+        return unpacked
+
     def path(self, name):
         return self.root / f"{valid_name(name)}.json"
 
@@ -187,7 +267,7 @@ class SessionStore:
             raise ValueError("Session file is not a JSON object")
         return data
 
-    def _load(self, name, create=False, origin="web"):
+    def _load(self, name, create=False, origin="web", *, packed=False):
         path = self.path(name)
         transcript = path.with_suffix(".jsonl")
         legacy_web = self.legacy_web_root / path.name
@@ -195,7 +275,9 @@ class SessionStore:
         if path.exists():
             data = self._json(path)
             if data.get("schema_version") == SCHEMA_VERSION:
-                return data
+                return data if packed else self._unpack(data)
+            if data.get("schema_version") == 2:
+                return self._pack(data) if packed else data
             if "schema_version" in data:
                 raise ValueError("Unsupported session schema version; the saved session was not modified")
         elif transcript.exists():
@@ -240,10 +322,12 @@ class SessionStore:
             record["title"] = record["messages"][0]["content"][:80] or name
         return record
 
-    def _write(self, record):
+    def _write(self, record, *, packed=False, previous=None):
         record["revision"] += 1
+        record["schema_version"] = SCHEMA_VERSION
         record["updatedAt"] = _now()
-        encoded = json.dumps(record, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        stored = record if packed else self._pack(record, previous=previous)
+        encoded = json.dumps(stored, ensure_ascii=False, allow_nan=False).encode("utf-8")
         if len(encoded) > MAX_RECORD_BYTES:
             raise ValueError("Session exceeds 64 MB; no saved data was overwritten")
         fd, temporary = tempfile.mkstemp(prefix=".session-", suffix=".tmp", dir=self.root)
@@ -259,14 +343,15 @@ class SessionStore:
 
     def change(self, name, update, *, create=False, origin="web"):
         with self._lock(name):
-            record = self._load(name, create=create, origin=origin)
+            previous = self._load(name, create=create, origin=origin, packed=True)
+            record = self._unpack(previous, lazy_artifacts=True)
             update(record)
-            self._write(record)
+            self._write(record, previous=previous)
             return copy.deepcopy(record)
 
-    def get(self, name):
+    def get(self, name, *, lazy_artifacts=False, include_history=True):
         with self._lock(name):
-            record = self._load(name)
+            record = self._unpack(self._load(name, packed=True), lazy_artifacts=lazy_artifacts, include_history=include_history)
         if record.get("status") == "running" and not self.busy(name):
             record["status"] = "interrupted"
         if record.get("status") == "interrupted":
@@ -292,10 +377,12 @@ class SessionStore:
             except ValueError:
                 continue
             try:
-                record = self.get(name)
+                with self._lock(name):
+                    record = self._load(name, packed=True)
                 if record.get("archived", False) != archived:
                     continue
-                rows.append({k: record.get(k) for k in ("id", "title", "createdAt", "updatedAt", "origin", "status", "revision", "model", "resume_notice")} | {"messageCount": len(record["messages"]), "messages": []})
+                count = record["messages"].get("count", 0) if isinstance(record["messages"], dict) else len(record["messages"])
+                rows.append({k: record.get(k) for k in ("id", "title", "createdAt", "updatedAt", "origin", "status", "revision", "model", "resume_notice")} | {"messageCount": count, "messages": []})
             except (OSError, ValueError) as exc:
                 rows.append({"id": name, "title": name, "status": "unreadable", "error": str(exc), "messages": [], "messageCount": 0, "updatedAt": 0, "createdAt": 0})
         return sorted(rows, key=lambda row: row["updatedAt"], reverse=True)
@@ -362,12 +449,23 @@ class SessionStore:
         def update(record):
             if expected != record["workspaceRevision"]:
                 raise SessionConflict("Workspace changed in another window. Reload the session before saving your canvas changes.")
-            saved = workspace
+            previous = record.get("workspace", {}).get("artifacts", [])
+            def pack_new(value):
+                ref = value.get("artifactRef") if isinstance(value, dict) else None
+                if ref and value.get("data") is None:
+                    found = next((p for p in previous if p.get("sha256") == ref.get("digest")), None)
+                    if ref.get("sessionId") != name or not found:
+                        raise ValueError("Artifact does not belong to this saved session")
+                    summary = {k: v for k, v in value.items() if k not in ("data", "artifactRef")}
+                    if summary == found["summary"]:
+                        return found
+                    return self._pack_artifact({**self._payload(found), **summary})
+                return self._pack_artifact(value)
+            saved = {**workspace, "artifacts": [pack_new(a) for a in workspace.get("artifacts", [])]}
             if artifact_slots is not None:
                 # Slots refer only to this session at the checked revision. A
                 # closed/reordered tab cannot accidentally select another
                 # window's artifact. Persist the ordinary, complete snapshot.
-                previous = record.get("workspace", {}).get("artifacts", [])
                 artifacts = []
                 for slot in artifact_slots:
                     if set(slot) == {"reuse"}:
@@ -377,15 +475,32 @@ class SessionStore:
                             raise ValueError("Workspace artifact reference is not present at this revision")
                         artifacts.append(previous[index])
                     elif set(slot) == {"value"} and isinstance(slot["value"], dict):
-                        artifacts.append(slot["value"])
+                        artifacts.append(pack_new(slot["value"]))
                     else:
                         raise ValueError("Invalid workspace artifact slot")
                 saved = {**workspace, "artifacts": artifacts}
-            if len(json.dumps(saved, allow_nan=False).encode()) > MAX_WORKSPACE_BYTES:
+            size = len(json.dumps({**saved, "artifacts": []}, allow_nan=False).encode())
+            size += sum(a["bytes"] for a in saved["artifacts"]) + max(0, len(saved["artifacts"]) - 1) * 2
+            if size > MAX_WORKSPACE_BYTES:
                 raise ValueError("Workspace exceeds 20 MB. Export large plots before saving; the previous workspace is intact.")
             record["workspace"] = saved
             record["workspaceRevision"] += 1
-        return self.change(name, update, create=True)
+        with self._lock(name):
+            record = self._load(name, create=True, packed=True)
+            if isinstance(record["messages"], list):
+                record = self._pack(record)
+            update(record)
+            self._write(record, packed=True)
+            return {"workspaceRevision": record["workspaceRevision"], "revision": record["revision"]}
+
+    def artifact(self, name, digest):
+        with self._lock(name):
+            record = self._load(name, packed=True)
+            ref = next((a for a in record.get("workspace", {}).get("artifacts", [])
+                        if a.get("sha256") == digest), None)
+            if ref is None:
+                raise FileNotFoundError("Artifact is not referenced by this session")
+            return self._payload(ref)
 
     def rename(self, name, title):
         if not title.strip():

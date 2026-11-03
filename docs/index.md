@@ -1,5 +1,15 @@
 # APEXA - Advanced Photon EXperiment Assistant
 
+
+## Deployment manual
+
+- [LLM connection setup](CONNECTION_SETUP.md)
+- [Windows and WSL2](WINDOWS_SETUP.md)
+- [Shared access with facility SSO](SHARED_DEPLOYMENT.md)
+- [Slurm execution and recovery](REMOTE_EXECUTION.md)
+- [Scientific qualification](SCIENTIFIC_QUALIFICATION.md)
+- [Frontend and session performance](FRONTEND_PERFORMANCE.md)
+
 AI-powered framework for synchrotron diffraction analysis, tomography workflows, and instrument control at Argonne National Laboratory's Advanced Photon Source.
 
 ---

@@ -3,9 +3,11 @@ import { useConnectionStore } from '@/stores/connectionStore'
 import { useThemeStore, type ThemeMode } from '@/stores/themeStore'
 import { ApexaLogo } from '@/components/ui/ApexaLogo'
 import { FeedbackDialog } from '@/components/feedback/FeedbackDialog'
+import { ConnectionDialog } from './ConnectionDialog'
 
 export function Header({ children }: { children?: ReactNode }) {
   const [requestingFeature, setRequestingFeature] = useState(false)
+  const [configuring, setConfiguring] = useState(false)
   const { connected, selectedModel, availableModels, setModel } = useConnectionStore()
   const { mode, setMode } = useThemeStore()
   const allModels = Object.values(availableModels).flatMap(models =>
@@ -25,6 +27,8 @@ export function Header({ children }: { children?: ReactNode }) {
       </span>
       {children}
       <div className="apexa-header-controls">
+        <button type="button" className="apexa-compact-button" onClick={() => setConfiguring(true)}
+          aria-label="LLM connection settings" title="LLM connection settings" aria-haspopup="dialog">⚙</button>
         {allModels.length > 0 && <select className="apexa-model-select" aria-label="Analysis assistant model"
           title={selectedModel} value={selectedModel} onChange={e => setModel(e.target.value)}>
           {allModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -47,6 +51,7 @@ export function Header({ children }: { children?: ReactNode }) {
         </span>
       </div>
       {requestingFeature && <FeedbackDialog mode="feature" onClose={() => setRequestingFeature(false)} />}
+      {configuring && <ConnectionDialog onClose={() => setConfiguring(false)} />}
     </header>
   )
 }

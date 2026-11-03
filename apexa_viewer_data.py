@@ -118,6 +118,35 @@ def correct_frame(raw: np.ndarray, dark=None, mask=None) -> np.ndarray:
     return out
 
 
+def read_region(source: dict, index: int, x: int, y: int, width: int, height: int, step: int) -> np.ndarray:
+    """HDF5 hyperslab preview; other formats decode one frame before cropping.
+
+    Pixel coordinates remain detector coordinates. This is display sampling,
+    never a substitute for full-resolution integration or acceptance metrics.
+    """
+    rows, columns = source["shape"]
+    if (not 0 <= index < source["frames"] or min(x, y) < 0 or min(width, height, step) < 1
+            or x + width > columns or y + height > rows):
+        raise ValueError("Tile is outside the acquisition snapshot")
+    if math.ceil(width / step) * math.ceil(height / step) > 4096 ** 2:
+        raise ValueError("Tile exceeds the preview pixel budget")
+    p = Path(source["path"])
+    before = p.stat()
+    if (before.st_size, before.st_mtime_ns) != (source["size"], source["mtime_ns"]):
+        raise ValueError("Source changed since inspection; reload the sequence snapshot")
+    region = (slice(y, y + height, step), slice(x, x + width, step))
+    if source["kind"] == "hdf5":
+        with h5py.File(p, "r") as h:
+            ds = h[source["dataset"]]
+            values = np.asarray(ds[(index, *region)] if ds.ndim == 3 else ds[region], dtype=np.float32)
+    else:
+        values = read_frame(source, index)[region].copy()
+    after = p.stat()
+    if (after.st_size, after.st_mtime_ns) != (before.st_size, before.st_mtime_ns):
+        raise ValueError("Source changed while reading the tile")
+    return values
+
+
 def frame_payload(frame: np.ndarray, *, vmin=None, vmax=None, log=False, colormap="viridis",
                   center_x=None, center_y=None, preview_max_side=1024) -> dict:
     from matplotlib import colormaps

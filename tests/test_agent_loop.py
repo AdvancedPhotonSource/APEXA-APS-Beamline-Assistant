@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -620,11 +621,10 @@ def test_token_command_supplies_and_caches_expiring_credential(monkeypatch, tmp_
     E._token_cache.clear()
     counter = tmp_path / "n"
     counter.write_text("0")
-    script = tmp_path / "tok.sh"
+    script = tmp_path / "tok.py"
     script.write_text(
-        f'#!/bin/sh\nn=$(cat {counter}); n=$((n+1)); echo $n > {counter}; echo "tok-$n"\n')
-    script.chmod(0o755)
-    monkeypatch.setenv("APEXA_LLM_TOKEN_CMD", f"sh {script}")
+        'from pathlib import Path\nimport sys\np=Path(sys.argv[1])\nn=int(p.read_text())+1\np.write_text(str(n))\nprint(f"tok-{n}")\n')
+    monkeypatch.setenv("APEXA_LLM_TOKEN_CMD", shlex.join([sys.executable, str(script), str(counter)]))
     ep = E.ALCFSophiaEndpoint()
     assert ep.resolve_key("anluser") == "tok-1"
     assert ep.resolve_key("anluser") == "tok-1"      # cached, helper not re-run
@@ -635,7 +635,7 @@ def test_failing_token_command_is_actionable(monkeypatch):
     import apexa_llm_endpoints as E
     monkeypatch.delenv("APEXA_LLM_API_KEY", raising=False)
     E._token_cache.clear()
-    monkeypatch.setenv("APEXA_LLM_TOKEN_CMD", "sh -c 'exit 3'")
+    monkeypatch.setenv("APEXA_LLM_TOKEN_CMD", shlex.join([sys.executable, "-c", "raise SystemExit(3)"]))
     with pytest.raises(E.EndpointRejected) as e:
         E.ALCFSophiaEndpoint().resolve_key("u")
     assert "inference_auth_token" in str(e.value)
@@ -648,7 +648,7 @@ def test_provider_picks_up_refreshed_token_without_restart(monkeypatch, tmp_path
     monkeypatch.delenv("APEXA_LLM_API_KEY", raising=False)
     E._token_cache.clear()
     monkeypatch.setenv("APEXA_LLM_PRESET", "alcf-sophia")
-    monkeypatch.setenv("APEXA_LLM_TOKEN_CMD", "echo first-token")
+    monkeypatch.setenv("APEXA_LLM_TOKEN_CMD", shlex.join([sys.executable, "-c", "print('first-token')"]))
 
     p = OpenAICompatProvider.__new__(OpenAICompatProvider)
     p.username, p.model, p.url = "u", "m", "http://stub/v1"
@@ -662,7 +662,7 @@ def test_provider_picks_up_refreshed_token_without_restart(monkeypatch, tmp_path
     assert p._client_for_request().k == "first-token"
 
     E._token_cache.clear()
-    monkeypatch.setenv("APEXA_LLM_TOKEN_CMD", "echo second-token")
+    monkeypatch.setenv("APEXA_LLM_TOKEN_CMD", shlex.join([sys.executable, "-c", "print('second-token')"]))
     assert p._client_for_request().k == "second-token"
     assert p._key == "second-token"
 

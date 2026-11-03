@@ -4788,6 +4788,17 @@ async def midas_integrate_series(
         or ``exchange/data`` — NOT integrator's ``exchange/dark`` default, which
         is wrong for files that store the dark at ``exchange/data``).
     """
+    if compute_target == "remote":
+        arguments = dict(locals())
+        from apexa_slurm import request_remote
+        if not os.environ.get("APEXA_SLURM_CONFIG"):
+            return format_result({"tool": "midas_integrate_series", "status": "needs_input", "nothing_was_run": True,
+                                  "error": "Configure APEXA_SLURM_CONFIG for the data-host scheduler worker."})
+        try:
+            return format_result(await request_remote("submit", arguments=arguments))
+        except Exception:
+            return format_result({"tool": "midas_integrate_series", "status": "unknown", "scientific_verdict": "unassessed",
+                                  "error": "Remote submission was not confirmed. Reconcile the Slurm worker before retrying; work may have started."})
     try:
         param_path = Path(parameter_file).expanduser().absolute()
         if not param_path.exists():
@@ -4844,10 +4855,6 @@ async def midas_integrate_series(
                                   "error": "This series adapter supports CPU execution only; a GPU requires a separately qualified backend."})
         plan = await asyncio.to_thread(_pick_compute_target, n_frames=n_matched,
                                        megapixels=8.3, prefer=compute_target, task="integration")
-        if compute_target == "remote":
-            return format_result({"tool": "midas_integrate_series", "status": "dispatch_recommended",
-                                  "nothing_was_run": True, "compute": plan, "matched_files": n_matched,
-                                  "recommendation": "Run this CPU adapter on a qualified host with the complete inputs; remote execution is not submitted by this call."})
         plan["target"], plan["device"] = "local-cpu", "cpu"
         plan["reason"] = "CPU integrator.py backend; execution stays with local data"
         # 2) representative, evenly-spaced subset when capped

@@ -13,7 +13,7 @@ def science_gateway(base_url: str, *, transport=None) -> APIRouter:
         raise ValueError("APEXA_SCIENCE_BASE_URL must be an HTTP loopback SSH tunnel, e.g. http://127.0.0.1:8020")
     router = APIRouter(prefix="/api/science")
     allowed = {"structure": "GET", "report": "GET", "image": "GET",
-               "sequence": "POST", "frame": "POST", "rings": "POST",
+               "sequence": "POST", "frame": "POST", "tile": "POST", "rings": "POST",
                "gsas2/figures": "GET", "refinement/status": "GET", "refinement/evidence": "GET"}
 
     @router.api_route("/{operation:path}", methods=["GET", "POST"])

@@ -68,11 +68,15 @@ async def monitor_runtime():
 async def lifespan(app):
     await initialize_mcp_client()
     monitor = asyncio.create_task(monitor_runtime())
+    from apexa_slurm import monitor_jobs
+    remote_monitor = asyncio.create_task(monitor_jobs())
     try:
         yield
     finally:
         monitor.cancel()
+        remote_monitor.cancel()
         await asyncio.gather(monitor, return_exceptions=True)
+        await asyncio.gather(remote_monitor, return_exceptions=True)
         turns = list(active_chat_tasks)
         for task in turns:
             task.cancel()
@@ -88,6 +92,8 @@ from apexa_session_api import router as session_router
 app.include_router(session_router)
 from apexa_runtime_api import router as runtime_router
 app.include_router(runtime_router)
+from apexa_connection_api import router as connection_router
+app.include_router(connection_router)
 app.include_router(workflow_router(lambda: mcp_client))
 from apexa_viewer_api import router as science_viewer_router
 # CIFs fetched by local MP/COD tools remain local even when detector data is remote.
@@ -116,8 +122,8 @@ app.add_middleware(SingleOperatorBoundary)
 
 # Global MCP client instance
 mcp_client: Optional[APEXAClient] = None
-upload_dir = Path("uploads")
-upload_dir.mkdir(exist_ok=True)
+upload_dir = Path(os.environ.get("APEXA_UPLOAD_DIR", "uploads"))
+upload_dir.mkdir(parents=True, exist_ok=True)
 
 # Image cache for viewer
 image_cache: Dict[str, np.ndarray] = {}
@@ -1957,10 +1963,10 @@ def viz_discover(path: str):
 
 
 if __name__ == "__main__":
-    print("- .env file with ANL_USERNAME and ARGO_MODEL")
+    print("Configure an LLM through Connection settings or a provider profile (ANL username only for Argo).")
     print("")
     print("Dependencies should be installed with uv:")
-    print("  uv add fastapi uvicorn websockets python-multipart")
+    print("  uv sync --locked")
 
     # reload=True spawns a file-watcher subprocess that is flaky on Windows and
     # unnecessary for running the app; default OFF, opt in with APEXA_WEB_RELOAD=1.

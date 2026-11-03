@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "workflow": "calibration_integration",
+  "reference_provenance": {
+    "independent": false,
+    "reviewed_by": "",
+    "source": "REPLACE_WITH_INDEPENDENT_METROLOGY_AND_REFERENCE_ANALYSIS"
+  },
+  "inputs": [
+    {
+      "path": "/data/ai_tune_rot_series/REPLACE.h5",
+      "sha256": "REPLACE_WITH_SHA256"
+    }
+  ],
+  "engine": {
+    "path": "/opt/qualified-env/bin/python",
+    "sha256": "REPLACE_WITH_SHA256"
+  },
+  "command": [
+    "/opt/qualified-env/bin/python",
+    "/private/reviewed-calibration-integration.py",
+    "--output",
+    "{output_dir}"
+  ],
+  "software": [
+    {
+      "path": "/private/reviewed-calibration-integration.py",
+      "sha256": "REPLACE_WITH_SHA256"
+    },
+    {
+      "path": "/opt/qualified-env/environment.lock",
+      "sha256": "REPLACE_WITH_SHA256"
+    }
+  ],
+  "device": "cpu",
+  "timeout_seconds": 3600,
+  "checks": [
+    {
+      "kind": "json_scalar",
+      "artifact": "geometry.json",
+      "field": [
+        "distance_mm"
+      ],
+      "reference": {
+        "path": "/reference/metrology.json",
+        "sha256": "REPLACE_WITH_SHA256"
+      },
+      "atol": 0.0,
+      "rtol": 0.0
+    },
+    {
+      "kind": "curve",
+      "artifact": "lineout.xy",
+      "reference": {
+        "path": "/reference/heldout-lineout.xy",
+        "sha256": "REPLACE_WITH_SHA256"
+      },
+      "atol": 0.0,
+      "rtol": 0.0,
+      "grid_atol": 0.0
+    }
+  ]
+}

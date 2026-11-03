@@ -38,3 +38,11 @@ Before a commit, inspect `git status --short` and `git diff --cached --stat`.
 Stage source, tests, documentation and the matching production build explicitly.
 Avoid blanket deletion commands: ignored directories may contain irreplaceable
 beamtime work. See [quality gates](development/quality-gates.md).
+
+## Deployment work
+
+Operational configuration examples stay under `deploy/`; documentation and its
+reviewable examples stay under `docs/`. Installation, measurement and acceptance
+commands live under `scripts/`. Generated measurements/logs belong outside the
+checkout. Session payloads, connection settings, scheduler receipts and scientific
+qualification results live in the operator's configured runtime directories.

@@ -66,15 +66,52 @@ Reproduce with `cd frontend && node tests/measure-workspace-transport.mjs`.
 The [captured request sizes](development/performance/2026-11-02-workspace-transport.json)
 record this fixture's output.
 
+## Persistent payload storage and region previews
+
+Session schema 3 stores immutable, SHA-256-addressed payloads under the session
+store's `payloads/`. Workspace draft PATCHes update a small manifest and reuse
+unchanged references without reading or serializing plot arrays or model history.
+Chat/tool updates and renames also reuse unchanged Canvas payloads without
+loading their arrays. Raw tool results inside the transcript remain part of the
+transcript payload, so their size still affects chat persistence and hydration.
+Legacy snapshots migrate without deleting their original JSONL/web records.
+Back up manifests and payloads together; older releases cannot read schema 3.
+
+The React client requests lazy saved Canvas artifacts and loads their bodies
+when opened. Closing the view releases that component's payload. Results also
+embedded in a message can still occupy transcript memory. Older clean
+server-backed sessions are unloaded from memory; active, unsaved, local-only and
+in-flight sessions are retained. Offline reopening of an unloaded result needs
+its APEXA server; export important results before disconnecting.
+
+Fast preview in the sequence viewer uses `/api/science/tile`. HDF5 reads the
+requested region/stride directly. Other formats decode one frame before cropping.
+Zoom and click-to-center retain detector coordinates. Sampled statistics are
+explicitly labeled; turn Fast preview off for full-frame statistics/radial profiles.
+Numerical integration is unaffected by display sampling.
+
+Run `uv run --no-sync python scripts/benchmark_workspace.py` to measure real local
+storage operations using a synthetic 250,000-point plot. On the development Mac,
+30 draft saves measured p50 0.40 ms and p95 0.68 ms. The session manifest was
+812 bytes; the full response was about 4.22 MB and lazy response 621 bytes.
+Exact arrays survived reload. These are local synthetic storage measurements,
+not beamline, network, model or scientific-engine latency guarantees.
+
+Chrome interaction checks on 2 November 2026 verified connection-check errors
+and success, save revision conflicts, secret-field clearing, lazy artifact
+opening, detector zoom coordinates and full-frame fallback. The header remains
+32 px high and the logo 20 px wide. These checks used intercepted synthetic APIs
+and did not call a model or scientific engine.
+
 ## Remaining limits
 
-The server still loads and serializes complete session JSON on each save, and
-session hydration still transfers full artifacts. Server-side immutable artifact
-storage is the next step for reducing backend disk/serialization cost. These
-transport references are scoped to one session revision; they are not persistent
-artifact IDs or a change to scientific data. Full snapshots retain exact arrays,
-and the existing 20 MB workspace limit applies after resolving references.
+New payloads still incur their first serialization and disk write. Chat turns
+still update the complete transcript payload. Large active Plotly views can
+consume substantial memory; exact arrays are retained. Immutable payloads are
+not automatically garbage-collected, so retention/backup must include their disk
+usage. The existing 20 MB logical workspace limit remains enforced.
 
-All loaded sessions/results still occupy application memory; paging bounds mounted UI, not the full data model. Initial message hydration and the first structured clone of a new large payload still have costs. Downloading a complete result or explicitly opening full text may perform substantial work. Large Plotly traces and scientific viewers need their own data-level decimation/tiling and numerical qualification. The production build still reports a main chunk above 500 kB and a Plotly chunk of about 4.61 MB; Plotly remains loaded on demand. Scientific engine, retrieval, model and filesystem latency must be measured separately.
-
-Browser backup storage is not encrypted by this change and follows the browser origin/profile. Deployment data policy must account for shared workstation profiles. The benchmark does not establish accessibility coverage, all-browser equivalence, or commissioned operator workflows.
+HDF5 chunk layout affects region I/O; compressed TIFF/other formats may still
+need a full frame decode. Main/Plotly bundle warnings remain. Target-host p50/p95,
+GPU performance, accessibility and sustained multi-user load require measured
+qualification on the intended deployment.

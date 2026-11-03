@@ -1,6 +1,7 @@
 """Core command policy and cooperative scheduling; no remote/hardware commands run."""
 import asyncio
 import json
+import os
 import subprocess
 
 import pytest
@@ -25,6 +26,7 @@ def test_default_inspection_policy_denies_general_execution(command):
     assert not core.is_command_allowed(command)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="Trusted POSIX inspection binaries; native Windows uses typed filesystem tools")
 def test_default_inspection_uses_trusted_system_executable(monkeypatch):
     monkeypatch.setenv("PATH", "/tmp/untrusted")
     argv = core._read_only_argv("ls -l '/tmp/two words'")

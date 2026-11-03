@@ -37,7 +37,12 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
 export const listServerSessions = () => request<{ sessions: ChatSession[]; last_active?: string }> ('')
 export const readServerSession = (id: string) => {
   confirmedWorkspaces.delete(id)
-  return request<ChatSession>(`/${encodeURIComponent(id)}`)
+  return request<ChatSession>(`/${encodeURIComponent(id)}?lazy_artifacts=true`)
+}
+export async function readServerArtifact(ref: { sessionId: string; digest: string }, signal: AbortSignal): Promise<VizArtifact> {
+  const response = await fetch(`/api/sessions/${encodeURIComponent(ref.sessionId)}/artifacts/${encodeURIComponent(ref.digest)}`, { signal, cache: 'no-store' })
+  if (!response.ok) throw new Error('Could not load this saved artifact. Reconnect to its APEXA server or reload the session.')
+  return response.json()
 }
 export const createServerSession = (id: string) => request<ChatSession>('', 'POST', { id })
 export const importBrowserSession = (session: ChatSession) => request<ChatSession>('/import', 'POST', session)
@@ -50,6 +55,7 @@ export const archiveServerSession = async (id: string) => {
 
 type WorkspaceReceipt = { workspaceRevision: number; revision: number }
 const confirmedWorkspaces = new Map<string, { revision: number; artifacts: VizArtifact[] }>()
+export function releaseWorkspaceCache(id: string) { confirmedWorkspaces.delete(id) }
 let patchSupported = true
 let transportEpoch = 0
 

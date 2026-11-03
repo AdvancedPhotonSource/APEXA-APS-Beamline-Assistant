@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import threading
 import uuid
+import math
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -12,7 +13,7 @@ from apexa_web_security import authorize_data_path
 from pydantic import BaseModel, Field
 
 from apexa_viewer_data import (inspect_sequence, inspect_image, read_frame,
-                              correct_frame, frame_payload, structure_payload, simulated_rings)
+                              read_region, correct_frame, frame_payload, structure_payload, simulated_rings)
 
 router = APIRouter(prefix="/api/science")
 _sequences = OrderedDict()
@@ -49,6 +50,59 @@ class RingRequest(BaseModel):
     distance_mm: float = Field(gt=0)
     pixel_um: float = Field(gt=0)
     max_radius: float = Field(gt=0)
+
+
+class TileRequest(FrameRequest):
+    x: int = Field(0, ge=0)
+    y: int = Field(0, ge=0)
+    width: int | None = Field(None, ge=1)
+    height: int | None = Field(None, ge=1)
+
+
+@router.post("/tile")
+def tile(request: TileRequest):
+    try:
+        with _lock:
+            manifest = _sequences.get(request.sequence_id)
+        if not manifest or request.index >= manifest["frames"]:
+            raise ValueError("Sequence expired or frame outside the snapshot; reload the sequence")
+        index = request.index
+        for source in manifest["sources"]:
+            if index < source["frames"]:
+                break
+            index -= source["frames"]
+        authorize_data_path(source["path"])
+        rows, columns = source["shape"]
+        width, height = request.width or columns, request.height or rows
+        step = max(1, math.ceil(max(width, height) / request.preview_max_side))
+        region = (request.x, request.y, width, height, step)
+        raw = read_region(source, index, *region)
+        corrections, values = {}, {}
+        for name, path, dataset, frame_index in (
+            ("dark", request.dark_path, request.dark_dataset, request.dark_frame),
+            ("mask", request.mask_path, request.mask_dataset, 0),
+        ):
+            if request.corrected and path:
+                info = inspect_image(str(authorize_data_path(path)), dataset)
+                if info["shape"] != source["shape"] or (name == "mask" and info["frames"] != 1):
+                    raise ValueError("Correction must match the full detector shape; a mask must have one frame")
+                corrections[name] = {**info, "frame": frame_index}
+                values[name] = read_region(info, frame_index, *region)
+        result = frame_payload(correct_frame(raw, **values), vmin=request.vmin, vmax=request.vmax,
+                               log=request.log, colormap=request.colormap, preview_max_side=request.preview_max_side)
+        context = {"source": source, "file_frame": index, "sequence_frame": request.index,
+                   "corrections": corrections, "settings": request.model_dump(exclude={"sequence_id"}),
+                   "region": {"x": request.x, "y": request.y, "width": width, "height": height, "step": step},
+                   "display_limits": [result["vmin"], result["vmax"]]}
+        return {**result, "shape": [rows, columns], "region": context["region"], "context": context,
+                "statistics_scope": "sampled preview region", "preview_sampling": "detector pixels at the recorded stride",
+                "io_scope": "HDF5 hyperslab" if source["kind"] == "hdf5" else "single frame decoded then cropped",
+                "analysis_key": hashlib.sha256(json.dumps(context, sort_keys=True).encode()).hexdigest()[:20],
+                "filename": source["path"]}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get("/structure")

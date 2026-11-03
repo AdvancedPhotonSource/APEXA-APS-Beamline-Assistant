@@ -963,13 +963,10 @@ def select_provider(username: str, model: str):
     # around by setting the model id somewhere else.
     from apexa_model_policy import assert_allowed
     assert_allowed(model, role="LLM")
-    try:
-        from apexa_llm_endpoints import active_endpoint
-        _ep = active_endpoint()
-    except Exception:
-        # A misconfigured or rejected endpoint is reported by the paths below,
-        # which already have the right error messages; never fail selection here.
-        _ep = None
+    from apexa_llm_endpoints import active_endpoint, EndpointRejected
+    _ep = active_endpoint()
+    if not _ep.has_credential(username):
+        raise EndpointRejected("LLM connection is not configured. Open Connection settings or configure the selected provider's credential. ANL_USERNAME is required only for Argo.")
     if _ep is not None and getattr(_ep, "wire", "openai") == "anthropic":
         return StreamingAnthropicProvider(username, model, endpoint=_ep)
 
@@ -983,7 +980,7 @@ def select_provider(username: str, model: str):
                 raise ProviderUnavailable(
                     f"APEXA_LLM_MODE=proxy but the proxy is unusable: {e}\n"
                     f"Refusing to fall back to the legacy Argo text protocol "
-                    f"(APEXA_LLM_STRICT is on). Start the argo-proxy sidecar, or set "
+                    f"(APEXA_LLM_STRICT is on). Check the configured endpoint, or set "
                     f"APEXA_LLM_STRICT=0 to permit the degraded transport."
                 ) from e
             print(f"  \033[33m⚠ APEXA_LLM_MODE=proxy unavailable ({e}) — "

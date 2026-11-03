@@ -41,89 +41,34 @@ except Exception:                       # noqa: BLE001 - .env is optional
 import apexa_profiles as PR                                    # noqa: E402
 from apexa_llm_endpoints import PRESETS, EndpointRejected      # noqa: E402
 
-#: Deliberately a two-step chain. A model can emit one tool call by luck or by
-#: mimicry; feeding the result back and requiring the number to reappear is what
-#: proves the loop closes.
-TOOLS = [{
-    "type": "function",
-    "function": {
-        "name": "xray_wavelength",
-        "description": "Return the x-ray wavelength in angstroms for a beam energy in keV.",
-        "parameters": {
-            "type": "object",
-            "properties": {"energy_kev": {"type": "number", "description": "Beam energy, keV"}},
-            "required": ["energy_kev"],
-        },
-    },
-}]
-
-ENERGY = 61.332
-ANSWER = "0.2021"
-
-
-async def qualify(name: str, timeout: float = 120.0) -> tuple[bool, str]:
-    """Run one profile through a two-turn tool chain. Never raises."""
-    profiles = PR.load_profiles()
-    prof = profiles.get(name)
+async def qualify(name: str, timeout: float = 45.0) -> tuple[bool, str]:
+    """Use the same native tool-result verifier as the connection dialog."""
+    from apexa_connection import ConnectionConfig, verify
+    prof = PR.load_profiles().get(name)
     if prof is None:
         return False, "unknown profile"
-
-    saved = {k: os.environ.get(k) for k in
-             ("APEXA_LLM_PRESET", "APEXA_LLM_BASE_URL", "APEXA_LLM_MODE", "ARGO_MODEL")}
+    keys = ("APEXA_LLM_PRESET", "APEXA_LLM_BASE_URL", "APEXA_LLM_MODE", "ARGO_MODEL",
+            "APEXA_LLM_KEYRING_ACCOUNT", "APEXA_ACTIVE_PROFILE")
+    saved = {k: os.environ.get(k) for k in keys}
     try:
         PR.apply(prof)
-        import apexa_agents as A
-        model = os.environ.get("ARGO_MODEL") or PRESETS[prof.preset]().default_model
-        if not model:
-            return False, "no model configured (set one in the profile)"
-
-        try:
-            provider = A.select_provider(os.environ.get("ANL_USERNAME", ""), model)
-        except EndpointRejected as e:
-            return False, f"rejected at config time: {e}"
-
-        if not A.provider_is_structured(provider):
-            return False, ("provider is not structured — would fall back to the text "
-                           "TOOL_CALL protocol, which APEXA must not rely on off-site")
-
-        messages = [{"role": "user",
-                     "content": f"Use the xray_wavelength tool for a {ENERGY} keV beam. "
-                                f"Call the tool; do not compute it yourself."}]
-        r1 = await asyncio.wait_for(
-            provider.chat(messages, temperature=0.0, tools=TOOLS), timeout)
-        if not r1.tool_calls:
-            return False, f"turn 1 emitted no tool call (stop_reason={r1.stop_reason})"
-        call = r1.tool_calls[0]
-        if call.name != "xray_wavelength":
-            return False, f"turn 1 called the wrong tool: {call.name}"
-
-        # Turn 2: hand the result back and require the model to use it.
-        messages += [
-            {"role": "assistant", "content": f"TOOL_CALL: {call.name}"},
-            {"role": "user", "content": f"[Tool Result for {call.name}] {ANSWER} angstroms. "
-                                        f"State the wavelength in one short sentence."},
-        ]
-        r2 = await asyncio.wait_for(
-            provider.chat(messages, temperature=0.0, tools=TOOLS), timeout)
-        if ANSWER not in (r2.content or ""):
-            return False, f"turn 2 did not carry the result back: {(r2.content or '')[:80]!r}"
-        return True, f"{model} — chained a tool call and used the result"
+        ep = PRESETS[prof.preset]()
+        config = ConnectionConfig(preset=prof.preset, base_url=prof.base_url or ep.base_url,
+            model=prof.model or ep.default_model, username=os.environ.get("ANL_USERNAME", ""))
+        result = await asyncio.wait_for(verify(config), timeout)
+        return result["ok"], result.get("detail", "Native tool call and tool result verified")
     except asyncio.TimeoutError:
         return False, f"timed out after {timeout:.0f}s"
-    except Exception as e:                                     # noqa: BLE001
-        return False, f"{type(e).__name__}: {str(e)[:140]}"
+    except EndpointRejected as exc:
+        return False, str(exc)
+    except Exception:
+        return False, "Connection verification failed; check the endpoint, model and credential configuration"
     finally:
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
             else:
-                os.environ[k] = v
-        client = getattr(locals().get("provider", None), "_client", None)
-        if client is not None:
-            try:
-                await client.aclose()
-            except Exception:
-                pass
+                os.environ[key] = value
 
 
 async def run(names: list[str]) -> int:

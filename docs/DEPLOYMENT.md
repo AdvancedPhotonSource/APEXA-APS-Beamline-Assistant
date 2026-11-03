@@ -12,7 +12,7 @@ Use one trusted operator per instance. Remote operators can use an SSH tunnel:
 `http://127.0.0.1:8001`. For network service, place an authenticated reverse proxy
 in front of localhost and protect **both HTTP and WebSocket** routes. Authentication
 alone does not provide session isolation. See [APS readiness review](APS_READINESS.md)
-for the remaining production gates.
+for historical findings. Current installation paths are in [deployment modes](DEPLOYMENT_MODES.md), and facility access is in [shared deployment](SHARED_DEPLOYMENT.md).
 
 ---
 

@@ -15,8 +15,15 @@ concurrency:
 
 jobs:
   python:
-    name: Offline Python tests
-    runs-on: ubuntu-24.04
+    name: Offline Python tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 35
     env:
       APEXA_NETWORK: data
@@ -32,6 +39,9 @@ jobs:
       OMP_NUM_THREADS: '1'
       OPENBLAS_NUM_THREADS: '1'
       PYTHONDONTWRITEBYTECODE: '1'
+      PYTHON_DOTENV_DISABLED: '1'
+      PYTHONUTF8: '1'
+      APEXA_HOME: ${{ runner.temp }}/apexa-ci
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -57,12 +67,14 @@ jobs:
       - name: Run offline regression suite
         env:
           APEXA_SESSION_DIR: ${{ runner.temp }}/apexa-ci/sessions
-        run: .venv/bin/python -m pytest tests/ -q -ra --junitxml="$RUNNER_TEMP/pytest.xml"
+        run: uv run --no-sync python -m pytest tests/ -q -ra --junitxml="$RUNNER_TEMP/pytest.xml"
+      - name: Check portable startup and persisted state without engines
+        run: uv run --no-sync python scripts/platform_smoke.py
       - name: Retain test results including optional-environment skips
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: offline-python-results
+          name: offline-python-results-${{ matrix.os }}
           path: ${{ runner.temp }}/pytest.xml
           if-no-files-found: ignore
           retention-days: 14

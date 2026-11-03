@@ -13,6 +13,30 @@ from apexa_viewer_data import (inspect_sequence, inspect_image, read_frame, corr
 from apexa_viewer_api import router
 
 
+def test_hdf5_tile_reads_only_selected_hyperslab_and_preserves_coordinates(tmp_path, monkeypatch):
+    from apexa_viewer_data import read_region
+    import apexa_viewer_data as data
+    p = tmp_path / "detector.h5"
+    values = np.arange(160 * 200).reshape(160, 200)
+    with h5py.File(p, "w") as h:
+        h.create_dataset("data", data=values[None])
+    source = inspect_image(str(p), "data")
+    monkeypatch.setattr(data, "read_frame", lambda *args: pytest.fail("HDF5 tile must not decode the full frame"))
+    np.testing.assert_array_equal(read_region(source, 0, 20, 30, 80, 60, 2), values[30:90:2, 20:100:2])
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    manifest = client.post("/api/science/sequence", json={"path": str(p), "dataset": "data"}).json()
+    response = client.post("/api/science/tile", json={"sequence_id": manifest["sequence_id"], "x": 20, "y": 30, "width": 80, "height": 60, "preview_max_side": 64})
+    assert response.status_code == 200, response.text
+    tile = response.json()
+    assert tile["shape"] == [160, 200] and tile["region"]["step"] == 2
+    assert tile["statistics_scope"] == "sampled preview region"
+    assert tile["stats"]["mean"] == pytest.approx(values[30:90:2, 20:100:2].mean())
+    assert "profile" not in tile
+    assert client.post("/api/science/tile", json={"sequence_id": manifest["sequence_id"], "x": 199, "width": 2}).status_code == 422
+
+
 def test_hdf5_reads_selected_frame_not_entire_stack(tmp_path):
     p = tmp_path / "neutral.bin"
     with h5py.File(p, "w") as h:

@@ -1,0 +1,6 @@
+{
+  "ssh_alias": "analysis-login",
+  "python": "/opt/apexa/.venv/bin/python",
+  "worker_script": "/opt/apexa/scripts/slurm_worker.py",
+  "config_file": "/home/operator/.apexa/slurm-policy.json"
+}

@@ -29,7 +29,7 @@ Uploads use generated basenames and exclusive file creation. Parent paths, separ
 
 `/api/calibrate` previously asked the model to calibrate and labeled arbitrary prose as completion. It now returns a metadata-required error without running anything. Use the explicit `/api/auto_calibrate` form or the canonical tool with a reviewed template. Legacy phase/peak endpoints return 503 when their named capability is absent; they no longer invent successful results for missing tools.
 
-The legacy image cache has a byte budget, `APEXA_IMAGE_CACHE_BYTES` (default 512 MiB), and evicts the oldest loaded arrays. Reload an evicted image or use the sequence viewer. Chat includes only explicitly selected canvas metadata; globally cached images/calibrations are no longer added to every prompt. Browser persistence defers snapshot construction/serialization until debounce or lifecycle flush, retaining state across switches and reloads. Large plot payloads remain in browser persistence for offline restoration; this is not an IndexedDB/artifact-service migration.
+The legacy image cache has a byte budget, `APEXA_IMAGE_CACHE_BYTES` (default 512 MiB), and evicts the oldest loaded arrays. Reload an evicted image or use the sequence viewer. Chat includes only explicitly selected canvas metadata; globally cached images/calibrations are no longer added to every prompt. Browser persistence defers snapshot construction/serialization until debounce or lifecycle flush, retaining state across switches and reloads. Large plot payloads remain in browser persistence for offline restoration; see FRONTEND_PERFORMANCE.md for the later IndexedDB and immutable server-payload migration.
 
 ## Outcomes, cache reuse and workflow durability
 
@@ -52,3 +52,11 @@ Calibration and integration now launch owned child processes asynchronously, wit
 Resource leases now coordinate cooperating APEXA processes sharing a local SQLite registry. The shared subprocess runner attaches each owned child/process group; uncertain orphaned work retains its reservation until verified release. Remote targets are coordinated only on the controller, and the registry does not replace a facility scheduler or kernel resource enforcement. See [compute reservations](COMPUTE_RESERVATIONS.md). Host/stage profiling and real CPU/GPU equivalence measurements remain required. Combined captured stdout/stderr is bounded to 32 MiB by default; exceeding the limit stops the owned child group and reports failure. Keep large numerical results in artifact files.
 
 The subsequent [operations/retrieval guide](OPERATIONS_AND_RETRIEVAL.md), [acquisition contract](ACQUISITION_RUNTIME.md), [alignment runtime](ALIGNMENT_RUNTIME.md) and [frontend performance report](FRONTEND_PERFORMANCE.md) describe the next implementation batch. These source changes still require a coordinated frontend rebuild and service restart before the running deployment uses them.
+
+## Assigned shared-access instances
+
+For facility SSO, use one instance/Unix identity per user and proposal, with
+`APEXA_OPERATOR_ID`, `APEXA_PROPOSAL_ID`, a unique backend token and data roots.
+The authenticated proxy supplies the assigned identity for HTTP and WebSockets.
+See [the shared deployment manual](SHARED_DEPLOYMENT.md); this does not make one
+Python process multi-tenant.

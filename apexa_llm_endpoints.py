@@ -188,6 +188,13 @@ class OpenAIEndpoint:
 
     # ── credential resolution (lazy, so expiring tokens stay fresh) ─────────
 
+    def credential_account(self) -> str:
+        scoped = os.environ.get("APEXA_LLM_KEYRING_ACCOUNT")
+        if (scoped and os.environ.get("APEXA_LLM_PRESET") == self.name
+                and (os.environ.get("APEXA_LLM_BASE_URL") or self.base_url).rstrip("/") == self.base_url.rstrip("/")):
+            return scoped
+        return self.name
+
     def resolve_key(self, username: str = "") -> str:
         """Credential for this request.
 
@@ -206,7 +213,7 @@ class OpenAIEndpoint:
             if from_env:
                 return from_env
         if self.uses_keyring:
-            stored = keyring_get(self.name)
+            stored = keyring_get(self.credential_account())
             if stored:
                 return stored
         if self.api_key:
@@ -214,9 +221,11 @@ class OpenAIEndpoint:
         cmd = (os.environ.get("APEXA_LLM_TOKEN_CMD") or self.token_cmd or "").strip()
         if cmd:
             return self._token_from_cmd(cmd)
-        return (username or "apexa").strip()
+        if self.name == "argo" and username and username.strip():
+            return username.strip()
+        raise EndpointRejected("No credential for the selected endpoint. Configure its API key or token helper; Argo requires ANL_USERNAME.")
 
-    def has_credential(self, username: str = "") -> bool:
+    def has_credential(self, username: str = "", *, use_environment: bool = True) -> bool:
         """Whether this endpoint can produce a credential without prompting.
 
         Used by profile auto-selection to skip an endpoint the user has not set
@@ -228,20 +237,20 @@ class OpenAIEndpoint:
         who has never run ``inference_auth_token.py authenticate`` has no ALCF
         credential, and auto-selection must not pick ALCF for them.
         """
-        if (os.environ.get("APEXA_LLM_API_KEY") or "").strip():
+        if use_environment and (os.environ.get("APEXA_LLM_API_KEY") or "").strip():
             return True
         if self.env_key and (os.environ.get(self.env_key) or "").strip():
             return True
         if self.uses_keyring:
-            return bool(keyring_get(self.name))
+            return bool(keyring_get(self.credential_account()))
         if self.api_key:
             return True
-        if (os.environ.get("APEXA_LLM_TOKEN_CMD") or self.token_cmd or "").strip():
+        if ((os.environ.get("APEXA_LLM_TOKEN_CMD") if use_environment else "") or self.token_cmd or "").strip():
             if self.token_file_glob:
                 from glob import glob
                 return bool(glob(os.path.expanduser(self.token_file_glob)))
             return True
-        return bool((username or "").strip())
+        return self.name == "argo" and bool((username or "").strip())
 
     @staticmethod
     def _token_from_cmd(cmd: str) -> str:

@@ -81,8 +81,8 @@ older route table. Browser-local sessions are not shared with the CLI until the
 current server's session API is available and the browser has reconnected.
 
 Snapshots are written atomically. Per-session process locks serialize turns;
-workspace revisions reject conflicting writes from another window. Record and
-workspace limits are 64 MB and 20 MB respectively; oversized writes leave the
+workspace revisions reject conflicting writes from another window. Individual payload/record and
+logical workspace limits are 64 MB and 20 MB respectively; oversized writes leave the
 previous snapshot intact. Store these files on a local filesystem with working
 advisory locks. Network filesystem and Windows behavior need deployment-specific
 qualification. This remains a single-user host workspace, without authenticated
@@ -126,3 +126,17 @@ access without a model, workspace restore, delayed responses, image source
 reload and FF gate persistence. No real reconstruction or hardware control is
 performed by these tests. Browser rendering and APS commissioning remain separate
 acceptance checks.
+
+## Schema 3 payload storage
+
+Large workspace artifacts and transcript/model-history arrays are stored as
+immutable hashed JSON payloads under `sessions/payloads/`. Session manifests
+reference them; draft-only PATCHes do not load unchanged payloads. The API still
+returns full data by default. React requests `lazy_artifacts=true` and fetches
+opened results through session-bound artifact routes. Missing/corrupted payloads
+produce explicit failures; they never cause an analysis rerun.
+
+Keep payloads with the session manifests when backing up or restoring. An older
+release cannot read schema 3. Payloads are retained, not automatically deleted;
+plan disk retention at the instance level. Separate operator instances must not
+share the same state directory. See [shared deployment](SHARED_DEPLOYMENT.md).

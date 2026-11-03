@@ -1,0 +1,13 @@
+{
+  "run_root": "/scratch/operator/apexa-jobs",
+  "data_roots": ["/data/proposal-123"],
+  "apexa_root": "/opt/apexa",
+  "python": "/opt/apexa/.venv/bin/python",
+  "midas_path": "/opt/MIDAS",
+  "engine_sha256": "REPLACE_WITH_REVIEWED_INTEGRATOR_SCRIPT_SHA256",
+  "cpus": 8,
+  "memory_gb": 32,
+  "minutes": 60,
+  "partition": "REPLACE_WITH_SITE_PARTITION",
+  "account": "REPLACE_WITH_SITE_ACCOUNT"
+}

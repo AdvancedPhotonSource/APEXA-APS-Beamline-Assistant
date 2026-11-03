@@ -6,6 +6,40 @@ from apexa_observability import trace_store
 router = APIRouter(prefix="/api")
 
 
+@router.get('/remote-jobs')
+def remote_jobs():
+    import json
+    from apexa_slurm import coordinator_root
+    rows = []
+    for path in coordinator_root().glob('*.json'):
+        try:
+            record = json.loads(path.read_text())
+            rows.append({"job_id": record["job_id"], "host": record["target"]["ssh_alias"],
+                         "created": record["created"], "cancellation_status": record["cancellation"],
+                         "result": record.get("result"), "status": record.get("result", {}).get("status", "unknown")})
+        except (ValueError, OSError, KeyError):
+            continue
+    return {"jobs": sorted(rows, key=lambda row: row["created"], reverse=True)}
+
+
+@router.get('/remote-jobs/{job_id}')
+async def remote_job(job_id: str):
+    from apexa_slurm import request_remote
+    try:
+        return await request_remote("status", job_id=job_id)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(502, "Remote job status is unavailable; no work was retried") from exc
+
+
+@router.post('/remote-jobs/{job_id}/cancel')
+async def cancel_remote_job(job_id: str):
+    from apexa_slurm import request_remote
+    try:
+        return await request_remote("cancel", job_id=job_id)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(502, "Remote cancellation was not confirmed; inspect scheduler state") from exc
+
+
 @router.get('/resources/reservations')
 def resource_reservations():
     from apexa_compute import resource_registry

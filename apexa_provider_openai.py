@@ -104,10 +104,7 @@ def proxy_mode_enabled() -> bool:
 def base_url() -> str:
     """Endpoint URL from the active preset (``APEXA_LLM_PRESET``), overridable by
     ``APEXA_LLM_BASE_URL``. See apexa_llm_endpoints."""
-    try:
-        return active_endpoint().base_url
-    except EndpointRejected:
-        return (os.environ.get("APEXA_LLM_BASE_URL") or DEFAULT_BASE_URL).strip()
+    return active_endpoint().base_url
 
 
 def api_key_for(username: str) -> str:
@@ -126,10 +123,7 @@ def api_key_for(username: str) -> str:
     own token, so inference is attributed to them and not to a shared beamline
     account. Never put a key in a shared or committed file.
     """
-    try:
-        return active_endpoint().resolve_key(username)
-    except EndpointRejected:
-        return (os.environ.get("APEXA_LLM_API_KEY") or username or "apexa").strip()
+    return active_endpoint().resolve_key(username)
 
 
 def strict_mode() -> bool:

@@ -1,0 +1,32 @@
+# Include inside the site's TLS server for alice-apexa.example.edu.
+# oauth2-proxy validates facility OIDC; its /auth response supplies identity.
+# Configure oauth2-proxy set_xauthrequest=true and email verification; see manual.
+location = /oauth2/auth {
+    internal;
+    proxy_pass http://127.0.0.1:4180/oauth2/auth;
+    proxy_pass_request_body off;
+    proxy_set_header Content-Length "";
+    proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+    proxy_set_header Cookie $http_cookie;
+}
+location /oauth2/ {
+    proxy_pass http://127.0.0.1:4180;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Auth-Request-Redirect $scheme://$host$request_uri;
+}
+location / {
+    auth_request /oauth2/auth;
+    error_page 401 = /oauth2/sign_in;
+    auth_request_set $apexa_identity $upstream_http_x_auth_request_email;
+    # Overwrite caller-supplied identity AND authorization, including WebSockets.
+    proxy_set_header X-APEXA-Principal $apexa_identity;
+    proxy_set_header Authorization "Bearer REPLACE_WITH_THE_INSTANCE_BACKEND_TOKEN";
+    proxy_set_header Host $host;
+    proxy_set_header Origin $http_origin;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_http_version 1.1;
+    proxy_read_timeout 3600s;
+    proxy_pass http://127.0.0.1:8101;
+}
