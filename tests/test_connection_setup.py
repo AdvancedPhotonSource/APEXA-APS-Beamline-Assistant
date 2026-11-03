@@ -18,7 +18,8 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("APEXA_HOME", str(tmp_path))
     monkeypatch.setenv("APEXA_NETWORK", "web")
     for key in (*C._PINNED, "APEXA_LLM_API_KEY", "APEXA_LLM_KEYRING_ACCOUNT", "ANL_USERNAME",
-                "APEXA_OFFLINE", "HF_HUB_OFFLINE", "APEXA_LLM_TOKEN_CMD", "ARGO_MODEL"):
+                "APEXA_OFFLINE", "HF_HUB_OFFLINE", "APEXA_LLM_TOKEN_CMD", "ARGO_MODEL",
+                *(cls().env_key for cls in E.PRESETS.values() if cls().env_key)):
         monkeypatch.setenv(key, "")
         monkeypatch.delenv(key)
     monkeypatch.setattr(C, "_applied_revision", None)
@@ -150,3 +151,113 @@ def test_api_never_returns_submitted_secrets():
         saved = client.put("/api/connection", json={"config": config("openai").model_dump(), "api_key": "private-key"})
         assert saved.status_code == 200
         assert "private-key" not in client.get("/api/connection").text
+
+
+def wizard(tmp_path, answers, key="", **kwargs):
+    from scripts.setup_user import run_setup
+    values = iter(answers)
+    prompts = []
+    def ask(prompt):
+        prompts.append(prompt)
+        return next(values)
+    result = run_setup(tmp_path, ask=ask, secret=lambda _: key, **kwargs)
+    assert list(values) == [], "Wizard skipped an expected prompt"
+    return result, prompts
+
+
+@pytest.mark.parametrize("preset", ["openai", "anthropic", "gemini", "mag"])
+def test_wizard_selects_personal_provider_without_anl_and_preserves_routing(tmp_path, isolated, preset):
+    from dotenv import dotenv_values
+    path = tmp_path / ".env"
+    path.write_text("# Operator runtime\nAPEXA_MIDAS_BIN='/native/midas/bin'\nMIDAS_PATH='/native/MIDAS'\nMP_API_KEY='fixture-mp'\n")
+    result, prompts = wizard(tmp_path, [preset, "fixture-model", "y"], "fixture-secret", connection_only=True)
+    assert result == 0
+    assert not any("ANL username" in prompt for prompt in prompts)
+    assert C.apply_saved()
+    assert E.active_endpoint().name == preset
+    assert E.active_endpoint().resolve_key() == "fixture-secret"
+    assert os.environ["ARGO_MODEL"] == "fixture-model"
+    assert dotenv_values(path)["APEXA_MIDAS_BIN"] == "/native/midas/bin"
+    assert dotenv_values(path)["MP_API_KEY"] == "fixture-mp"
+    assert "fixture-secret" not in path.read_text() + C.settings_path().read_text()
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_wizard_migrates_old_dotenv_selection_without_transferring_credentials(tmp_path, isolated):
+    from dotenv import dotenv_values
+    path = tmp_path / ".env"
+    path.write_text("APEXA_LLM_PRESET=custom\nAPEXA_LLM_BASE_URL=https://old.example/v1\nAPEXA_LLM_API_KEY='old-secret'\nAPEXA_LLM_TOKEN_CMD='old-helper'\nARGO_MODEL=old-model\nAPEXA_NETWORK=web\n")
+    wizard(tmp_path, ["openai", "fixture-model", "y"], "new-secret", connection_only=True)
+    assert dict(dotenv_values(path)) == {"APEXA_NETWORK": "web"}
+    assert C.apply_saved()
+    assert E.active_endpoint().resolve_key() == "new-secret"
+    assert "old-secret" not in isolated.values()
+
+
+def test_wizard_no_keyring_failure_does_not_overwrite_files(tmp_path, monkeypatch):
+    path = tmp_path / ".env"
+    path.write_text("MIDAS_PATH=/keep/this\n")
+    C.save_config(config("argo", username="operator"), "", None)
+    before = C.settings_path().read_bytes()
+    monkeypatch.setattr(E, "keyring_set", lambda *args: False)
+    with pytest.raises(ValueError, match="keyring"):
+        wizard(tmp_path, ["openai", "fixture-model", "y"], "secret", connection_only=True)
+    assert path.read_text() == "MIDAS_PATH=/keep/this\n"
+    assert C.settings_path().read_bytes() == before
+    assert not list(tmp_path.glob(".apexa-setup-*"))
+
+
+def test_wizard_cancel_and_exported_override_do_not_save(tmp_path, monkeypatch):
+    path = tmp_path / ".env"
+    path.write_text("MIDAS_PATH=/keep/this\n")
+    wizard(tmp_path, ["ollama", "fixture-model", "n"], connection_only=True)
+    assert not C.settings_path().exists()
+    assert path.read_text() == "MIDAS_PATH=/keep/this\n"
+    monkeypatch.setenv("APEXA_LLM_API_KEY", "other-endpoint-secret")
+    result, prompts = wizard(tmp_path, [], connection_only=True)
+    assert result == 2 and not prompts
+    assert not C.settings_path().exists()
+
+
+def test_wizard_argo_and_ollama_need_no_key(tmp_path):
+    wizard(tmp_path, ["argo", "operator", "fixture-model", "y"], connection_only=True)
+    assert C.load_saved()["config"]["username"] == "operator"
+    wizard(tmp_path, ["6", "local-model", "y"], connection_only=True)
+    assert C.load_saved()["config"]["preset"] == "ollama"
+    assert C.apply_saved()
+    assert E.active_endpoint().resolve_key() == "ollama"
+
+
+def test_wizard_custom_gateway_and_headless_credential(tmp_path, monkeypatch):
+    wizard(tmp_path, ["5", "https://campus.example/v1", "deployment-id", "y"], connection_only=True)
+    assert C.apply_saved()
+    monkeypatch.setenv("APEXA_LLM_API_KEY", "headless-secret")
+    ep = E.active_endpoint()
+    assert ep.base_url == "https://campus.example/v1"
+    assert ep.resolve_key() == "headless-secret"
+
+
+def test_wizard_full_setup_keeps_paths_and_writes_network_tier(tmp_path):
+    from dotenv import dotenv_values
+    path = tmp_path / ".env"
+    path.write_text("APEXA_MIDAS_BIN='/existing/native/bin'\nAPEXA_ANALYSIS_HOST=worker\n")
+    # Same three optional prompts on Windows (host/roots) and POSIX (bin/clone).
+    wizard(tmp_path, ["openai", "fixture-model", "", "", "", "y"], "fixture-key")
+    data = dotenv_values(path)
+    assert data["APEXA_NETWORK"] == "web"
+    assert data["APEXA_MIDAS_BIN"] == "/existing/native/bin"
+    assert data["APEXA_ANALYSIS_HOST"] == "worker"
+
+
+def test_env_updates_preserve_multiline_values_and_quote_special_paths():
+    from dotenv import dotenv_values
+    import io
+    from scripts.setup_user import env_text
+    original = "# Site\nexport APEXA_PROFILE='old'\nSITE_VALUE='first\nsecond'\nMIDAS_PATH=old\n"
+    special = "C:\\User's data\\MIDAS #1"
+    result = env_text(original, {"MIDAS_PATH": special}, ["APEXA_PROFILE"])
+    data = dotenv_values(stream=io.StringIO(result))
+    assert "APEXA_PROFILE" not in data
+    assert data["SITE_VALUE"] == "first\nsecond"
+    assert data["MIDAS_PATH"] == special

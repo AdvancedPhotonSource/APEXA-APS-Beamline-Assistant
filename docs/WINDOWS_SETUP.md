@@ -19,6 +19,7 @@ instructions, then:
 ```bash
 uv sync --locked
 uv run --no-sync python scripts/platform_smoke.py
+./setup_user.sh
 ./start_web_viewer.sh
 ```
 
@@ -35,6 +36,7 @@ and clone the release. uv selects Python from `.python-version`.
 ```powershell
 uv sync --locked
 uv run --no-sync python scripts/platform_smoke.py
+.\docs\setup_user.ps1
 .\start_web_viewer.ps1
 ```
 

@@ -22,8 +22,10 @@ Rules that follow from it:
   `scikit-image`; rather than adding it, APEXA probes for it and tells the operator
   to point `APEXA_MIDAS_BIN` at the MIDAS pip env, where it is already a declared
   dependency of `midas-calibrate-v2` >= 0.22.0.)
-- **MCP 2.x is still pending** for this reason. The migration is written and
-  reverted; re-landing it needs the wheels to reach copland first.
+- The current release requires **MCP 2.2 or newer within 2.x**. The September
+  rollback above is historical; it is not the current dependency state. The
+  existing Copland APEXA environment was inspected on 3 November 2026 and had
+  MCP 2.2.0 installed. Other offline hosts still need the locked wheels staged.
 
 For a beamline machine with **no internet access** (or a locked-down network that
 can't reach `huggingface.co`). Covers the two things that don't "just work" on a
@@ -95,8 +97,9 @@ APEXA_NETWORK=internal   # DEFAULT — ANL-internal only; HuggingFace forced off
 # APEXA_OFFLINE=1 remains supported as a legacy alias and caps the tier at internal.
 ```
 
-`docs/setup_user.sh` probes reachability and writes `APEXA_NETWORK` into `.env` for
-you. See the CLAUDE.md "Network tiers" section for the full model.
+`./setup_user.sh` offers an explicit network tier and preserves existing values;
+it does not probe networks. The older `docs/setup_user.sh` delegates to the same
+wizard. See the CLAUDE.md "Network tiers" section for the full model.
 
 ---
 

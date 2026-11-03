@@ -8,31 +8,24 @@
 ./setup_user.sh
 ```
 
-The script will ask for:
-- Your ANL username
-- Preferred AI model (setup script default: gpt55; model aliases can change with the Argo catalog)
-- A pip MIDAS environment, detected from `midas-pipeline` or entered manually
-- An optional MIDAS repo clone for forward simulation and legacy tools
-- Optional Materials Project API key
+The script asks for a provider first, then its exact model/deployment ID and
+credential. Only Argo requires an ANL username. API keys use the OS keyring;
+selected connection settings use `~/.apexa/connection.json`. Personal chat
+subscription login is not implemented. See [connection setup](../CONNECTION_SETUP.md).
+
+Optional prompts cover the network tier and native MIDAS paths; existing values
+are preserved. Use `./setup_user.sh --connection-only` to skip runtime prompts.
+Windows uses `.\docs\setup_user.ps1` with the same wizard.
 
 ### 2. Start APEXA
 ```bash
 ./start_beamline_assistant.sh
 ```
 
-With the current `servers.config`, startup should report:
-```
-  core: 13 tools
-  midas: 60 tools
-  motor: 13 tools
-  gsas2: 26 tools
-  tomo: 2 tools
-
-  APEXA - Advanced Photon EXperiment Assistant
-  Model: gpt55 (PROD)  |  114 tools  |  Servers: core, midas, motor, gsas2, tomo
-```
-The connected server/tool counts depend on `servers.config`; each engine also
-depends on its own runtime and host readiness.
+The standard configuration declares seven MCP servers: core, MIDAS, motor,
+alignment, GSAS-II, tomography and synthesis. The connected tool counts depend
+on the configured servers; each scientific engine needs its own runtime and
+host qualification. See the [source inventory](../analysis-tool-inventory.json).
 
 ### 3. Start Analyzing
 ```
@@ -45,13 +38,13 @@ APEXA> show me the lineout
 ## Requirements
 
 - **Python:** 3.13+ (with `uv` package manager)
-- **Network:** ANL network or VPN
+- **Network:** Reachability to the selected provider; ANL/VPN is required only for Argo
 - **MIDAS:** pip `midas-suite` environment, detected from `midas-pipeline` or configured with `APEXA_MIDAS_BIN`
 
 ## MIDAS setup
 
-The setup script looks for a pip `midas-suite` environment on `PATH` and in
-common APS and Conda locations. It writes `APEXA_MIDAS_BIN` to the environment's
+The setup script preserves an existing native MIDAS path, or detects
+`midas-pipeline` on `PATH` for a new setup. It writes `APEXA_MIDAS_BIN` to the environment's
 `bin/` directory when it finds `midas-pipeline`. If no native environment is
 available, set it manually or install the optional local fallback:
 
@@ -64,7 +57,8 @@ simulation and legacy C tools. See [MIDAS setup](../MIDAS_SETUP.md) for details.
 
 ## Manual Configuration
 
-Edit `.env` directly:
+The wizard and WebUI share saved connection settings. For an explicit
+environment-managed Argo deployment, edit `.env` directly:
 
 ```bash
 cp .env.template .env
@@ -130,19 +124,22 @@ Switched to: claudesonnet55
 ```
 WARNING: MIDAS not found
 ```
-Fix: Set `MIDAS_PATH` in `.env`
+Fix: Set `APEXA_MIDAS_BIN` to the qualified native MIDAS environment; see
+[MIDAS setup](../MIDAS_SETUP.md). `MIDAS_PATH` is an optional repository clone.
 
 **Authentication Error:**
 ```
 Error calling Argo API: 401 Unauthorized
 ```
-Fix: Check `ANL_USERNAME` in `.env` and network connection
+Fix: Check the selected Argo username in connection settings (or the explicit
+`ANL_USERNAME` environment override) and ANL/VPN reachability.
 
 ## Multi-User Environments
 
 Each user should:
-1. Run `./setup_user.sh` with their own ANL username
-2. Keep `.env` private (`chmod 600 .env`)
+1. Run setup under their own OS identity, with their own provider credential.
+2. Use a separate APEXA instance and private state directory; see
+   [shared deployment](../SHARED_DEPLOYMENT.md).
 
 ---
 

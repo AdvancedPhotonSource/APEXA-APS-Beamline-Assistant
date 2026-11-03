@@ -9,7 +9,7 @@ set CMAKE_POLICY_VERSION_MINIMUM=3.5
 if not exist ".env" (
     echo [!] .env not found. Run the Windows setup to create it:
     echo       powershell -ExecutionPolicy Bypass -File .\docs\setup_user.ps1
-    echo     or copy .env.template to .env and set ANL_USERNAME by hand.
+    echo     or configure gear ^> LLM connection in the Web UI.
 )
 
 where uv >nul 2>nul

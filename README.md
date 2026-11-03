@@ -10,7 +10,7 @@ AI-powered agentic framework for synchrotron diffraction analysis, tomography wo
 
 ### Command-Line Interface (CLI)
 ```bash
-./setup_user.sh                  # One-time setup
+./setup_user.sh                  # Provider, credentials and optional runtime paths
 ./start_beamline_assistant.sh    # Start APEXA CLI
 ```
 
@@ -41,9 +41,12 @@ uv sync --locked
 uv run --no-sync python scripts/platform_smoke.py
 ```
 
-Use **gear → LLM connection** for personal API accounts, institutional gateways
-or local models. ANL_USERNAME is required only for Argo. Verify the connection,
-save it, then restart APEXA. Personal chat-subscription sign-in is not implemented.
+Use `./setup_user.sh` (Windows: `.\docs\setup_user.ps1`) or **gear → LLM connection**
+for personal API accounts, institutional gateways or local models. Only Argo
+requires an ANL username. `./setup_user.sh --connection-only` preserves runtime
+settings without prompting. Restart after saving; the WebUI's optional connection
+check sends two small model requests. **Personal chat-subscription sign-in is
+not implemented**; API access has separate billing.
 
 - [Connection setup](docs/CONNECTION_SETUP.md)
 - [Windows and WSL2 installation](docs/WINDOWS_SETUP.md)

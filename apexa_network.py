@@ -33,7 +33,7 @@ caused the copland hang: a host that cannot reach the internet then discovers it
 by blocking. Assuming the smaller network and letting a web-capable host opt up
 fails safe on the machines that matter most.
 
-Set ``APEXA_NETWORK=web|internal|data``; ``docs/setup_user.sh`` probes and writes
+Set ``APEXA_NETWORK=web|internal|data``; ``./setup_user.sh`` offers and writes
 it. ``APEXA_OFFLINE=1`` remains supported and implies ``internal``.
 """
 from __future__ import annotations
@@ -162,7 +162,7 @@ def probe(timeout: float = 3.0) -> Tuple[str, Dict[str, bool]]:
     """Detect the tier this host can actually reach.
 
     Short, bounded TCP connects only — no HTTP, no retries, no DNS-hang risk
-    beyond the timeout. Intended for ``docs/setup_user.sh`` and diagnostics; the
+    beyond the timeout. Available for explicit diagnostics; the setup wizard and
     runtime never probes, it reads the configured value, because a probe at
     startup would reintroduce exactly the blocking behaviour this module exists
     to prevent.
