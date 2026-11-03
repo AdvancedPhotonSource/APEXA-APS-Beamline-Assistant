@@ -143,5 +143,6 @@ stable file views, retained plot snapshots, explicit two-result comparison and
 session-aware asynchronous delivery. These are product design choices, not a
 claim of benchmark superiority or scientific validation.
 
-The [2 November consistency check](audits/2026-11-02/CONSISTENCY.md) covers the
-combined release, including automatic integration plots and saved-chat shortcuts.
+The maintained Canvas regression suite covers automatic integration plots,
+saved-chat shortcuts, duplicate delivery and session switches. See
+[quality gates](development/quality-gates.md) for the checks and their limits.

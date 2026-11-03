@@ -1,6 +1,6 @@
 # APEXA scientific-agent evaluation and CVPR study plan
 
-Prepared 28 October 2026. This is a proposed study, informed by the [software audit](AUDIT.md) and existing local data. It contains no new harness ranking and no new numerical reconstruction results.
+Prepared 28 October 2026. This is a proposed study, informed by the October software audit and existing local data. It contains no new harness ranking and no new numerical reconstruction results.
 
 ## Recommended contribution and publication scope
 
@@ -8,7 +8,7 @@ The strongest research question is: **Can an execution and acceptance layer that
 
 The visual inverse problems are meaningful: infer detector geometry from diffraction images, and infer grain orientations/positions from rotating diffraction observations. Present the measurement model, ambiguity and uncertainty, and how an agent diagnoses a failure and selects the next defensible analysis. Include image evidence, held-out reprojection, and numerical comparisons. A deployment narrative without a clearly evaluated method will be vulnerable to the criticism that this is primarily software integration.
 
-The [CVPR 2027 call for papers](https://cvpr.thecvf.com/Conferences/2027/CallForPapers) lists **Agentic AI** and **AI for Science and Scientific Discovery** as main-program topics. This is not evidence of separate guaranteed submission tracks. It lists paper enrollment on **10 November 2026**, submission on **16 November**, and supplementary material on **23 November**, all 23:59 Anywhere on Earth. As of this audit, the paper deadline is 19 days away. Verify the live policies and submission categories before enrollment; future workshop calls have their own rules.
+The [CVPR 2027 call for papers](https://cvpr.thecvf.com/Conferences/2027/CallForPapers) lists **Agentic AI** and **AI for Science and Scientific Discovery** as main-program topics. This is not evidence of separate guaranteed submission tracks. It lists paper enrollment on **10 November 2026**, submission on **16 November**, and supplementary material on **23 November**, all 23:59 Anywhere on Earth. Verify the live policies and submission categories before enrollment; future workshop calls have their own rules.
 
 A defensible initial paper could focus on calibration plus a smaller FF-HEDM generalization study. Make FF-HEDM a co-primary task only if its data, trusted evaluation and repeatable execution can be frozen promptly. Do not claim general beamline autonomy from either offline analysis task. Autonomous alignment requires a separate commissioned hardware study.
 
@@ -18,7 +18,7 @@ A defensible initial paper could focus on calibration plus a smaller FF-HEDM gen
 
 The resolved data root is `~/Box/01-Research/01-APEXA/ai_tune_rot_series`, with analysis records in `APEXA-Analysis/` and exposures in `data/rot_series/`.
 
-The final directory/stat inspection lists **43 HDF5 files, 14,988,968,724 bytes (14.99 GB)**, covering scans 261–303. Earlier observations found six and then 30 files while the directory changed. The final count does not certify that all cloud-backed bytes are locally hydrated or intact. Freeze and fingerprint a complete acquisition copy before trials. See [rotation-availability-final.json](rotation-availability-final.json).
+The final directory/stat inspection lists **43 HDF5 files, 14,988,968,724 bytes (14.99 GB)**, covering scans 261–303. Earlier observations found six and then 30 files while the directory changed. The final count does not certify that all cloud-backed bytes are locally hydrated or intact. Freeze and fingerprint a complete acquisition copy before trials. The dated availability observation remains in the archived audit bundle.
 
 The inspected sample has `/exchange/data` with shape `(21, 2880, 2880)` and `uint16` pixels, plus dark/white datasets. Existing analysis records describe skipping frame 0, averaging frames 1–20, 63.314 keV energy, 150 µm pixels and `ImTransOpt 2`. Those are recorded procedure choices requiring confirmation against the acquisition; their presence in a previous report is not independent validation.
 
@@ -31,13 +31,13 @@ The inspected sample has `/exchange/data` with shape `(21, 2880, 2880)` and `uin
 | Accepted fits with any recorded bound flag | 23 / 35 | Includes periodic phase parameters; a flag alone does not prove an incorrect fit |
 | Accepted fits with a non-`phi*` bound flag | 11 / 35 | Deserves identifiability and model-sensitivity analysis |
 
-These counts come from `rotation_series_calibration_summary.csv` and the captured benchmark's `load_truth(..., value_col='tz_deg')`; [rotation-inspection.json](rotation-inspection.json) retains the derived rows. [The diagnostic figure](rotation-consistency.png) visualizes this consistency check. No new calibration was run.
+These counts come from `rotation_series_calibration_summary.csv` and the captured benchmark's `load_truth(..., value_col='tz_deg')`; The archived audit bundle retains the derived rows and diagnostic figure. No new calibration was run.
 
 **Correct the existing benchmark narrative:** scans 269 and 276 at exactly −3° and +3° are failed-gate cases in this summary. They are not examples of the 35 accepted geometries being wrong. Corrected wider-bound runs and a 12-row reduced-distortion control summary already exist; this audit inspected those records but did not independently rerun them. A boundary warning, a low residual and an accurate tilt are three different observations.
 
 The current leave-one-out trend is estimated from other APEXA calibrations. It can detect deviations from the series but shares systematic errors with those fits. It also tests only one reported component. It cannot establish absolute distance, tilt, center or distortion accuracy. The README's description of this reference as being graded directly against the goniometer is stronger than the inspected evaluator supports.
 
-Small motor arrays were read from 30 exposures. `SMS/aero` varies within the 21-frame files; `WM/AeroX` is constant at about 0.3102 and detector `detY` is about 900. Scan start/end metadata is generally −11→10, with a 169→190 record. These do not, by themselves, identify an independent per-exposure detector-tilt truth. Resolve which device moved, its coordinate transform, offset, direction and uncertainty with acquisition records/instrument staff. Do not substitute the sample rotation coordinate for detector pose. See [rotation-motor-metadata.json](rotation-motor-metadata.json).
+Small motor arrays were read from 30 exposures. `SMS/aero` varies within the 21-frame files; `WM/AeroX` is constant at about 0.3102 and detector `detY` is about 900. Scan start/end metadata is generally −11→10, with a 169→190 record. These do not, by themselves, identify an independent per-exposure detector-tilt truth. Resolve which device moved, its coordinate transform, offset, direction and uncertainty with acquisition records/instrument staff. Do not substitute the sample rotation coordinate for detector pose. The archived audit bundle retains these metadata observations.
 
 **Reference hierarchy:** first, calibrated independent pose/readback/metrology with uncertainty; second, held-out diffraction constraints and independently implemented geometry checks; third, simulation with hidden truth and realistic nuisance effects; fourth, cross-fit series consistency as a secondary diagnostic. Agreement with another optimizer helps but may retain the same physics/convention errors. A synthetic generator using the same model as the fitter also needs mismatch tests to avoid an inverse crime.
 
@@ -80,7 +80,7 @@ Use a **fixed numerical engine/build** to compare orchestration. Put a second en
 
 For component ablations, separately vary: acceptance enforcement; capsule/retrieval knowledge; metadata clarification policy; deterministic workflow vs free agent loop; claim-to-artifact binding; and durable recovery under injected interruptions. Start with the few mechanisms central to the paper. The current A1→A2 change disables stage/capsule injection and changes metadata inference as well as enforcement, so it is not a single-mechanism contrast.
 
-**Current baseline correction:** [Pi's official site](https://pi.dev) now documents built-in MCP and Codemode, and installed Pi 1.2.0 includes `docs/mcp.md`. Remove the “Pi has no MCP” design assumption. Version probes found Claude Code 2.1.312 and OpenCode 1.18.23; [harness-versions.json](harness-versions.json) records executable paths/hashes. These version checks did not start model sessions. Test each adapter with a no-model fixture before launching paid trials.
+**Current baseline correction:** [Pi's official site](https://pi.dev) now documents built-in MCP and Codemode, and installed Pi 1.2.0 includes `docs/mcp.md`. Remove the “Pi has no MCP” design assumption. Version probes found Claude Code 2.1.312 and OpenCode 1.18.23; The archived audit bundle records executable paths/hashes; pin current versions before trials. These version checks did not start model sessions. Test each adapter with a no-model fixture before launching paid trials.
 
 Hold requested and actual model identity, reasoning settings, token limits, context limits, retries and stopping rules fixed where supported. The same gateway nickname does not prove equivalent requests: capture resolved model identifiers and normalized provider metadata, including transport differences. If a harness cannot support a common setting, report it as a constraint rather than claiming a controlled model-only comparison. Record cold/warm cache condition and separate queue time from compute time.
 
@@ -131,3 +131,34 @@ Use paired tasks and repeat stochastic trials, initially a small pilot to estima
 | Nov 16 / Nov 23 AoE | Paper / supplement | Check live conference requirements; no assumption of deadline extension |
 
 This schedule is conditional on available independent references and compute. If those are not ready, a rigorous calibration systems study or later venue is stronger than an unsupported two-task superiority claim. The current audit establishes engineering hypotheses and evaluation defects; it does not establish novelty or publishable effect sizes. A focused related-work review of scientific agents, tool-using agents, diffraction calibration and uncertainty-aware acceptance is still required.
+
+## Reference sources and historical evidence
+
+The following sources were reviewed on 28 October 2026. They describe capabilities,
+not measured harness superiority; recheck versions and publication policies before
+using them in a submission. This is not a systematic literature review.
+
+| Source | Used for |
+|---|---|
+| [CVPR 2027 call for papers](https://cvpr.thecvf.com/Conferences/2027/CallForPapers) | Agentic AI / AI for Science topic list; November 2026 enrollment/submission/supplement dates |
+| [NVIDIA NeMo migration guide](https://docs.nvidia.com/nemo/agent-toolkit/latest/resources/migration-guide.html#nemo-agent-toolkit-deprecation) | **NAT deprecated October 2026, EOL end of 2026**; documented successors and their responsibilities |
+| [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay), [NeMo Fabric](https://github.com/NVIDIA/NeMo-Fabric), [NeMo Helix](https://github.com/NVIDIA-NeMo/nemo-helix) | Successor projects linked by NVIDIA's migration guide; candidates for compatibility evaluation, not installed/benchmarked in this audit |
+| [Fabric adapter compatibility](https://github.com/NVIDIA/NeMo-Fabric/blob/main/adapters/README.md#configuration-compatibility) | Scope of normalized harness configuration; adapter differences must be checked before a controlled comparison |
+| [NAT profiling](https://docs.nvidia.com/nemo/agent-toolkit/latest/improve-workflows/profiler.html) and [observability](https://docs.nvidia.com/nemo/agent-toolkit/latest/run-workflows/observe/observe.html) | Earlier documented profiling/evaluation practices; superseded as a new-dependency recommendation by the deprecation notice |
+| [Google ADK evaluation](https://adk.dev/evaluate/) and [resumption](https://adk.dev/runtime/resume/) | Trajectory/output evaluation and durable resumption; explicitly documented at-least-once tool execution |
+| [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence) and [interrupts](https://docs.langchain.com/oss/python/langgraph/interrupts) | Checkpoint/thread and human-intervention semantics; compared with APEXA's real FF-HEDM implementation |
+| [OpenAI agents](https://developers.openai.com/api/docs/guides/agents) | Runtime/SDK/API responsibilities; official documentation |
+| [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview) | Agent loop, sessions, permissions, context management and MCP integration |
+| [Pi](https://pi.dev) | Current built-in MCP and Codemode; local installed 1.2.0 `docs/mcp.md` additionally confirms stdio/HTTP and configuration behavior |
+| [OpenCode official MCP documentation source](https://github.com/anomalyco/opencode/blob/dev/packages/web/src/content/docs/mcp-servers.mdx) | Local/remote MCP, configuration and OAuth. Hosted-docs fetch failed; the official repository source fetched successfully. |
+| [Bluesky QueueServer API](https://blueskyproject.io/bluesky-queueserver/re_manager_api.html) | Queue/environment state, plan permissions, locks and execution controls; not a replacement for hardware interlocks |
+| [Xopt](https://xopt.xopt.org/) | Existing optimizer machinery relevant to a future commissioned alignment executor |
+| [TomoPy phase-retrieval source](https://github.com/tomopy/tomopy/blob/master/source/tomopy/prep/phase.py) | Paganin filtering operates on projection intensity; used to assess APEXA's preprocessing order |
+
+
+The original audit, raw probes, figures and validation logs were removed from the
+maintained tree on 3 November 2026. They remain recoverable from Git at commit
+`6408e8a`, under `docs/audits/2026-10-28/`. A verified local backup was also saved
+under `~/.apexa/archives/repository-audits/` on the development workstation.
+These historical observations do not substitute for independent reference data
+or held-out evaluation results. See [repository layout](REPOSITORY_LAYOUT.md).

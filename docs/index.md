@@ -71,6 +71,8 @@ Features:
 
 ### For Developers & Advanced Users
 - **[Architecture](development/architecture.md)** - System architecture (agents, MCP servers, tool registry)
+- **[CVPR study plan](CVPR_STUDY_PLAN.md)** - Research protocol, reference-data requirements and harness comparison design
+- **[Repository layout](REPOSITORY_LAYOUT.md)** - Maintained source/docs versus local generated outputs
 - **[Agent Skills](https://github.com/AdvancedPhotonSource/APS-Beamline-Assistant/tree/main/.agents/skills)** - MIDAS workflow reference (calibration, integration, HEDM, visualization)
 
 ---

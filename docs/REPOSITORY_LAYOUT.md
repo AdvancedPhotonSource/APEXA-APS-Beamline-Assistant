@@ -9,7 +9,7 @@
 | `tests` | Automated Python tests and explicitly versioned fixtures. |
 | `scripts` | Operational and development commands. |
 | `docs` | User guides, deployment instructions and development reference. |
-| `docs/audits` | Dated findings and validation evidence; historical reports are not current deployment claims. |
+| `docs/CVPR_STUDY_PLAN.md` | Maintained publication protocol and source references; no evaluation results are implied. |
 | `benchmark` | Versioned benchmark definitions and qualified references; large generated datasets/results are ignored. |
 | `knowledge_base` | Retrieval implementation and shipped reference material/index. A locally changed Chroma database needs separate review before publication. |
 | `scratch` | Ignored local working files and archives. |
@@ -20,6 +20,20 @@ Source data, credentials, application packages, downloaded papers, generated
 viewers, runtime job directories and research manuscripts do not belong in a
 source commit. Explicit reference fixtures under `tests/` and `benchmark/` are
 the reviewed exception.
+
+Regression test **source** belongs in `tests/` and `frontend/tests/`: it keeps
+fixes verifiable on every platform. Pulling these files does not run them. Raw
+test logs, browser receipts, source snapshots and one-off audit writeups belong
+outside Git. A full `git clone`/`git pull` includes maintained tests and manuals;
+it is a source checkout, not a minimal runtime-only installer.
+
+The dated `docs/audits/` bundle and loose WebUI probe output were removed from
+the maintained tree on 3 November 2026, after a verified archive was saved under
+`~/.apexa/archives/repository-audits/` on the development workstation. They remain
+recoverable from commit `6408e8a`; Git history was not rewritten. The CVPR plan
+and its reference sources were consolidated in `docs/CVPR_STUDY_PLAN.md`.
+Current behavior and deployment limits belong in the maintained guides, with
+validation receipts in CI artifacts or an explicitly selected external directory.
 
 ## Cleanup on 30 October 2026
 

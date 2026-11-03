@@ -6,8 +6,8 @@ The [Canvas workspace guide](CANVAS_WORKSPACE.md) describes the completed tab
 behavior: automatic opening of new visuals, stable file/result identities,
 repeat-delivery suppression, preserved comparison selection, History favorites,
 keyboard navigation and session-safe delayed loads. Classic light and the shared
-APEXA SVG mark are included. See the dated [follow-up report](audits/2026-10-30/CANVAS_FOLLOWUP.md)
-for current verification; older findings below remain historical.
+APEXA SVG mark are included. See [quality gates](development/quality-gates.md)
+for maintained validation commands; older findings below remain historical.
 
 ## 2026-10-15 implementation follow-up
 

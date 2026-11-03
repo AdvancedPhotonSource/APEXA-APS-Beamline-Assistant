@@ -284,6 +284,10 @@ scratch-cal/
 /runinfo/
 /apexa_*_viewer.html
 
+# Historical one-off audit bundles are archived outside the maintained tree.
+/docs/audits/
+/docs/webui-audit-probes.json
+
 # Genesis demo deck: ~694 MB each (embedded media). Committing these would add
 # ~2 GB to history permanently, and git cannot forget it afterwards.
 tutorials-demo/2610-Genesis-Demo.pptx

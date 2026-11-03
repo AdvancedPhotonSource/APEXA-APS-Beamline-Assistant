@@ -1,6 +1,6 @@
 # Harness comparison: artifact-based development rig
 
-This directory contains adapters for APEXA, Claude Code, OpenCode and Pi, plus a rotation-calibration development benchmark. It does **not** currently establish a harness ranking, independent absolute geometry accuracy, or a tool-matched comparison. See the [audit study plan](../../docs/audits/2026-10-28/CVPR_STUDY_PLAN.md) for the publication protocol.
+This directory contains adapters for APEXA, Claude Code, OpenCode and Pi, plus a rotation-calibration development benchmark. It does **not** currently establish a harness ranking, independent absolute geometry accuracy, or a tool-matched comparison. See the [study plan](../../docs/CVPR_STUDY_PLAN.md) for the publication protocol.
 
 `run_comparison.py`'s historical 31 records remain **withdrawn**. The old rig leaked a reference file into the workspace, admitted a nominal filename answer through its tolerance, assumed APEXA-specific output names, and inferred execution from file modification times. Its provider/CLI adapters are reused; its legacy scoring is not a publication reference. This README supersedes earlier claims that these scripts isolate the harness by construction.
 

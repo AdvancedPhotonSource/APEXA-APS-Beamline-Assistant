@@ -14,4 +14,8 @@ The optional real-browser synthetic runner and its measured scope are documented
 
 The workflow controls have focused transport, controller and markup tests in the standard Node suite. They exercise captured gate/revision approval, duplicate clicks, lost-response retries with the same request ID, session isolation, active-only polling, reject-only gates and unresolved cancellation. With the same local Vite and external Playwright/browser setup described above, `node tests/browser-workflows.mjs` exercises the actual review buttons, a stale-window conflict, evidence links, session switching, chat-triggered refresh and API failure display. This runner intercepts API calls with synthetic responses; it does not validate a scientific engine or execute hardware.
 
-Both jobs use GitHub-hosted runners with read-only repository token permissions, disabled checkout credential persistence and pinned action commit IDs. They require no deployment secrets. No release, publication or beamline installation is performed. A first successful hosted run is still needed to validate the Linux installation and runner environment; local test results alone do not establish that hosted outcome.
+Both jobs use GitHub-hosted runners with read-only repository token permissions, disabled checkout credential persistence and pinned action commit IDs. They require no deployment secrets. No release, publication or beamline installation is performed. The Python matrix covers Linux, macOS and Windows. Check the hosted result for the exact release being deployed; local checks or a previous green commit do not establish that release's hosted outcome.
+
+Keep test source and reviewed fixtures in Git. Keep generated logs and receipts
+in CI artifacts (14-day retention above) or a chosen directory outside the
+checkout. Do not commit one-off validation bundles under `docs/`.

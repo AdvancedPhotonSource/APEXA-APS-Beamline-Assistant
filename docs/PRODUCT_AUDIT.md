@@ -79,7 +79,8 @@ workflow or continuity gap; P2 = subsequent capability/usability work.
 | A13 | P1 | First launch hid the canvas; refresh did not restore recorded artifacts. | **Fixed here:** split default, remembered choices, recorded-artifact restoration and regression coverage. |
 | A14 | P2 | Ideal ring overlays omit detector tilt/distortion/intensities; the sequence image is an SVG with no dedicated pan/zoom/ROI/pixel-inspector controls. | Expose the present model scope; add calibrated reciprocal-space inspection and interactive image tools. |
 
-Probe results: [webui-audit-probes.json](webui-audit-probes.json). No real
+Historical probe results remain recoverable as `docs/webui-audit-probes.json`
+at Git commit `6408e8a`; generated probe output is no longer shipped in the tree. No real
 reconstruction, refinement, model request or hardware operation was used by
 these probes. Their stub failures deliberately exercise HTTP result contracts.
 

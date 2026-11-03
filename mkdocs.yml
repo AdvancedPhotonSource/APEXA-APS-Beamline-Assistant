@@ -73,6 +73,7 @@ nav:
       - Runtime and Retrieval: OPERATIONS_AND_RETRIEVAL.md
       - APS Readiness: APS_READINESS.md
   - Setup & Deployment:
+      - LLM Connection: CONNECTION_SETUP.md
       - Beamline Setup: setup/beamline-setup.md
       - Deployment Guide: setup/deployment.md
       - Fix Calibration: setup/fix-calibration.md
@@ -80,6 +81,7 @@ nav:
       - Deployment Modes: DEPLOYMENT_MODES.md
       - Offline Deployment: OFFLINE_DEPLOYMENT.md
   - Development:
+      - CVPR Study Plan: CVPR_STUDY_PLAN.md
       - Repository Layout: REPOSITORY_LAYOUT.md
       - Quality Gates: development/quality-gates.md
       - Architecture: development/architecture.md

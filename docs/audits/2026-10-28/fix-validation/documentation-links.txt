@@ -1,1 +1,0 @@
-18 local Markdown link targets checked in 5 documents; all exist.
