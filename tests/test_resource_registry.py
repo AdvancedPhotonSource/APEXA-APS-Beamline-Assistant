@@ -225,3 +225,14 @@ def test_remote_scope_is_explicitly_controller_only():
     with C.reserve_worker(plan):
         assert C._reserved("unrelated-remote-host")["cpu"] > 0
         assert C._reserved("")["cpu"] == 0
+
+
+def test_approximate_boot_time_drift_cannot_release_a_live_owner(monkeypatch):
+    import apexa_resource_leases as leases
+    owner = leases.process_identity()
+    owner['boot'] = '1793664000.125'
+    monkeypatch.setattr(leases, 'boot_identity', lambda: '1793664000.250')
+    assert leases._alive(owner) is True
+    assert leases._alive({**owner, 'started': 0}) is False
+    monkeypatch.setattr(leases, 'boot_identity', lambda: 'new-kernel-boot-uuid')
+    assert leases._alive({**owner, 'boot': 'previous-kernel-boot-uuid'}) is False

@@ -261,7 +261,7 @@ def stage(exposure: Path, manuals: Optional[Path], dest: Path, *, knowledge_poli
             target = dest / "manuals" / path.resolve().relative_to(manual_root)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
-            staged.append(str(target.relative_to(dest)))
+            staged.append(target.relative_to(dest).as_posix())
         if len(staged) == 1:
             raise KnowledgePolicyError("The reviewed manifest approves no files under the requested manual directory")
     leaks = [str(p.relative_to(dest)) for p in dest.rglob("*")

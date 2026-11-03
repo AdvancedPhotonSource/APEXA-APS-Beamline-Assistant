@@ -584,7 +584,8 @@ def test_pi_current_capability_and_isolated_profile(tmp_path, monkeypatch):
     isolated = tmp_path / "trial" / "models.json"
     RC.ensure_pi_provider("https://example.invalid/v1", "secret-test-key", "model", config_path=isolated)
     assert global_config.read_text() == '{"existing":"untouched"}'
-    assert isolated.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        assert isolated.stat().st_mode & 0o777 == 0o600
     assert json.loads(isolated.read_text())["providers"]["argo"]["apiKey"] == "secret-test-key"
 
 

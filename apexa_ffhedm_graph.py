@@ -97,7 +97,7 @@ class FFHEDMState(TypedDict, total=False):
 # --------------------------------------------------------------------------- #
 # small helpers (pure, testable)
 # --------------------------------------------------------------------------- #
-_PATH_RE = re.compile(r"(/[^\s'\"]+|~[^\s'\"]*)")
+_PATH_RE = re.compile(r'''(?:(?P<quote>["'])(?P<quoted>(?:[A-Za-z]:[\\/]|\\\\|/|~)[^"']*)(?P=quote)|(?P<plain>(?:[A-Za-z]:[\\/]|\\\\|/|~)[^\s'\"]*))''')
 
 # Calibrant name signatures (powder detector calibration).
 _POWDER_HINTS = ("ceo2", "cerium", "lab6", "lanthanum", " si ", "silicon", "al2o3")
@@ -109,7 +109,7 @@ _INPLANE_HINTS = ("au_ff", "au-ff", "aussc", "gold_ff")
 def extract_working_dir(query: str) -> str:
     """Best-effort absolute/`~` path out of a free-text request. '' if none."""
     m = _PATH_RE.search(query or "")
-    return m.group(1) if m else ""
+    return (m.group("quoted") or m.group("plain")) if m else ""
 
 
 def _classify_entries(entries: List[str]) -> Dict[str, List[str]]:

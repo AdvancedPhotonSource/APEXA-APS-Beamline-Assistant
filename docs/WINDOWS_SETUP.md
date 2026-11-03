@@ -46,6 +46,15 @@ MIDAS and PVAccess extras are platform-excluded on native Windows. Installing
 `--extra midas` does not install that stack there. Use WSL2 or a qualified Linux
 worker. EPICS devices and physical alignment are not commissioned by installation.
 
+Use the typed filesystem tools for local inspection on native Windows; the
+default shell inspection allowlist uses trusted POSIX binaries. Windows paths
+and quoted paths with spaces are supported by the FF-HEDM workflow parser.
+Scientific replay rehashes bytes on Windows because creation time cannot prove
+that file contents are unchanged. Process ownership checks use PID plus process
+start time; an approximate boot-time difference cannot release a live owner.
+Protect benchmark workspaces with Windows account ACLs; POSIX `chmod` values
+do not establish a Windows access boundary.
+
 ## Verification
 
 Quality CI includes Ubuntu, macOS and Windows offline Python tests and a portable

@@ -267,3 +267,10 @@ def test_unavailable_or_interrupted_graph_never_restarts_tools(tmp_path):
         asyncio.run(wf.astep('yes', None, 'scan'))
     assert 'External jobs were not stopped' in asyncio.run(wf.astep('abandon workflow', None, 'scan'))
     assert not wf.is_active('scan')
+
+
+def test_extract_portable_working_directory_paths():
+    for path in (r'C:\Users\operator\data', 'D:/beamline/data', r'\\beamline\proposal\data', '/data/proposal', '~/data'):
+        assert extract_working_dir(f'run FF-HEDM in {path}') == path
+    for path in (r'C:\Users\operator\Beamline Data', '/data/Beamline Data'):
+        assert extract_working_dir(f'run FF-HEDM in "{path}" please') == path

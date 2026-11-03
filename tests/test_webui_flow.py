@@ -118,7 +118,8 @@ def test_explicit_remote_report_never_silently_reads_local_file(client, tmp_path
 
 def test_selected_canvas_context_is_bounded_metadata_only():
     context = web.selected_canvas_context({"path": CIF, "frame_index": 3, "preview": "x" * 1_000_000})
-    assert CIF in context and '"frame_index": 3' in context
+    payload = json.loads(context.split("\n")[-1])
+    assert payload["path"] == CIF and payload["frame_index"] == 3
     assert len(context) < 1000
 
 

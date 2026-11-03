@@ -55,8 +55,16 @@ def process_identity(pid=None):
 
 def _alive(identity):
     """True/False/None; inability to inspect a process is not proof it stopped."""
-    if identity["boot"] != boot_identity():
-        return False
+    current_boot = boot_identity()
+    if identity["boot"] != current_boot:
+        try:
+            # psutil boot_time is an estimate on Windows and can differ between
+            # processes. Only a changed kernel boot UUID establishes death here;
+            # fallback platforms must inspect PID and exact process start time.
+            if not all(math.isfinite(float(value)) for value in (identity["boot"], current_boot)):
+                return None
+        except (TypeError, ValueError):
+            return False
     try:
         process = psutil.Process(identity["pid"])
         if identity["started"] is None:

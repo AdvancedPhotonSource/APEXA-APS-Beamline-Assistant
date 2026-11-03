@@ -19,6 +19,7 @@ import time
 
 MANIFEST = ".apexa_done.json"
 _SCHEMA = 2
+_STAT_CACHE_RELIABLE = os.name != "nt"
 
 
 @functools.lru_cache(maxsize=4096)
@@ -35,7 +36,10 @@ def _fingerprint(path):
     if not p.is_file():
         raise ValueError(f"Not a regular file: {p}")
     before = p.stat()
-    digest = _file_digest(str(p), before.st_dev, before.st_ino, before.st_size,
+    # Windows st_ctime is creation time, not a content-change counter. Restoring
+    # mtime after an in-place write must not authorize replay of stale science.
+    digest_fn = _file_digest if _STAT_CACHE_RELIABLE else _file_digest.__wrapped__
+    digest = digest_fn(str(p), before.st_dev, before.st_ino, before.st_size,
                           before.st_mtime_ns, before.st_ctime_ns)
     after = p.stat()
     if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):

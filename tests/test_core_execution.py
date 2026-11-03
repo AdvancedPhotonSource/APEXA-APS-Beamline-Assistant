@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 
 import pytest
 
@@ -43,6 +44,7 @@ def test_operator_opt_in_allows_exploratory_analysis(monkeypatch):
 
 
 def test_local_invocation_is_argv_only_and_yields_to_other_calls(monkeypatch):
+    monkeypatch.setattr(core, "_read_only_argv", lambda _: [sys.executable, "-c", "print('fixture')"])
     active = peak = 0
     calls = []
     async def runner(command, **kwargs):
@@ -89,7 +91,8 @@ def test_remote_timeout_does_not_claim_remote_process_stopped(monkeypatch):
     assert result["requires_reconciliation"]
 
 
-def test_invalid_working_directory_is_not_silently_replaced(tmp_path):
+def test_invalid_working_directory_is_not_silently_replaced(tmp_path, monkeypatch):
+    monkeypatch.setattr(core, "_read_only_argv", lambda _: [sys.executable, "-c", "print('fixture')"])
     result = json.loads(asyncio.run(core.run_command("pwd", working_dir=str(tmp_path / "absent"))))
     assert not result["success"]
     assert "Working directory" in result["error"]
