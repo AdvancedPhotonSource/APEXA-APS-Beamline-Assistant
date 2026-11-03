@@ -5,16 +5,18 @@ from __future__ import annotations
 import argparse
 import getpass
 import io
+import json
 import os
 from pathlib import Path
 import shutil
+import runpy
 import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from dotenv import dotenv_values
+from dotenv import dotenv_values, load_dotenv
 from dotenv.parser import parse_stream
 
 import apexa_connection as connection
@@ -34,6 +36,96 @@ CHOICES = (
 # Old selections and unscoped credentials must not override a newly saved endpoint.
 OVERRIDES = (*connection._PINNED, "APEXA_LLM_KEYRING_ACCOUNT",
              "APEXA_LLM_API_KEY", "APEXA_LLM_TOKEN_CMD")
+
+# External clients receive analysis tools, not the motor/alignment servers.
+CLIENT_SERVERS = ("core", "midas", "gsas2", "tomo", "synthesis")
+CLIENT_ENV = {"APEXA_KB_PREWARM": "0", "APEXA_ALLOW_UNSANDBOXED_COMMANDS": "0"}
+
+
+def client_servers(repo: Path) -> dict[str, Path]:
+    """Use enabled analysis entries from servers.config; never scan arbitrary code."""
+    root = repo.resolve()
+    servers = {}
+    for line in (root / "servers.config").read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or ":" not in line:
+            continue
+        name, source = (part.strip() for part in line.split(":", 1))
+        if name not in CLIENT_SERVERS:
+            continue
+        path = (root / source).resolve()
+        if not path.is_relative_to(root) or not path.is_file() or path.suffix != ".py":
+            raise ValueError(f"Invalid configured analysis server: {name}")
+        if name in servers:
+            raise ValueError(f"Duplicate configured analysis server: {name}")
+        servers[name] = path
+    if not servers:
+        raise ValueError("No enabled analysis servers in servers.config")
+    return servers
+
+
+def client_config(client: str, repo: Path = ROOT) -> str:
+    """Print-only export: no credentials, client configuration writes or login."""
+    if client not in {"codex", "claude"}:
+        raise ValueError("MCP client must be codex or claude")
+    # Keep the venv executable path: resolving its symlink loses venv packages.
+    command = sys.executable
+    launcher = str(repo.resolve() / "scripts" / "setup_user.py")
+    servers = {"apexa-" + name: {"command": command,
+               "args": [launcher, "--serve-mcp", name], "env": dict(CLIENT_ENV)}
+               for name in client_servers(repo)}
+    if client == "claude":
+        return json.dumps({"mcpServers": {name: {"type": "stdio", **entry}
+                           for name, entry in servers.items()}}, indent=2, ensure_ascii=False)
+    blocks = []
+    for name, entry in servers.items():
+        blocks.append(f"[mcp_servers.{name}]\ncommand = {json.dumps(command, ensure_ascii=False)}\n"
+                      f"args = {json.dumps(entry['args'], ensure_ascii=False)}\n"
+                      "startup_timeout_sec = 60\n"
+                      f"[mcp_servers.{name}.env]\n" + "\n".join(
+                          f"{key} = {json.dumps(value)}" for key, value in CLIENT_ENV.items()))
+    return "\n\n".join(blocks) + "\n"
+
+
+def show_options() -> None:
+    print("APEXA WebUI / CLI: provider -> model ID -> API key or facility identity")
+    for name, label in CHOICES:
+        print(f"  {name}: {label}")
+    print("\nSubscription clients: official client login -> APEXA tools over local MCP")
+    print("  codex: ChatGPT subscription; log in later with codex login")
+    print("  claude: Claude subscription; log in later inside Claude Code with /login")
+    print("  Export configuration with --mcp-config codex or --mcp-config claude.")
+    print("  These clients have their own chat, approval and session UI; this does not")
+    print("  select a subscription model in the APEXA WebUI.")
+    print("No account needed to view/export options. See docs/CONNECTION_SETUP.md.")
+
+
+def subscription_instructions(client: str, repo: Path) -> None:
+    print(f"\n{client}: APEXA analysis tools in the official subscription client")
+    print("Configuration preview only. Nothing was saved and no login was started.")
+    if client == "codex":
+        print("Later: install Codex, run codex login (headless: codex login --device-auth),")
+        print("then merge this TOML into your Codex config.toml without replacing other settings.")
+    else:
+        print("Later: install Claude Code, sign in with /login, and save this JSON")
+        print("outside the repository, e.g. ~/.apexa/integrations/claude-mcp.json.")
+        print("Launch with: claude --mcp-config ~/.apexa/integrations/claude-mcp.json")
+    print("Use /mcp in that client to check tool registration. No APEXA WebUI/session integration.")
+    print("Engine readiness and client approvals still apply. See docs/CONNECTION_SETUP.md.\n")
+    print(client_config(client, repo))
+
+
+def serve_mcp(name: str, repo: Path = ROOT) -> None:
+    """Start one configured analysis MCP server in its own process and repo cwd."""
+    servers = client_servers(repo)
+    if name not in servers:
+        raise ValueError("Choose an enabled analysis server; hardware servers are not exported")
+    os.chdir(repo)
+    load_dotenv(repo / ".env")
+    # These apply to this exported analysis process, including when invoked by hand.
+    os.environ.update(CLIENT_ENV)
+    sys.argv = [str(servers[name])]
+    runpy.run_path(str(servers[name]), run_name="__main__")
 
 
 def env_text(original: str, updates: dict[str, str], removed=()) -> str:
@@ -74,8 +166,8 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
 
     print("\nAPEXA setup - LLM connection and optional analysis runtime")
     print("API keys and chat subscriptions are different credentials.")
-    print("ChatGPT/Claude subscription sign-in is not implemented in APEXA yet.")
-    print("Logging into Codex or Claude Code alone does not connect the APEXA WebUI.")
+    print("Subscription options export APEXA tools for Codex or Claude Code.")
+    print("Their login/chat stays in the official client; APEXA WebUI uses API connections.")
     print("See docs/CONNECTION_SETUP.md. Setup makes no model requests.\n")
 
     # Explicit process settings are deployment policy, not wizard-owned files.
@@ -97,11 +189,17 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
     current_preset = existing.get("APEXA_LLM_PRESET") or previous.get("preset") or "argo"
     for index, (_, label) in enumerate(CHOICES, 1):
         print(f"  {index}) {label}")
+    print("  10) ChatGPT subscription via Codex (MCP configuration preview)")
+    print("  11) Claude subscription via Claude Code (MCP configuration preview)")
     selected = prompt("Provider number or preset name", current_preset)
+    external = {"10": "codex", "11": "claude", "codex": "codex", "claude": "claude"}.get(selected)
+    if external:
+        subscription_instructions(external, repo)
+        return 0
     if selected.isdigit() and 1 <= int(selected) <= len(CHOICES):
         selected = CHOICES[int(selected) - 1][0]
     if selected not in dict(CHOICES):
-        raise ValueError("Choose one of the listed API/gateway/local presets. Subscription login is not available.")
+        raise ValueError("Choose a listed API/gateway/local preset, or codex/claude for external subscription clients.")
     endpoint = PRESETS[selected]()
     same = selected == current_preset
     base_url = endpoint.base_url
@@ -187,9 +285,22 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--connection-only", action="store_true", help="Preserve analysis and network settings without prompting")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--connection-only", action="store_true", help="Preserve analysis and network settings without prompting")
+    mode.add_argument("--options", action="store_true", help="List mechanisms without login or configuration changes")
+    mode.add_argument("--mcp-config", choices=("codex", "claude"), help="Print credential-free MCP config for an official subscription client")
+    mode.add_argument("--serve-mcp", choices=CLIENT_SERVERS, help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
+        if args.options:
+            show_options()
+            return 0
+        if args.mcp_config:
+            print(client_config(args.mcp_config))
+            return 0
+        if args.serve_mcp:
+            serve_mcp(args.serve_mcp)
+            return 0
         return run_setup(connection_only=args.connection_only)
     except (EOFError, KeyboardInterrupt):
         print("\nSetup interrupted.")

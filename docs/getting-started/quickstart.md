@@ -10,8 +10,11 @@
 
 The script asks for a provider first, then its exact model/deployment ID and
 credential. Only Argo requires an ANL username. API keys use the OS keyring;
-selected connection settings use `~/.apexa/connection.json`. Personal chat
-subscription login is not implemented. See [connection setup](../CONNECTION_SETUP.md).
+selected connection settings use `~/.apexa/connection.json`. Use `--options` to
+review mechanisms without an account, or `--mcp-config codex` / `--mcp-config claude`
+to prepare subscription-client tool access. Subscriptions run in those official
+clients; APEXA WebUI subscription login remains unimplemented. See
+[connection setup](../CONNECTION_SETUP.md).
 
 Optional prompts cover the network tier and native MIDAS paths; existing values
 are preserved. Use `./setup_user.sh --connection-only` to skip runtime prompts.

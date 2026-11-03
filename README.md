@@ -45,8 +45,13 @@ Use `./setup_user.sh` (Windows: `.\docs\setup_user.ps1`) or **gear → LLM conne
 for personal API accounts, institutional gateways or local models. Only Argo
 requires an ANL username. `./setup_user.sh --connection-only` preserves runtime
 settings without prompting. Restart after saving; the WebUI's optional connection
-check sends two small model requests. **Personal chat-subscription sign-in is
-not implemented**; API access has separate billing.
+check sends two small model requests. API access has separate billing.
+
+To choose an access mechanism later, use `./setup_user.sh --options`. For
+subscriptions, `--mcp-config codex` and `--mcp-config claude` export configuration
+for using APEXA analysis tools in those official clients. Sign in there when
+ready. **Subscription login inside APEXA's own WebUI is not implemented.** See
+the connection guide for this distinction and the manual setup steps.
 
 - [Connection setup](docs/CONNECTION_SETUP.md)
 - [Windows and WSL2 installation](docs/WINDOWS_SETUP.md)

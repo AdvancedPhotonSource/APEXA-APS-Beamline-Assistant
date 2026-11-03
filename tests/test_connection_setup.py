@@ -261,3 +261,83 @@ def test_env_updates_preserve_multiline_values_and_quote_special_paths():
     assert "APEXA_PROFILE" not in data
     assert data["SITE_VALUE"] == "first\nsecond"
     assert data["MIDAS_PATH"] == special
+
+
+@pytest.mark.parametrize("client", ["codex", "claude"])
+def test_subscription_config_exports_real_analysis_launchers_without_credentials(tmp_path, monkeypatch, client):
+    import sys
+    import tomllib
+    from scripts import setup_user as setup
+    monkeypatch.setenv("APEXA_LLM_API_KEY", "must-not-be-exported")
+    rendered = setup.client_config(client)
+    parsed = tomllib.loads(rendered) if client == "codex" else json.loads(rendered)
+    servers = parsed["mcp_servers" if client == "codex" else "mcpServers"]
+    assert set(servers) == {"apexa-" + name for name in setup.CLIENT_SERVERS}
+    assert "must-not-be-exported" not in rendered
+    for name, entry in servers.items():
+        assert entry["command"] == sys.executable
+        assert entry["args"] == [str(setup.ROOT / "scripts" / "setup_user.py"), "--serve-mcp", name.removeprefix("apexa-")]
+        assert entry["env"]["APEXA_ALLOW_UNSANDBOXED_COMMANDS"] == "0"
+    assert not C.settings_path().exists()
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("client,choice", [("codex", "10"), ("claude", "11")])
+def test_subscription_menu_is_preview_only(tmp_path, capsys, client, choice):
+    from scripts import setup_user as setup
+    (tmp_path / "servers.config").write_text("core:fixture.py\nmotor:motor.py\n")
+    (tmp_path / "fixture.py").write_text("# Fixture; must never execute during configuration\n")
+    result, prompts = wizard(tmp_path, [choice])
+    assert result == 0 and len(prompts) == 1
+    assert not (tmp_path / ".env").exists()
+    assert not C.settings_path().exists()
+    assert "Nothing was saved" in capsys.readouterr().out
+    assert set(setup.client_servers(tmp_path)) == {"core"}
+
+
+def test_mcp_launcher_uses_repo_cwd_and_refuses_unconfigured_servers(tmp_path, monkeypatch):
+    from scripts import setup_user as setup
+    import sys
+    (tmp_path / "servers.config").write_text("core:fixture.py\nmotor:motor.py\n")
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text("# Fixture\n")
+    monkeypatch.chdir(tmp_path.parent)
+    monkeypatch.setattr(sys, "argv", [])
+    monkeypatch.setenv("APEXA_ALLOW_UNSANDBOXED_COMMANDS", "1")
+    monkeypatch.setenv("APEXA_KB_PREWARM", "1")
+    calls = []
+    monkeypatch.setattr(setup.runpy, "run_path", lambda path, **kw: calls.append((path, os.getcwd(), kw)))
+    setup.serve_mcp("core", tmp_path)
+    assert calls == [(str(fixture.resolve()), str(tmp_path), {"run_name": "__main__"})]
+    assert os.environ["APEXA_ALLOW_UNSANDBOXED_COMMANDS"] == "0"
+    assert os.environ["APEXA_KB_PREWARM"] == "0"
+    with pytest.raises(ValueError, match="hardware"):
+        setup.serve_mcp("motor", tmp_path)
+    (tmp_path / "servers.config").write_text("core:../escape.py\n")
+    with pytest.raises(ValueError, match="Invalid configured"):
+        setup.client_config("codex", tmp_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("server,expected", [
+    ("core", "list_directory"), ("midas", "midas_auto_calibrate"),
+    ("gsas2", "powder_refine_submit"), ("tomo", "survey_tomo_stack"),
+    ("synthesis", "synth_inspect_series"),
+])
+async def test_exported_mcp_launcher_completes_real_offline_tool_discovery(tmp_path, monkeypatch, server, expected):
+    import asyncio
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    from scripts import setup_user as setup
+    monkeypatch.setenv("APEXA_NETWORK", "data")
+    monkeypatch.setenv("APEXA_TRACE_DB", str(tmp_path / "traces.sqlite3"))
+    entry = json.loads(setup.client_config("claude"))["mcpServers"]["apexa-" + server]
+    params = StdioServerParameters(command=entry["command"], args=entry["args"],
+        env={**os.environ, **entry["env"]}, cwd=str(tmp_path))
+    async with asyncio.timeout(45):
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+                assert any(tool.name == expected for tool in tools.tools)
+    assert not C.settings_path().exists()

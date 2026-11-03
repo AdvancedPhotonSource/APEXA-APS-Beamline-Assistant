@@ -7,6 +7,20 @@ From the repository root, run `./setup_user.sh` on Linux/macOS, or
 not `.setup_user.sh`. Both wrappers and the older `docs/setup_user.sh` entry point
 use the same Python wizard in `scripts/setup_user.py`.
 
+You can inspect every mechanism and prepare configuration before choosing an
+account. No login or credential is required:
+
+```bash
+./setup_user.sh --options
+./setup_user.sh --mcp-config codex   # Print TOML for Codex; does not install it
+./setup_user.sh --mcp-config claude  # Print JSON for Claude Code; does not install it
+```
+
+Windows accepts the same arguments after `.\docs\setup_user.ps1`. Interactive
+options **10** and **11** show the subscription-client instructions and preview.
+These export modes print to the terminal, without changing `.env`, the APEXA
+connection, any client configuration or login state.
+
 Choose the provider first: Argo, OpenAI API, Anthropic API, Gemini API, an
 institutional gateway, local Ollama, ALCF or AmSC. Enter the exact model/deployment
 ID your endpoint serves. Only Argo asks for an ANL username. API providers ask
@@ -32,18 +46,66 @@ is created. Restart APEXA after saving.
 
 ## Personal chat subscriptions
 
-**Subscription sign-in is not implemented in APEXA.** Neither setup script nor
-the WebUI can currently use a ChatGPT or Claude subscription. An API key is a
-separate credential with separate billing; do not paste a subscription password
-or a CLI session token into the API-key field.
+There are two different execution paths:
 
-The [official OpenAI authentication documentation](https://developers.openai.com/codex/auth/)
-supports ChatGPT subscription login through `codex login` (or
-`codex login --device-auth` on a headless host). This authenticates **Codex**;
-APEXA does not invoke that client and does not use its credentials. Supporting
-that path inside APEXA requires a dedicated integration, including streaming,
-tool approvals, cancellation and session handling. API configuration is not a
-substitute for that unfinished work.
+| Access | Mechanism | Where you interact |
+| --- | --- | --- |
+| Argo, institutional gateway, personal API account, local model | APEXA's provider transports; configured by the wizard or connection dialog | APEXA WebUI or CLI |
+| ChatGPT subscription | Official Codex login; Codex calls APEXA analysis servers over MCP | Codex CLI/IDE or another local Codex client sharing its configuration |
+| Claude subscription | Official Claude Code login; Claude Code calls APEXA analysis servers over MCP | Claude Code |
+
+**Subscription login inside APEXA's own WebUI is still unimplemented.** The MCP
+export provides a way to use APEXA's tools from an official subscription client.
+Its chat history, model selection and approvals remain in that client. It does
+not use APEXA's orchestrator, workflow review controls or Canvas/session store.
+An API key is a separate credential with separate billing; do not paste a
+subscription password or a CLI session token into the API-key field.
+
+### ChatGPT / Codex, when you are ready
+
+1. Install the official Codex client on the host where APEXA and its analysis
+   environment are available. Run `codex login`, or `codex login --device-auth`
+   on a headless host, and select your eligible ChatGPT account.
+2. Run `./setup_user.sh --mcp-config codex`. Merge the printed TOML into your
+   active Codex `config.toml` (default `~/.codex/config.toml`, or the configuration
+   under your existing `CODEX_HOME`). Keep its other settings; replace existing
+   `apexa-*` blocks instead of duplicating them. No credential is in the export.
+3. Start Codex and inspect `/mcp`. Only enable the analysis servers you need.
+   Use `codex login status` to confirm the selected authentication method.
+
+See the official [OpenAI authentication](https://developers.openai.com/codex/auth/)
+and [Codex MCP configuration](https://developers.openai.com/codex/mcp/) documentation.
+
+### Claude / Claude Code, when you are ready
+
+1. Install Claude Code on the APEXA host, start `claude`, and use `/login` to
+   choose an eligible Claude subscription account.
+2. Print `./setup_user.sh --mcp-config claude` and save the JSON as UTF-8 outside
+   the repository, for example `~/.apexa/integrations/claude-mcp.json`.
+3. Run `claude --mcp-config ~/.apexa/integrations/claude-mcp.json`, then inspect
+   `/mcp`. Use `/status` to confirm the account; existing API/cloud-provider
+   credentials can take precedence over a subscription login.
+
+See [Claude Code authentication](https://code.claude.com/docs/en/authentication)
+and [Claude Code MCP](https://code.claude.com/docs/en/mcp). Plan eligibility,
+workspace policy, networking and usage limits are controlled by the provider.
+
+### What the exported configuration does
+
+The export uses the current APEXA Python environment and checkout's absolute
+paths. Regenerate it on each target host or after moving the checkout. Each MCP
+process starts in the repository directory and reads its runtime `.env`, so
+native MIDAS/GSAS-II/TomoPy paths keep their existing meaning. It exports only
+enabled **core, MIDAS, GSAS-II, tomography and synthesis** entries from
+`servers.config`; motor and alignment servers are excluded. Knowledge-base
+prewarming and unrestricted shell execution are disabled for these processes.
+
+The client owns tool approval; tool-level APEXA checks remain, but this is not
+APEXA WebUI workflow approval or an OS sandbox. Scientific packages, reference
+qualification and data access still need their usual setup. The export does not
+start a server or execute a tool. Offline regression checks cover config parsing,
+the launcher and real MCP initialization/tool discovery; they do not establish
+successful paid/subscription inference or scientific acceptance.
 
 ## WebUI setup
 
