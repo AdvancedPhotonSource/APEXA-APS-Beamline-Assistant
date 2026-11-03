@@ -8,7 +8,8 @@ import pytest
 import apexa_subprocess as child_runtime
 
 
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX group semantics")
+if os.name != "posix":
+    pytest.skip("POSIX group semantics", allow_module_level=True)
 
 
 class ExitedChild:
