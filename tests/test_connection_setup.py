@@ -165,12 +165,13 @@ def wizard(tmp_path, answers, key="", **kwargs):
     return result, prompts
 
 
-@pytest.mark.parametrize("preset", ["openai", "anthropic", "gemini", "mag"])
-def test_wizard_selects_personal_provider_without_anl_and_preserves_routing(tmp_path, isolated, preset):
+@pytest.mark.parametrize("preset,selection", [("openai", ["2", "1"]), ("anthropic", ["2", "2"]),
+                                            ("gemini", ["2", "3"]), ("mag", ["1", "3"])])
+def test_wizard_selects_personal_provider_without_anl_and_preserves_routing(tmp_path, isolated, preset, selection):
     from dotenv import dotenv_values
     path = tmp_path / ".env"
     path.write_text("# Operator runtime\nAPEXA_MIDAS_BIN='/native/midas/bin'\nMIDAS_PATH='/native/MIDAS'\nMP_API_KEY='fixture-mp'\n")
-    result, prompts = wizard(tmp_path, [preset, "fixture-model", "y"], "fixture-secret", connection_only=True)
+    result, prompts = wizard(tmp_path, [*selection, "fixture-model", "y"], "fixture-secret", connection_only=True)
     assert result == 0
     assert not any("ANL username" in prompt for prompt in prompts)
     assert C.apply_saved()
@@ -223,14 +224,14 @@ def test_wizard_cancel_and_exported_override_do_not_save(tmp_path, monkeypatch):
 def test_wizard_argo_and_ollama_need_no_key(tmp_path):
     wizard(tmp_path, ["argo", "operator", "fixture-model", "y"], connection_only=True)
     assert C.load_saved()["config"]["username"] == "operator"
-    wizard(tmp_path, ["6", "local-model", "y"], connection_only=True)
+    wizard(tmp_path, ["3", "1", "local-model", "y"], connection_only=True)
     assert C.load_saved()["config"]["preset"] == "ollama"
     assert C.apply_saved()
     assert E.active_endpoint().resolve_key() == "ollama"
 
 
 def test_wizard_custom_gateway_and_headless_credential(tmp_path, monkeypatch):
-    wizard(tmp_path, ["5", "https://campus.example/v1", "deployment-id", "y"], connection_only=True)
+    wizard(tmp_path, ["1", "4", "https://campus.example/v1", "deployment-id", "y"], connection_only=True)
     assert C.apply_saved()
     monkeypatch.setenv("APEXA_LLM_API_KEY", "headless-secret")
     ep = E.active_endpoint()
@@ -282,17 +283,52 @@ def test_subscription_config_exports_real_analysis_launchers_without_credentials
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize("client,choice", [("codex", "10"), ("claude", "11")])
+@pytest.mark.parametrize("client,choice", [("codex", "1"), ("claude", "2")])
 def test_subscription_menu_is_preview_only(tmp_path, capsys, client, choice):
     from scripts import setup_user as setup
     (tmp_path / "servers.config").write_text("core:fixture.py\nmotor:motor.py\n")
     (tmp_path / "fixture.py").write_text("# Fixture; must never execute during configuration\n")
-    result, prompts = wizard(tmp_path, [choice])
-    assert result == 0 and len(prompts) == 1
+    result, prompts = wizard(tmp_path, ["tools", choice])
+    assert result == 0 and len(prompts) == 2
     assert not (tmp_path / ".env").exists()
     assert not C.settings_path().exists()
     assert "Nothing was saved" in capsys.readouterr().out
     assert set(setup.client_servers(tmp_path)) == {"core"}
+
+
+@pytest.mark.parametrize("cluster,model,preset,expected", [
+    ("1", "1", "alcf-sophia", "openai/gpt-oss-120b"),
+    ("1", "3", "alcf-sophia", "google/gemma-4-31B-it"),
+    ("2", "1", "alcf-minerva", "inkling-bf16"),
+    ("2", "new-deployment", "alcf-minerva", "new-deployment"),
+])
+def test_grouped_alcf_selects_cluster_and_its_model(tmp_path, cluster, model, preset, expected):
+    wizard(tmp_path, ["1", "2", cluster, model, "y"], connection_only=True)
+    saved = C.load_saved()["config"]
+    assert saved["preset"] == preset and saved["model"] == expected
+    assert saved["base_url"] == E.PRESETS[preset]().base_url
+    assert saved["username"] == ""
+
+
+@pytest.mark.parametrize("family,tag", [("1", "gemma-custom:latest"), ("2", "gpt-oss:20b"), ("3", "my-tool-model:latest")])
+def test_local_model_family_requires_installed_tag(tmp_path, family, tag):
+    wizard(tmp_path, ["3", "1", family, tag, "y"], connection_only=True)
+    assert C.load_saved()["config"]["model"] == tag
+    assert C.load_saved()["config"]["preset"] == "ollama"
+
+
+def test_saved_provider_remains_the_group_default(tmp_path):
+    C.save_config(config("anthropic"), "stored", None)
+    wizard(tmp_path, ["", "", "", "y"], connection_only=True)
+    assert C.load_saved()["config"]["preset"] == "anthropic"
+    assert C.load_saved()["config"]["model"] == "fixture-model"
+
+
+def test_changing_local_family_does_not_reuse_previous_family_tag(tmp_path):
+    C.save_config(config("ollama").model_copy(update={"model": "gpt-oss:20b"}), "", None)
+    with pytest.raises(ValueError):
+        wizard(tmp_path, ["3", "1", "1", ""], connection_only=True)
+    assert C.load_saved()["config"]["model"] == "gpt-oss:20b"
 
 
 def test_mcp_launcher_uses_repo_cwd_and_refuses_unconfigured_servers(tmp_path, monkeypatch):

@@ -42,7 +42,8 @@ uv run --no-sync python scripts/platform_smoke.py
 ```
 
 Use `./setup_user.sh` (Windows: `.\docs\setup_user.ps1`) or **gear → LLM connection**
-for personal API accounts, institutional gateways or local models. Only Argo
+to choose an access type, provider/host and model for personal API accounts,
+institutional gateways or local models. These all power the live WebUI. Only Argo
 requires an ANL username. `./setup_user.sh --connection-only` preserves runtime
 settings without prompting. Restart after saving; the WebUI's optional connection
 check sends two small model requests. API access has separate billing.

@@ -7,6 +7,7 @@ import { MessageBubble } from '../src/components/chat/MessageBubble'
 import { ResultsPanel } from '../src/components/viz/ResultsPanel'
 import { FileBrowser } from '../src/components/files/FileBrowser'
 import { WorkflowPanel } from '../src/components/workflows/WorkflowPanel'
+import { ConnectionDialog } from '../src/components/layout/ConnectionDialog'
 import { VizPanel } from '../src/components/viz/VizPanel'
 import { VizLauncher } from '../src/components/viz/VizLauncher'
 import { ToolCallBox } from '../src/components/cards/ToolCallBox'
@@ -41,6 +42,7 @@ window.apexaHarness = {
   renderMessage(message) { flushSync(() => root.render(<MessageBubble message={message} />)) },
   renderLauncher() { flushSync(() => root.render(<VizLauncher />)) },
   renderShell() { flushSync(() => root.render(<AppShell />)) },
+  renderConnection() { flushSync(() => root.render(<ConnectionDialog onClose={() => root.render(null)} />)) },
   renderToolCard(result = { tool: 'fixture_summary', status: 'completed', data: { mean: 1 } }) { flushSync(() => root.render(<ToolCallBox result={result} />)) },
   renderWorkflows(sessionId = 'session-a') {
     useChatStore.setState({ currentSessionId: sessionId, messages: [], _pendingToolResults: [] })

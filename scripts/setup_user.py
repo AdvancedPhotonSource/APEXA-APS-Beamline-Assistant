@@ -20,19 +20,24 @@ from dotenv import dotenv_values, load_dotenv
 from dotenv.parser import parse_stream
 
 import apexa_connection as connection
-from apexa_llm_endpoints import PRESETS, EndpointRejected
+from apexa_llm_endpoints import ALCF_CANDIDATES, PRESETS, EndpointRejected
 
-CHOICES = (
-    ("argo", "ANL Argo (ANL username, internal network/VPN)"),
-    ("openai", "OpenAI API (separately billed API key)"),
-    ("anthropic", "Anthropic API (separately billed API key)"),
-    ("gemini", "Gemini API (API key)"),
-    ("custom", "University/facility gateway (OpenAI-compatible HTTPS endpoint)"),
-    ("ollama", "Local Ollama (tool-capable installed model, no API key)"),
-    ("alcf-sophia", "ALCF Sophia (existing authorized Globus login/helper)"),
-    ("alcf-minerva", "ALCF Minerva (existing authorized Globus login/helper)"),
-    ("mag", "AmSC Model Access Gateway (project token)"),
+ACCESS_GROUPS = (
+    ("facility", "University / facility access"),
+    ("api", "Personal API key (separately billed)"),
+    ("local", "Local / self-hosted models"),
 )
+PROVIDERS = {
+    "facility": (("argo", "ANL Argo"), ("alcf", "ALCF Inference Service"),
+                 ("mag", "AmSC Model Access Gateway"), ("custom", "Other university / facility gateway")),
+    "api": (("openai", "OpenAI"), ("anthropic", "Anthropic"), ("gemini", "Google Gemini")),
+    "local": (("ollama", "Ollama on this machine"), ("custom", "Other OpenAI-compatible model server")),
+    "tools": (("codex", "Codex (ChatGPT subscription)"), ("claude", "Claude Code (Claude subscription)")),
+}
+ALCF_CLUSTERS = (("alcf-sophia", "Sophia"), ("alcf-minerva", "Minerva"))
+# Keep named preset shortcuts for experienced users; numbers belong to each menu.
+PRESET_SHORTCUTS = {name for group in PROVIDERS.values() for name, _ in group} - {"alcf"}
+PRESET_SHORTCUTS.update(name for name, _ in ALCF_CLUSTERS)
 # Old selections and unscoped credentials must not override a newly saved endpoint.
 OVERRIDES = (*connection._PINNED, "APEXA_LLM_KEYRING_ACCOUNT",
              "APEXA_LLM_API_KEY", "APEXA_LLM_TOKEN_CMD")
@@ -88,16 +93,74 @@ def client_config(client: str, repo: Path = ROOT) -> str:
 
 
 def show_options() -> None:
-    print("APEXA WebUI / CLI: provider -> model ID -> API key or facility identity")
-    for name, label in CHOICES:
-        print(f"  {name}: {label}")
-    print("\nSubscription clients: official client login -> APEXA tools over local MCP")
-    print("  codex: ChatGPT subscription; log in later with codex login")
-    print("  claude: Claude subscription; log in later inside Claude Code with /login")
-    print("  Export configuration with --mcp-config codex or --mcp-config claude.")
-    print("  These clients have their own chat, approval and session UI; this does not")
-    print("  select a subscription model in the APEXA WebUI.")
+    print("APEXA WebUI / CLI: access type -> provider or host -> model -> credential")
+    for index, (group, label) in enumerate(ACCESS_GROUPS, 1):
+        print(f"  {index}) {label}")
+        print("     " + " | ".join(label for _, label in PROVIDERS[group]))
+    print("\nALCF: choose Sophia or Minerva, then a model available on that cluster.")
+    print("  Recorded options include GPT-OSS/Gemma on Sophia and Inkling on Minerva.")
+    print("Ollama: choose Gemma, GPT-OSS or another family, then its installed model tag.")
+    print("  Setup does not install models or check current model availability.")
+    print("\nSeparate tool integration (type tools in setup):")
+    print("  Codex or Claude Code uses its own login/chat and calls APEXA tools via MCP.")
+    print("  This does not sign a subscription into the APEXA WebUI.")
+    print("  Export with --mcp-config codex or --mcp-config claude; log in there later.")
     print("No account needed to view/export options. See docs/CONNECTION_SETUP.md.")
+
+
+def menu_value(value: str, choices) -> str:
+    if value.isdigit() and 1 <= int(value) <= len(choices):
+        return choices[int(value) - 1][0]
+    if value in dict(choices):
+        return value
+    raise ValueError("Choose a listed number or name: " + ", ".join(name for name, _ in choices))
+
+
+def choose_access(prompt, current_preset: str) -> str:
+    for index, (_, label) in enumerate(ACCESS_GROUPS, 1):
+        print(f"  {index}) {label}")
+    print("\n  tools) Use APEXA tools in Codex / Claude Code (separate app, not APEXA chat)")
+    default = "api" if current_preset in dict(PROVIDERS["api"]) else ("local" if current_preset == "ollama" else "facility")
+    value = prompt("Access type", default)
+    if value in PRESET_SHORTCUTS:
+        return value
+    group = value if value == "tools" else menu_value(value, ACCESS_GROUPS)
+    if group == "tools":
+        print("\nThis previews tool configuration for another app. Its login, chat and")
+        print("approvals stay there; it does not connect a subscription to APEXA's WebUI.")
+    for index, (_, label) in enumerate(PROVIDERS[group], 1):
+        print(f"  {index}) {label}")
+    default_provider = "alcf" if current_preset.startswith("alcf-") else current_preset
+    if default_provider not in dict(PROVIDERS[group]):
+        default_provider = PROVIDERS[group][0][0]
+    selected = menu_value(prompt("Which app?" if group == "tools" else "Which provider / host?", default_provider), PROVIDERS[group])
+    if selected == "alcf":
+        print("\nALCF runs the model on facility servers; it is not a local model install.")
+        for index, (_, label) in enumerate(ALCF_CLUSTERS, 1):
+            print(f"  {index}) {label}")
+        selected = menu_value(prompt("ALCF cluster", current_preset if current_preset.startswith("alcf-") else "alcf-sophia"), ALCF_CLUSTERS)
+    return selected
+
+
+def choose_model(prompt, preset: str, default: str) -> str:
+    if preset.startswith("alcf-"):
+        candidates = tuple((item["model"], item["model"]) for item in ALCF_CANDIDATES if item["preset"] == preset)
+        print("\nRecorded ALCF model IDs (availability and tool support must be verified):")
+        for index, (model, _) in enumerate(candidates, 1):
+            print(f"  {index}) {model}")
+        value = prompt("Model number or exact model ID", default)
+        return menu_value(value, candidates) if value.isdigit() else value
+    if preset == "ollama":
+        print("\nLocal model family (run ollama list to see exact installed tags):")
+        print("  1) Gemma\n  2) GPT-OSS\n  3) Other installed model")
+        print("  These are family choices; setup does not download models or verify tool support.")
+        value = prompt("Family number, or exact installed model tag", default)
+        if value.isdigit():
+            family = menu_value(value, (("Gemma", ""), ("GPT-OSS", ""), ("model", "")))
+            previous = default if family == "model" or default.lower().startswith(family.lower()) else ""
+            return prompt(f"Exact installed {family} tag", previous)
+        return value
+    return prompt("Exact model/deployment ID (must support tool calls)", default)
 
 
 def subscription_instructions(client: str, repo: Path) -> None:
@@ -165,9 +228,6 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
         return value or default
 
     print("\nAPEXA setup - LLM connection and optional analysis runtime")
-    print("API keys and chat subscriptions are different credentials.")
-    print("Subscription options export APEXA tools for Codex or Claude Code.")
-    print("Their login/chat stays in the official client; APEXA WebUI uses API connections.")
     print("See docs/CONNECTION_SETUP.md. Setup makes no model requests.\n")
 
     # Explicit process settings are deployment policy, not wizard-owned files.
@@ -187,19 +247,10 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
     saved = connection.load_saved()
     previous = saved["config"] if saved else {}
     current_preset = existing.get("APEXA_LLM_PRESET") or previous.get("preset") or "argo"
-    for index, (_, label) in enumerate(CHOICES, 1):
-        print(f"  {index}) {label}")
-    print("  10) ChatGPT subscription via Codex (MCP configuration preview)")
-    print("  11) Claude subscription via Claude Code (MCP configuration preview)")
-    selected = prompt("Provider number or preset name", current_preset)
-    external = {"10": "codex", "11": "claude", "codex": "codex", "claude": "claude"}.get(selected)
-    if external:
-        subscription_instructions(external, repo)
+    selected = choose_access(prompt, current_preset)
+    if selected in {"codex", "claude"}:
+        subscription_instructions(selected, repo)
         return 0
-    if selected.isdigit() and 1 <= int(selected) <= len(CHOICES):
-        selected = CHOICES[int(selected) - 1][0]
-    if selected not in dict(CHOICES):
-        raise ValueError("Choose a listed API/gateway/local preset, or codex/claude for external subscription clients.")
     endpoint = PRESETS[selected]()
     same = selected == current_preset
     base_url = endpoint.base_url
@@ -214,7 +265,7 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
     default_model = old_model if same else ""
     if selected == "argo" and not default_model:
         default_model = "claudeopus5"
-    model = prompt("Exact model/deployment ID (must support tool calls)", default_model)
+    model = choose_model(prompt, selected, default_model)
     config = connection.ConnectionConfig(preset=selected, base_url=base_url, model=model, username=username)
 
     api_key = ""

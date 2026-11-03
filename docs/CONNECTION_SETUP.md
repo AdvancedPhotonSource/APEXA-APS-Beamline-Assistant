@@ -16,14 +16,31 @@ account. No login or credential is required:
 ./setup_user.sh --mcp-config claude  # Print JSON for Claude Code; does not install it
 ```
 
-Windows accepts the same arguments after `.\docs\setup_user.ps1`. Interactive
-options **10** and **11** show the subscription-client instructions and preview.
-These export modes print to the terminal, without changing `.env`, the APEXA
-connection, any client configuration or login state.
+Windows accepts the same arguments after `.\docs\setup_user.ps1`. The setup menu
+groups connections by access type, then asks for the provider or host:
 
-Choose the provider first: Argo, OpenAI API, Anthropic API, Gemini API, an
-institutional gateway, local Ollama, ALCF or AmSC. Enter the exact model/deployment
-ID your endpoint serves. Only Argo asks for an ANL username. API providers ask
+| Access type | Next choices | Works in APEXA WebUI? |
+| --- | --- | --- |
+| 1. University / facility | ANL Argo, ALCF, AmSC, other university/facility gateway | Yes |
+| 2. Personal API key | OpenAI, Anthropic, Google Gemini | Yes |
+| 3. Local / self-hosted models | Ollama on this machine, other compatible model server | Yes |
+| Separate `tools` option | Codex or Claude Code tool-configuration preview | Uses that app's chat, not APEXA WebUI |
+
+For ALCF, first choose **Sophia or Minerva**, then a model from the recorded list
+or enter an exact deployment ID. Recorded examples include GPT-OSS and Gemma on
+Sophia, and Inkling on Minerva. ALCF is the hosting service, not a model family.
+For Ollama, choose **Gemma, GPT-OSS or another installed model**, then enter the
+exact local model tag (see `ollama list`). A family name does not install a model
+or establish that its build supports tool calls. Setup does not download models,
+query the current provider catalog or run inference; verify availability later.
+You can still type a preset name directly as a shortcut.
+
+The `tools` option replaces the old flat menu's options 10/11 and explicitly
+describes the separate client interface. Both that preview and `--mcp-config`
+only print configuration; they do not change `.env`, the APEXA connection, any
+client configuration or login state.
+
+Enter the exact model/deployment ID your endpoint serves. Only Argo asks for an ANL username. API providers ask
 for a hidden key; setup stores it in the OS keyring and saves the selected
 connection to `~/.apexa/connection.json`, just like the WebUI. Setup makes no
 model requests and does not establish that the chosen model supports tool calls.
@@ -109,8 +126,10 @@ successful paid/subscription inference or scientific acceptance.
 
 ## WebUI setup
 
-Open **gear → LLM connection** in the compact WebUI header. Select a provider,
-enter its exact model/deployment ID, and choose **Verify connection**. This sends
+Open **gear → LLM connection** in the compact WebUI header. Choose **Access type**,
+then **Provider / host**, enter its exact model/deployment ID, and choose
+**Verify connection**. Facility access (including ALCF), personal APIs and local
+models all use APEXA's live WebUI after configuration and restart. Verification sends
 two small synthetic requests to that endpoint and may consume API credits. It
 checks a structured tool call and matching tool result without sending any
 conversation, detector data or scientific files.

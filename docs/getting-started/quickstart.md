@@ -8,8 +8,10 @@
 ./setup_user.sh
 ```
 
-The script asks for a provider first, then its exact model/deployment ID and
-credential. Only Argo requires an ANL username. API keys use the OS keyring;
+The script asks for an access type (facility, personal API key, or local/self-hosted),
+then its provider/host, model and credential. ALCF asks for the cluster and model;
+Ollama asks for the model family and installed tag. Only Argo requires an ANL
+username. API keys use the OS keyring;
 selected connection settings use `~/.apexa/connection.json`. Use `--options` to
 review mechanisms without an account, or `--mcp-config codex` / `--mcp-config claude`
 to prepare subscription-client tool access. Subscriptions run in those official
