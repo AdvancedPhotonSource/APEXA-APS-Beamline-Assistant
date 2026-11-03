@@ -153,6 +153,19 @@ def test_api_never_returns_submitted_secrets():
         assert "private-key" not in client.get("/api/connection").text
 
 
+def test_api_read_failure_returns_actionable_json_without_private_paths(monkeypatch):
+    def unreadable():
+        raise PermissionError("private settings path")
+    monkeypatch.setattr(C, "describe", unreadable)
+    app = FastAPI()
+    app.include_router(router)
+    with TestClient(app) as client:
+        response = client.get("/api/connection")
+    assert response.status_code == 503
+    assert "Check access to APEXA_HOME" in response.json()["detail"]
+    assert "private settings path" not in response.text
+
+
 def wizard(tmp_path, answers, key="", **kwargs):
     from scripts.setup_user import run_setup
     values = iter(answers)

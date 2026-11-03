@@ -26,20 +26,28 @@ export function ConnectionDialog({ onClose }: { onClose: () => void }) {
   const [access, setAccess] = useState('argo')
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   useEffect(() => {
     const trigger = document.activeElement
     dialog.current?.showModal()
+    return () => { if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus() }
+  }, [])
+  useEffect(() => {
+    const controller = new AbortController()
     let live = true
-    getConnection().then(data => {
+    getConnection(controller.signal).then(data => {
       if (live) {
         const current = data.saved?.config ?? data.active
         setSettings(data); setConfig(current); setAccess(accessFor(current.preset)); setError(data.error ?? '')
       }
-    }).catch(() => { if (live) setError('Could not load connection settings. Check the server and reopen this dialog.') })
-    return () => { live = false; if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus() }
-  }, [])
+    }).catch(e => {
+      if (live) setError(e instanceof Error ? e.message : 'Could not load connection settings. Check the APEXA server and retry.')
+    }).finally(() => { if (live) setLoading(false) })
+    return () => { live = false; controller.abort() }
+  }, [loadAttempt])
   function update(next: Partial<ConnectionConfig>) {
     if (config) setConfig({ ...config, ...next })
     setMessage(''); setError('')
@@ -75,8 +83,13 @@ export function ConnectionDialog({ onClose }: { onClose: () => void }) {
     className="m-auto w-[calc(100%_-_2rem)] max-w-lg max-h-[calc(100dvh_-_2rem)] overflow-y-auto rounded-xl border border-[var(--apexa-border)] bg-[var(--apexa-surface)] p-4 text-[var(--apexa-text)] shadow-2xl backdrop:bg-black/50">
     <div className="mb-3 flex items-center justify-between"><h2 id={title} className="text-sm font-semibold">LLM connection</h2>
       <button type="button" onClick={onClose} disabled={busy} aria-label="Close connection settings">×</button></div>
-    <p className="mb-3 text-xs text-[var(--apexa-text-muted)]">ANL Argo is the default connection. You can also choose a personal API, local model or another facility.</p>
+    {loading && <p role="status" className="text-xs text-[var(--apexa-text-muted)]">Loading connection settings…</p>}
+    {error && <p role="alert" className="mb-3 text-xs text-red-500">{error}</p>}
+    {!loading && !settings && <button type="button" className="apexa-compact-button" onClick={() => {
+      setError(''); setLoading(true); setLoadAttempt(attempt => attempt + 1)
+    }}>Retry loading settings</button>}
     {config && settings && <form className="space-y-3" onSubmit={e => { e.preventDefault(); void act(true) }}>
+      <p className="text-xs text-[var(--apexa-text-muted)]">ANL Argo is the default connection. You can also choose a personal API, local model or another facility.</p>
       <label className="block text-xs">Access type<select aria-label="Access type" className={input} value={access} disabled={busy} onChange={e => {
         const group = accessGroups.find(g => g.id === e.target.value)
         if (!group) return
@@ -106,11 +119,10 @@ export function ConnectionDialog({ onClose }: { onClose: () => void }) {
       <div className="flex justify-end gap-2"><button type="button" className="apexa-compact-button" disabled={busy || !config.model} onClick={() => void act(false)}>Verify connection</button>
         <button type="submit" className="apexa-compact-button" disabled={busy}>Save for restart</button></div>
     </form>}
-    <details className="mt-3 text-xs text-[var(--apexa-text-muted)]"><summary>What about ChatGPT / Claude subscriptions?</summary>
+    {settings && <details className="mt-3 text-xs text-[var(--apexa-text-muted)]"><summary>What about ChatGPT / Claude subscriptions?</summary>
       <p className="mt-2">Subscription login is not available in APEXA’s WebUI. The separate tool integration lets Codex or Claude Code call APEXA analysis tools from their own chat interface. API accounts have separate billing.</p>
-    </details>
+    </details>}
     {busy && <p role="status" className="mt-3 text-xs">Working…</p>}
     {message && <p role="status" className="mt-3 text-xs">{message}</p>}
-    {error && <p role="alert" className="mt-3 text-xs text-red-500">{error}</p>}
   </dialog>
 }

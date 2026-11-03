@@ -35,7 +35,10 @@ async def read_request(request):
 
 @router.get("")
 async def get_connection():
-    return await asyncio.to_thread(connection.describe)
+    try:
+        return await asyncio.to_thread(connection.describe)
+    except OSError:
+        raise HTTPException(503, "Could not read connection settings on this server. Check access to APEXA_HOME.") from None
 
 
 @router.put("")

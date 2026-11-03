@@ -96,3 +96,15 @@ def test_missing_mark_is_a_404_not_an_html_fallback(public_client, monkeypatch, 
     response = public_client.get("/apexa-mark.svg")
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("application/json")
+
+
+def test_production_app_serves_connection_settings_without_starting_models(public_client, monkeypatch, tmp_path):
+    monkeypatch.setenv("APEXA_HOME", str(tmp_path))
+    response = public_client.get("/api/connection")
+    assert response.status_code == 200
+    settings = response.json()
+    assert settings["saved"] is None
+    assert {"preset", "base_url", "model", "username"} <= settings["active"].keys()
+    argo = next(preset for preset in settings["presets"] if preset["id"] == "argo")
+    assert "gpt56sol" in argo["model_suggestions"]
+    assert not (tmp_path / "connection.json").exists()

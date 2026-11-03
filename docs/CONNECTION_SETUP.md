@@ -146,8 +146,20 @@ successful paid/subscription inference or scientific acceptance.
 
 ## WebUI setup
 
+After updating APEXA with `git pull`, **restart the Python web server**, then
+refresh the browser. An older running server can serve the newly updated WebUI
+files while still lacking their API routes. A connection-settings **HTTP 404**
+means the running server does not expose `/api/connection`; it is not an Argo
+authentication failure. For a terminal-launched server, stop it with Ctrl+C and
+run `./start_web_viewer.sh` again (`.\start_web_viewer.bat` on Windows). For a
+managed deployment, restart the APEXA service through its supervisor.
+
+The connection dialog shows loading progress and a specific error if settings
+cannot be fetched. After correcting the server, choose **Retry loading settings**;
+opening the dialog and retrying only read settings and make no model requests.
+
 Open **gear → LLM connection** in the compact WebUI header. Choose **Access type**,
-then **Provider / host**, enter its exact model/deployment ID, and choose
+then **Provider / host** for non-Argo access, enter its exact model/deployment ID, and choose
 **Verify connection**. Facility access (including ALCF), personal APIs and local
 models all use APEXA's live WebUI after configuration and restart. Verification sends
 two small synthetic requests to that endpoint and may consume API credits. It
