@@ -4,7 +4,7 @@ import { getConnection, saveConnection } from '../src/api/connection.ts'
 
 const config = { preset: 'argo', base_url: 'https://argo.example/v1', model: 'fixture-model', username: 'operator' }
 const settings = { active: config, saved: null, environment_override: false, restart_required: false, error: null,
-  presets: [{ id: 'argo', base_url: config.base_url, wire: 'openai', model_suggestions: ['fixture-model'] }] }
+  presets: [{ id: 'argo', base_url: config.base_url, wire: 'openai', model_suggestions: ['fixture-model'], model_choices: [] }] }
 
 test('a running server without the new settings route requires a server restart, not a browser refresh', async context => {
   const fetch = context.mock.method(globalThis, 'fetch', async () => new Response('{"detail":"Not Found"}', { status: 404 }))
@@ -28,7 +28,8 @@ test('successful HTML and incomplete JSON are rejected before rendering a broken
   const fetch = context.mock.method(globalThis, 'fetch', async () => new Response('<html>Application shell</html>'))
   await assert.rejects(getConnection(), /unreadable.*HTTP 200/)
   for (const value of [null, {}, { ...settings, active: null }, { ...settings, presets: [] },
-    { ...settings, presets: [null] }, { ...settings, saved: { revision: '1' } }]) {
+    { ...settings, presets: [null] }, { ...settings, saved: { revision: '1' } },
+    { ...settings, presets: [{ ...settings.presets[0], model_choices: [{ id: 'fixture', label: null }] }] }]) {
     fetch.mock.mockImplementation(async () => Response.json(value))
     await assert.rejects(getConnection(), /incompatible connection settings/)
   }

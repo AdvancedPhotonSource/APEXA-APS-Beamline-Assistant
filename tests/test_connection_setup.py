@@ -198,39 +198,61 @@ def test_wizard_selects_personal_provider_without_anl_and_preserves_routing(tmp_
         assert path.stat().st_mode & 0o777 == 0o600
 
 
-@pytest.mark.parametrize("selection,preset,label", [
-    ("1", "openai", "OpenAI"), ("2", "anthropic", "Anthropic"), ("3", "gemini", "Google Gemini"),
+@pytest.mark.parametrize("selection,preset,label,model", [
+    ("1", "openai", "OpenAI", "gpt-6.1-sol"),
+    ("2", "anthropic", "Anthropic", "claude-sonnet-5-5"),
+    ("3", "gemini", "Google Gemini", "gemini-3.8-flash"),
 ])
-def test_first_api_provider_is_explicit_and_blank_model_reprompts(tmp_path, capsys, selection, preset, label):
-    _, prompts = wizard(tmp_path, ["2", "", selection, "", "fixture-api-model", "yes"],
+def test_first_api_provider_is_explicit_and_model_can_be_chosen_without_an_id(tmp_path, capsys, selection, preset, label, model):
+    _, prompts = wizard(tmp_path, ["2", "", selection, "", "yes"],
                         "fixture-key", connection_only=True)
     assert prompts[1] == prompts[2] == "  Which provider / host?: "
-    assert prompts[3] == prompts[4] == f"  {label} model ID: "
+    assert prompts[3] == "  Model choice [1]: "
     saved = C.load_saved()["config"]
-    assert saved["preset"] == preset and saved["model"] == "fixture-api-model"
+    assert saved["preset"] == preset and saved["model"] == model
     output = capsys.readouterr().out
     assert f"Selected provider: {label}" in output
-    assert "A model ID is required" in output
-    assert "API key is requested separately" in output
+    assert f"{label} models:" in output
+    assert "Paste your API key at the next prompt" in output
     assert "validation error" not in output
 
 
-def test_anthropic_model_prompt_precedes_separate_hidden_key_and_rejects_misplaced_key(tmp_path, isolated, capsys):
+@pytest.mark.parametrize("preset,number,expected", [
+    ("openai", "2", "gpt-6-astra"),
+    ("anthropic", "2", "claude-haiku-5-5"),
+    ("anthropic", "3", "claude-opus-5-5"),
+    ("gemini", "2", "gemini-3.5-flash-lite"),
+])
+def test_named_model_number_maps_to_provider_api_id(tmp_path, preset, number, expected):
+    wizard(tmp_path, [preset, number, "yes"], "fixture-key", connection_only=True)
+    assert C.load_saved()["config"]["model"] == expected
+
+
+def test_invalid_model_number_retries_and_saved_choice_is_kept(tmp_path, capsys):
+    C.save_config(config("anthropic").model_copy(update={"model": "claude-opus-5-5"}), "stored", None)
+    _, prompts = wizard(tmp_path, ["", "", "99", "", "yes"], connection_only=True)
+    assert prompts[2] == prompts[3] == "  Model choice [3]: "
+    assert C.load_saved()["config"]["model"] == "claude-opus-5-5"
+    assert "Choose a model number from 1 to 4" in capsys.readouterr().out
+
+
+def test_anthropic_key_prompt_follows_provider_before_model_selection(tmp_path, isolated, capsys):
     from scripts.setup_user import run_setup
-    answers = iter(["2", "2", "", "sk-ant-misplaced-credential", "fixture-api-model", "yes"])
+    answers = iter(["2", "2", "4", "", "sk-ant-misplaced-credential", "fixture-api-model", "yes"])
     prompts, key_calls = [], []
     def ask(prompt):
         prompts.append(prompt)
         return next(answers)
     def secret(prompt):
-        assert prompts[-1] == "  Anthropic model ID: "
+        assert len(prompts) == 2 and prompts[-1] == "  Which provider / host?: "
         key_calls.append(prompt)
         return "correct-hidden-key"
     assert run_setup(tmp_path, connection_only=True, ask=ask, secret=secret) == 0
     assert list(answers) == []
-    assert len(key_calls) == 1 and "Anthropic API key/token (hidden" in key_calls[0]
+    assert key_calls == ["  Paste your Anthropic API key/token (hidden): "]
     assert C.load_saved()["config"]["model"] == "fixture-api-model"
     output = capsys.readouterr().out
+    assert "A model ID is required" in output
     assert "That looks like an API key" in output
     for value in ("sk-ant-misplaced-credential", "correct-hidden-key"):
         assert value not in output + C.settings_path().read_text() + (tmp_path / ".env").read_text()
@@ -324,6 +346,14 @@ def test_setup_and_webui_share_recorded_argo_model_suggestions(monkeypatch):
     assert presets["argo"]["model_suggestions"] == list(E.ARGO_SETUP_MODELS)
     assert set(E.ARGO_SETUP_MODELS) <= models
     assert all(not preset["model_suggestions"] for name, preset in presets.items() if name != "argo")
+
+
+def test_webui_and_terminal_share_named_api_choices():
+    presets = {preset["id"]: preset for preset in C.describe()["presets"]}
+    for provider, choices in E.API_SETUP_MODELS.items():
+        assert presets[provider]["model_choices"] == [{"id": model, "label": label} for model, label in choices]
+        assert all(model != label for model, label in choices)
+    assert presets["custom"]["model_choices"] == []
 
 
 def test_wizard_custom_gateway_and_headless_credential(tmp_path, monkeypatch):
@@ -430,12 +460,13 @@ def test_subscription_config_exports_real_analysis_launchers_without_credentials
     assert not list(tmp_path.iterdir())
 
 
+@pytest.mark.parametrize("access", ["5", "tools"])
 @pytest.mark.parametrize("client,choice", [("codex", "1"), ("claude", "2")])
-def test_subscription_menu_is_preview_only(tmp_path, capsys, client, choice):
+def test_subscription_menu_is_preview_only(tmp_path, capsys, client, choice, access):
     from scripts import setup_user as setup
     (tmp_path / "servers.config").write_text("core:fixture.py\nmotor:motor.py\n")
     (tmp_path / "fixture.py").write_text("# Fixture; must never execute during configuration\n")
-    result, prompts = wizard(tmp_path, ["tools", choice])
+    result, prompts = wizard(tmp_path, [access, choice])
     assert result == 0 and len(prompts) == 2
     assert not (tmp_path / ".env").exists()
     assert not C.settings_path().exists()

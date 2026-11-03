@@ -26,7 +26,7 @@ type. An existing connection remains the default, including non-Argo providers:
 | 2. Personal API key | OpenAI, Anthropic, Google Gemini | Yes |
 | 3. Local / self-hosted models | Ollama on this machine, other compatible model server | Yes |
 | 4. Other university / facility | ALCF, AmSC, other university/facility gateway | Yes |
-| Separate `tools` option | Codex or Claude Code tool-configuration preview | Uses that app's chat, not APEXA WebUI |
+| 5. External app integration | Codex or Claude Code tool-configuration preview | Uses that app's chat, not APEXA WebUI |
 
 For Argo, select **1** (or press Enter on a new/Argo setup), enter your ANL
 username, then select a recorded model alias or type an exact ID such as
@@ -45,8 +45,8 @@ or establish that its build supports tool calls. Setup does not download models,
 query the current provider catalog or run inference; verify availability later.
 You can still type a preset name directly as a shortcut.
 
-The `tools` option replaces the old flat menu's options 10/11 and explicitly
-describes the separate client interface. Both that preview and `--mcp-config`
+Option **5** replaces the old flat menu's options 10/11; typing `tools` still
+opens it as a shortcut. Both that preview and `--mcp-config`
 only print configuration; they do not change `.env`, the APEXA connection, any
 client configuration or login state.
 
@@ -54,13 +54,44 @@ For a new personal API connection, explicitly choose **OpenAI**, **Anthropic**
 or **Google Gemini**; there is no preselected provider. A saved API provider is
 offered as the default when returning to setup. Text in brackets is what Enter
 accepts; typing a different provider number overrides it. Setup confirms the
-selected provider before asking for its model.
+selected provider before asking for its API key.
 
-The **model ID** identifies a model from that provider's API model list. Enter
-the exact ID your endpoint serves here. Your **API key** belongs in the separate
-hidden key prompt afterward. A blank model prompt without a saved/default model
-asks again. Ctrl+C cancels setup. Only Argo asks for an ANL username. API providers ask
-for a hidden key; setup stores it in the OS keyring and saves the selected
+**Paste the key in the hidden prompt immediately after choosing the provider.**
+For Anthropic the sequence is:
+
+```text
+Access type [argo]: 2
+Which provider / host?: 2
+Selected provider: Anthropic
+Paste your Anthropic API key/token (hidden):
+```
+
+Characters do not appear while you type or paste; press Enter afterward. Enter
+on an empty key prompt keeps a matching saved key or lets you configure the key
+later. The key is stored in the OS keyring only after the final save confirmation.
+
+Then **choose a model by name/number**. APEXA fills in its API ID; there is no need
+to look up or type one. For example, Anthropic offers Claude Sonnet 5.5, Haiku
+5.5 and Opus 5.5. Enter accepts the displayed default (your saved model when
+present). The WebUI offers the same named choices in a **Model** dropdown.
+**Other model (advanced)** allows an exact ID for models outside the short list;
+direct ID entry in the terminal still works. Existing model choices, including
+unlisted IDs, are preserved. Empty advanced input asks again. Ctrl+C cancels setup.
+
+The offline choices were checked against provider documentation on **2026-11-03**:
+
+| Provider | Built-in choices | Official catalog |
+| --- | --- | --- |
+| OpenAI | GPT-6.1 Sol, GPT-6 Astra, GPT-5.1 | [OpenAI Models](https://developers.openai.com/api/docs/models) |
+| Anthropic | Claude Sonnet 5.5, Haiku 5.5, Opus 5.5 | [Claude Models](https://platform.claude.com/docs/en/about-claude/models/overview) |
+| Google Gemini | Gemini 3.8 Flash, 3.5 Flash-Lite, 4 Argon | [Gemini Models](https://ai.google.dev/gemini-api/docs/models) |
+
+These are documented tool-capable API models, not an account-specific availability
+check. The operator can use **Verify connection** later; setup itself makes no
+provider requests. Model IDs and labels are maintained together in
+`apexa_llm_endpoints.py` so the terminal and WebUI stay consistent.
+
+Only Argo asks for an ANL username. Setup saves the selected
 connection to `~/.apexa/connection.json`, just like the WebUI. Setup makes no
 model requests and does not establish that the chosen model supports tool calls.
 
@@ -168,7 +199,8 @@ cannot be fetched. After correcting the server, choose **Retry loading settings*
 opening the dialog and retrying only read settings and make no model requests.
 
 Open **gear → LLM connection** in the compact WebUI header. Choose **Access type**,
-then **Provider / host** for non-Argo access, enter its exact model/deployment ID, and choose
+then **Provider / host** for non-Argo access, paste the key in the **API key**
+password field just below the provider, select a model, and choose
 **Verify connection**. Facility access (including ALCF), personal APIs and local
 models all use APEXA's live WebUI after configuration and restart. Verification sends
 two small synthetic requests to that endpoint and may consume API credits. It

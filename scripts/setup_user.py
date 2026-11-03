@@ -20,13 +20,14 @@ from dotenv import dotenv_values, load_dotenv
 from dotenv.parser import parse_stream
 
 import apexa_connection as connection
-from apexa_llm_endpoints import ALCF_CANDIDATES, ARGO_SETUP_MODELS, PRESETS, EndpointRejected
+from apexa_llm_endpoints import ALCF_CANDIDATES, API_SETUP_MODELS, ARGO_SETUP_MODELS, PRESETS, EndpointRejected
 
 ACCESS_GROUPS = (
     ("argo", "ANL Argo (ANL network / VPN)"),
     ("api", "Personal API key (separately billed)"),
     ("local", "Local / self-hosted models"),
     ("facility", "Other university / facility access"),
+    ("tools", "External app integration (Codex / Claude Code)"),
 )
 PROVIDERS = {
     "argo": (("argo", "ANL Argo"),),
@@ -106,7 +107,7 @@ def show_options() -> None:
     print("  Recorded options include GPT-OSS/Gemma on Sophia and Inkling on Minerva.")
     print("Ollama: choose Gemma, GPT-OSS or another family, then its installed model tag.")
     print("  Setup does not install models or check current model availability.")
-    print("\nSeparate tool integration (type tools in setup):")
+    print("\nExternal app integration (option 5; the tools shortcut also works):")
     print("  Codex or Claude Code uses its own login/chat and calls APEXA tools via MCP.")
     print("  This does not sign a subscription into the APEXA WebUI.")
     print("  Export with --mcp-config codex or --mcp-config claude; log in there later.")
@@ -124,14 +125,13 @@ def menu_value(value: str, choices) -> str:
 def choose_access(prompt, current_preset: str) -> str:
     for index, (_, label) in enumerate(ACCESS_GROUPS, 1):
         print(f"  {index}) {label}")
-    print("\n  tools) Use APEXA tools in Codex / Claude Code (separate app, not APEXA chat)")
     default = ("argo" if current_preset == "argo" else
                "api" if current_preset in dict(PROVIDERS["api"]) else
                "local" if current_preset == "ollama" else "facility")
     value = prompt("Access type", default)
     if value in PRESET_SHORTCUTS:
         return value
-    group = value if value == "tools" else menu_value(value, ACCESS_GROUPS)
+    group = menu_value(value, ACCESS_GROUPS)
     if group == "argo":
         return "argo"
     if group == "tools":
@@ -165,13 +165,40 @@ def required_model(prompt, label: str, default: str = "") -> str:
         if not value:
             print("  A model ID is required. Use the exact ID from your provider's model list, or Ctrl+C to cancel.")
         elif value.startswith(("sk-", "AIza")):
-            print("  That looks like an API key. Enter the model ID here; the hidden API-key prompt comes later.")
+            print("  That looks like an API key. Enter a model ID here; keys belong in the separate hidden API-key prompt.")
             default = ""
         else:
             return value
 
 
 def choose_model(prompt, preset: str, default: str) -> str:
+    if preset in API_SETUP_MODELS:
+        provider = dict(PROVIDERS["api"])[preset]
+        candidates = API_SETUP_MODELS[preset]
+        choices = (*candidates, ("custom", "Other model (advanced)"))
+        print(f"\n{provider} models:")
+        for index, (_, label) in enumerate(choices, 1):
+            print(f"  {index}) {label}")
+        print("  Use Verify connection after setup to check access for your account.")
+        default_choice = default or "1"
+        for index, (model, _) in enumerate(candidates, 1):
+            if model == default:
+                default_choice = str(index)
+        if default and default not in dict(candidates):
+            print("  Enter preserves your saved model, including models outside this list.")
+        while True:
+            value = required_model(prompt, "Model choice", default_choice)
+            if default and default not in dict(candidates) and value == default:
+                return default
+            if value.isdigit():
+                try:
+                    value = menu_value(value, choices)
+                except ValueError:
+                    print(f"  Choose a model number from 1 to {len(choices)}.")
+                    continue
+            if value == "custom":
+                return required_model(prompt, f"{provider} model ID", default)
+            return value
     if preset == "argo":
         print("\nRecorded Argo model aliases (examples, not a live availability check):")
         for index, model in enumerate(ARGO_SETUP_MODELS, 1):
@@ -195,11 +222,7 @@ def choose_model(prompt, preset: str, default: str) -> str:
             previous = default if family == "model" or default.lower().startswith(family.lower()) else ""
             return required_model(prompt, f"Exact installed {family} tag", previous)
         return value
-    provider = dict(PROVIDERS["api"]).get(preset)
-    if provider:
-        print("  The model ID names the model in your provider's API model list.")
-        print("  Your API key is requested separately in a hidden prompt afterward.")
-    return required_model(prompt, f"{provider} model ID" if provider else "Exact model/deployment ID (must support tool calls)", default)
+    return required_model(prompt, "Exact model/deployment ID (must support tool calls)", default)
 
 
 def native_midas_candidates(repo: Path) -> list[Path]:
@@ -352,6 +375,19 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
     if selected == "argo":
         print("\nArgo uses your ANL username and requires the ANL network or VPN. No API key needed.")
         username = prompt("ANL username", existing.get("ANL_USERNAME") or previous.get("username", ""))
+    api_key = ""
+    provider_env_key = endpoint.env_key and (os.environ.get(endpoint.env_key) or existing.get(endpoint.env_key))
+    if provider_env_key:
+        print(f"  Existing {endpoint.env_key} supplies this provider's credential and overrides the keyring.")
+    elif endpoint.uses_keyring:
+        provider = dict(PROVIDERS["api"]).get(selected, selected)
+        print("  Paste your API key at the next prompt. Characters will not appear while typing or pasting.")
+        print("  The key is saved in the OS keyring only when you confirm the final configuration.")
+        print("  Enter keeps a matching saved key or lets you configure the key later.")
+        api_key = secret(f"  Paste your {provider} API key/token (hidden): ").strip()
+    elif selected.startswith("alcf-"):
+        print("  ALCF requires its Globus helper and prior login; see docs/ALCF_MULTIUSER.md.")
+
     old_model = (existing.get("ARGO_MODEL", "") if existing.get("APEXA_LLM_PRESET")
                  else previous.get("model") or existing.get("ARGO_MODEL", ""))
     default_model = old_model if same else ""
@@ -359,19 +395,6 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
         default_model = "claudeopus5"
     model = choose_model(prompt, selected, default_model)
     config = connection.ConnectionConfig(preset=selected, base_url=base_url, model=model, username=username)
-
-    api_key = ""
-    provider_env_key = endpoint.env_key and (os.environ.get(endpoint.env_key) or existing.get(endpoint.env_key))
-    if provider_env_key:
-        print(f"  Existing {endpoint.env_key} supplies this provider's credential and overrides the keyring.")
-    elif endpoint.uses_keyring:
-        print("  Key is stored in the OS keyring, never in .env or connection.json.")
-        print("  On a headless host without a keyring, leave blank and supply")
-        print("  APEXA_LLM_API_KEY in the server environment for this endpoint.")
-        provider = dict(PROVIDERS["api"]).get(selected, selected)
-        api_key = secret(f"  {provider} API key/token (hidden; blank keeps a matching saved key): ").strip()
-    elif selected.startswith("alcf-"):
-        print("  ALCF requires its Globus helper and prior login; see docs/ALCF_MULTIUSER.md.")
 
     updates = {}
     removed_runtime = []

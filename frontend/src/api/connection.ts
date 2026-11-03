@@ -10,7 +10,8 @@ export interface ConnectionSettings {
   environment_override: boolean
   restart_required: boolean
   error: string | null
-  presets: { id: string; base_url: string; wire: string; model_suggestions?: string[] }[]
+  presets: { id: string; base_url: string; wire: string; model_suggestions?: string[];
+    model_choices?: { id: string; label: string }[] }[]
 }
 async function request(path: string, init?: RequestInit) {
   const timeout = AbortSignal.timeout(init?.method ? 50000 : 10000)
@@ -53,7 +54,9 @@ export async function getConnection(signal?: AbortSignal): Promise<ConnectionSet
       || !data.presets.every((preset: Record<string, unknown> | null) => preset
         && ['id', 'base_url', 'wire'].every(key => typeof preset[key] === 'string')
         && (preset.model_suggestions === undefined || (Array.isArray(preset.model_suggestions)
-          && preset.model_suggestions.every(model => typeof model === 'string'))))) {
+          && preset.model_suggestions.every(model => typeof model === 'string')))
+        && (preset.model_choices === undefined || (Array.isArray(preset.model_choices)
+          && preset.model_choices.every(model => model && typeof model.id === 'string' && typeof model.label === 'string'))))) {
     throw new Error('The server returned incompatible connection settings. Restart APEXA from the updated checkout and reload this page.')
   }
   return data

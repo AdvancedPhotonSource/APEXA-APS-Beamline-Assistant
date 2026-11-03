@@ -569,6 +569,32 @@ ARGO_SETUP_MODELS = (
     "claudeopus5", "claudesonnet55", "gemini35flash",
 )
 
+# Short, offline setup menus shared by the terminal and WebUI. Labels map to
+# public API IDs, not Argo aliases. Existing selections are never migrated.
+# Sources checked 2026-11-03:
+# https://developers.openai.com/api/docs/models
+# https://platform.claude.com/docs/en/about-claude/models/overview
+# https://ai.google.dev/gemini-api/docs/models
+# These models document function/tool calling; account access still needs an
+# explicit connection verification. This is not a live account model catalog.
+API_SETUP_MODELS = {
+    "openai": (
+        ("gpt-6.1-sol", "GPT-6.1 Sol"),
+        ("gpt-6-astra", "GPT-6 Astra"),
+        ("gpt-5.1", "GPT-5.1"),
+    ),
+    "anthropic": (
+        ("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+        ("claude-haiku-5-5", "Claude Haiku 5.5"),
+        ("claude-opus-5-5", "Claude Opus 5.5"),
+    ),
+    "gemini": (
+        ("gemini-3.8-flash", "Gemini 3.8 Flash"),
+        ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
+        ("gemini-4-argon", "Gemini 4 Argon"),
+    ),
+}
+
 #: The retired sidecar's default address. An APEXA_LLM_BASE_URL still pointing
 #: here is a leftover: it would silently override the native endpoint and then
 #: fail to connect, which reads as "Argo is down" rather than "delete one line".
