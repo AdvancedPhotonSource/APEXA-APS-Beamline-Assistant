@@ -50,7 +50,16 @@ describes the separate client interface. Both that preview and `--mcp-config`
 only print configuration; they do not change `.env`, the APEXA connection, any
 client configuration or login state.
 
-Enter the exact model/deployment ID your endpoint serves. Only Argo asks for an ANL username. API providers ask
+For a new personal API connection, explicitly choose **OpenAI**, **Anthropic**
+or **Google Gemini**; there is no preselected provider. A saved API provider is
+offered as the default when returning to setup. Text in brackets is what Enter
+accepts; typing a different provider number overrides it. Setup confirms the
+selected provider before asking for its model.
+
+The **model ID** identifies a model from that provider's API model list. Enter
+the exact ID your endpoint serves here. Your **API key** belongs in the separate
+hidden key prompt afterward. A blank model prompt without a saved/default model
+asks again. Ctrl+C cancels setup. Only Argo asks for an ANL username. API providers ask
 for a hidden key; setup stores it in the OS keyring and saves the selected
 connection to `~/.apexa/connection.json`, just like the WebUI. Setup makes no
 model requests and does not establish that the chosen model supports tool calls.

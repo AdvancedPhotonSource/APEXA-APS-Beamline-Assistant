@@ -141,8 +141,14 @@ def choose_access(prompt, current_preset: str) -> str:
         print(f"  {index}) {label}")
     default_provider = "alcf" if current_preset.startswith("alcf-") else current_preset
     if default_provider not in dict(PROVIDERS[group]):
-        default_provider = PROVIDERS[group][0][0]
-    selected = menu_value(prompt("Which app?" if group == "tools" else "Which provider / host?", default_provider), PROVIDERS[group])
+        # A first-time personal API setup should explicitly choose its provider.
+        default_provider = "" if group == "api" else PROVIDERS[group][0][0]
+    while True:
+        try:
+            selected = menu_value(prompt("Which app?" if group == "tools" else "Which provider / host?", default_provider), PROVIDERS[group])
+            break
+        except ValueError as exc:
+            print(f"  {exc}")
     if selected == "alcf":
         print("\nALCF runs the model on facility servers; it is not a local model install.")
         for index, (_, label) in enumerate(ALCF_CLUSTERS, 1):
@@ -151,31 +157,49 @@ def choose_access(prompt, current_preset: str) -> str:
     return selected
 
 
+def required_model(prompt, label: str, default: str = "") -> str:
+    if default.startswith(("sk-", "AIza")):
+        default = ""
+    while True:
+        value = prompt(label, default)
+        if not value:
+            print("  A model ID is required. Use the exact ID from your provider's model list, or Ctrl+C to cancel.")
+        elif value.startswith(("sk-", "AIza")):
+            print("  That looks like an API key. Enter the model ID here; the hidden API-key prompt comes later.")
+            default = ""
+        else:
+            return value
+
+
 def choose_model(prompt, preset: str, default: str) -> str:
     if preset == "argo":
         print("\nRecorded Argo model aliases (examples, not a live availability check):")
         for index, model in enumerate(ARGO_SETUP_MODELS, 1):
             print(f"  {index}) {model}")
-        value = prompt("Model number or exact Argo model ID", default)
+        value = required_model(prompt, "Model number or exact Argo model ID", default)
         return menu_value(value, tuple((model, model) for model in ARGO_SETUP_MODELS)) if value.isdigit() else value
     if preset.startswith("alcf-"):
         candidates = tuple((item["model"], item["model"]) for item in ALCF_CANDIDATES if item["preset"] == preset)
         print("\nRecorded ALCF model IDs (availability and tool support must be verified):")
         for index, (model, _) in enumerate(candidates, 1):
             print(f"  {index}) {model}")
-        value = prompt("Model number or exact model ID", default)
+        value = required_model(prompt, "Model number or exact model ID", default)
         return menu_value(value, candidates) if value.isdigit() else value
     if preset == "ollama":
         print("\nLocal model family (run ollama list to see exact installed tags):")
         print("  1) Gemma\n  2) GPT-OSS\n  3) Other installed model")
         print("  These are family choices; setup does not download models or verify tool support.")
-        value = prompt("Family number, or exact installed model tag", default)
+        value = required_model(prompt, "Family number, or exact installed model tag", default)
         if value.isdigit():
             family = menu_value(value, (("Gemma", ""), ("GPT-OSS", ""), ("model", "")))
             previous = default if family == "model" or default.lower().startswith(family.lower()) else ""
-            return prompt(f"Exact installed {family} tag", previous)
+            return required_model(prompt, f"Exact installed {family} tag", previous)
         return value
-    return prompt("Exact model/deployment ID (must support tool calls)", default)
+    provider = dict(PROVIDERS["api"]).get(preset)
+    if provider:
+        print("  The model ID names the model in your provider's API model list.")
+        print("  Your API key is requested separately in a hidden prompt afterward.")
+    return required_model(prompt, f"{provider} model ID" if provider else "Exact model/deployment ID (must support tool calls)", default)
 
 
 def native_midas_candidates(repo: Path) -> list[Path]:
@@ -317,6 +341,7 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
     if selected in {"codex", "claude"}:
         subscription_instructions(selected, repo)
         return 0
+    print(f"\nSelected provider: {dict(PROVIDERS['api']).get(selected, selected)}")
     endpoint = PRESETS[selected]()
     same = selected == current_preset
     base_url = endpoint.base_url
@@ -343,7 +368,8 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
         print("  Key is stored in the OS keyring, never in .env or connection.json.")
         print("  On a headless host without a keyring, leave blank and supply")
         print("  APEXA_LLM_API_KEY in the server environment for this endpoint.")
-        api_key = secret("  API key/token (hidden; blank keeps a matching saved key): ").strip()
+        provider = dict(PROVIDERS["api"]).get(selected, selected)
+        api_key = secret(f"  {provider} API key/token (hidden; blank keeps a matching saved key): ").strip()
     elif selected.startswith("alcf-"):
         print("  ALCF requires its Globus helper and prior login; see docs/ALCF_MULTIUSER.md.")
 

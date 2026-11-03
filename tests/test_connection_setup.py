@@ -198,6 +198,46 @@ def test_wizard_selects_personal_provider_without_anl_and_preserves_routing(tmp_
         assert path.stat().st_mode & 0o777 == 0o600
 
 
+@pytest.mark.parametrize("selection,preset,label", [
+    ("1", "openai", "OpenAI"), ("2", "anthropic", "Anthropic"), ("3", "gemini", "Google Gemini"),
+])
+def test_first_api_provider_is_explicit_and_blank_model_reprompts(tmp_path, capsys, selection, preset, label):
+    _, prompts = wizard(tmp_path, ["2", "", selection, "", "fixture-api-model", "yes"],
+                        "fixture-key", connection_only=True)
+    assert prompts[1] == prompts[2] == "  Which provider / host?: "
+    assert prompts[3] == prompts[4] == f"  {label} model ID: "
+    saved = C.load_saved()["config"]
+    assert saved["preset"] == preset and saved["model"] == "fixture-api-model"
+    output = capsys.readouterr().out
+    assert f"Selected provider: {label}" in output
+    assert "A model ID is required" in output
+    assert "API key is requested separately" in output
+    assert "validation error" not in output
+
+
+def test_anthropic_model_prompt_precedes_separate_hidden_key_and_rejects_misplaced_key(tmp_path, isolated, capsys):
+    from scripts.setup_user import run_setup
+    answers = iter(["2", "2", "", "sk-ant-misplaced-credential", "fixture-api-model", "yes"])
+    prompts, key_calls = [], []
+    def ask(prompt):
+        prompts.append(prompt)
+        return next(answers)
+    def secret(prompt):
+        assert prompts[-1] == "  Anthropic model ID: "
+        key_calls.append(prompt)
+        return "correct-hidden-key"
+    assert run_setup(tmp_path, connection_only=True, ask=ask, secret=secret) == 0
+    assert list(answers) == []
+    assert len(key_calls) == 1 and "Anthropic API key/token (hidden" in key_calls[0]
+    assert C.load_saved()["config"]["model"] == "fixture-api-model"
+    output = capsys.readouterr().out
+    assert "That looks like an API key" in output
+    for value in ("sk-ant-misplaced-credential", "correct-hidden-key"):
+        assert value not in output + C.settings_path().read_text() + (tmp_path / ".env").read_text()
+    assert "sk-ant-misplaced-credential" not in isolated.values()
+    assert "correct-hidden-key" in isolated.values()
+
+
 def test_wizard_migrates_old_dotenv_selection_without_transferring_credentials(tmp_path, isolated):
     from dotenv import dotenv_values
     path = tmp_path / ".env"
@@ -426,16 +466,17 @@ def test_local_model_family_requires_installed_tag(tmp_path, family, tag):
 
 def test_saved_provider_remains_the_group_default(tmp_path):
     C.save_config(config("anthropic"), "stored", None)
-    wizard(tmp_path, ["", "", "", "y"], connection_only=True)
+    _, prompts = wizard(tmp_path, ["", "", "", "y"], connection_only=True)
+    assert "[anthropic]" in prompts[1]
     assert C.load_saved()["config"]["preset"] == "anthropic"
     assert C.load_saved()["config"]["model"] == "fixture-model"
 
 
 def test_changing_local_family_does_not_reuse_previous_family_tag(tmp_path):
     C.save_config(config("ollama").model_copy(update={"model": "gpt-oss:20b"}), "", None)
-    with pytest.raises(ValueError):
-        wizard(tmp_path, ["3", "1", "1", ""], connection_only=True)
-    assert C.load_saved()["config"]["model"] == "gpt-oss:20b"
+    _, prompts = wizard(tmp_path, ["3", "1", "1", "", "gemma-fixture:latest", "yes"], connection_only=True)
+    assert prompts[3] == prompts[4] == "  Exact installed Gemma tag: "
+    assert C.load_saved()["config"]["model"] == "gemma-fixture:latest"
 
 
 def test_mcp_launcher_uses_repo_cwd_and_refuses_unconfigured_servers(tmp_path, monkeypatch):
