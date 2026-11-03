@@ -331,6 +331,50 @@ To browse the searchable documentation site, run `./serve_docs.sh`.
 
 ---
 
+## Citation
+
+If you use APEXA in your research, please cite it. GitHub renders a **"Cite this
+repository"** button from [`CITATION.cff`](CITATION.cff) (APA/BibTeX) for the software.
+
+**Software:**
+
+```bibtex
+@software{apexa,
+  title   = {{APEXA: Advanced Photon EXperiment Assistant}},
+  author  = {Tripathi, Pawan and Sharma, Hemant and Cherukara, Mathew},
+  year    = {2026},
+  url      = {https://github.com/AdvancedPhotonSource/APEXA-APS-Beamline-Assistant},
+  note     = {Advanced Photon Source, Argonne National Laboratory.
+              DOI via DOECode (OSTI) to be added on release.}
+}
+```
+
+**Paper** (accepted, 4th Annual Trillion Parameter Workshop @ SC'26; preprint on arXiv):
+
+```bibtex
+@inproceedings{apexa_sc26,
+  title        = {{APEXA: Execution-Integrity Enforcement for Multi-Agent LLM
+                   Automation of Synchrotron Data Reduction}},
+  author       = {Tripathi, Pawan K. and Sharma, Hemant and Chuang, Andrew
+                  and Cherukara, Mathew J.},
+  booktitle    = {Proceedings of the 4th Annual Trillion Parameter Workshop (TPW):
+                  Building Open AI Infrastructure, Models, and Agentic Systems for
+                  Science, held in conjunction with SC'26 (SC Workshops)},
+  address      = {Chicago, IL, USA},
+  year         = {2026},
+  eprint       = {2609.24165},
+  archivePrefix = {arXiv},
+  url          = {https://arxiv.org/abs/2609.24165},
+  note         = {Presented 20 Nov 2026. Program:
+                  https://sc26.conference-program.com/presentation/?id=ws_tpw139\&sess=sess149}
+}
+```
+
+> Preprint: <https://arxiv.org/abs/2609.24165>. An extended journal version is in
+> preparation; this workshop paper is the current citeable reference for APEXA.
+
+---
+
 ## Credits
 
 **Development:**

@@ -1,7 +1,10 @@
 cff-version: 1.2.0
 message: >-
-  If you use APEXA in your research, please cite it using the metadata
-  below. A DOI minted through DOECode (OSTI) will be added on release.
+  If you use APEXA in your research, please cite the paper under
+  `preferred-citation` (4th Annual Trillion Parameter Workshop @ SC'26;
+  arXiv:2609.24165). The
+  metadata below is the software citation; a DOI minted through DOECode
+  (OSTI) will be added on release.
 title: "APEXA: Advanced Photon EXperiment Assistant"
 abstract: >-
   APEXA is a multi-agent AI framework that operates a synchrotron beamline
@@ -23,7 +26,7 @@ authors:
     given-names: Hemant
     affiliation: "Advanced Photon Source, Argonne National Laboratory"
   - family-names: Cherukara
-    given-names: Matthew
+    given-names: Mathew
     affiliation: "Advanced Photon Source, Argonne National Laboratory"
 repository-code: "https://github.com/AdvancedPhotonSource/APEXA-APS-Beamline-Assistant"
 url: "https://github.com/AdvancedPhotonSource/APEXA-APS-Beamline-Assistant"
@@ -41,3 +44,26 @@ keywords:
   - Model Context Protocol
   - intelligent instrument
   - continual learning
+preferred-citation:
+  type: conference-paper
+  title: "APEXA: Execution-Integrity Enforcement for Multi-Agent LLM Automation of Synchrotron Data Reduction"
+  authors:
+    - family-names: Tripathi
+      given-names: Pawan K.
+    - family-names: Sharma
+      given-names: Hemant
+    - family-names: Chuang
+      given-names: Andrew
+    - family-names: Cherukara
+      given-names: Mathew J.
+  collection-title: "Proceedings of the 4th Annual Trillion Parameter Workshop (TPW): Building Open AI Infrastructure, Models, and Agentic Systems for Science, held in conjunction with SC'26 (SC Workshops)"
+  conference:
+    name: "4th Annual Trillion Parameter Workshop (TPW) at SC'26"
+    city: Chicago
+    region: Illinois
+    country: US
+    date-start: "2026-11-20"
+    date-end: "2026-11-20"
+  year: 2026
+  url: "https://arxiv.org/abs/2609.24165"
+  notes: "Official program: https://sc26.conference-program.com/presentation/?id=ws_tpw139&sess=sess149"
