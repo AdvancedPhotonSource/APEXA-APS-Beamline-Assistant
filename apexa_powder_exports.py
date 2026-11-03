@@ -6,7 +6,7 @@ restarts; copies and reports are additive.
 """
 from __future__ import annotations
 
-import fcntl
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -18,6 +18,7 @@ import uuid
 from pathlib import Path
 
 from apexa_refinement_live import job_rows, publication_request
+from apexa_sessions import file_lock, SessionBusy
 
 
 def _write(path, value):
@@ -153,12 +154,12 @@ def follow(request_path, *, wait_for_publisher=False):
     path = Path(request_path).resolve()
     request = json.loads(path.read_text())
     deadline = time.monotonic() + request.get('max_wait_seconds', 86400)
-    with path.with_suffix('.lock').open('a') as lock:
+    with ExitStack() as locks:
         while True:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locks.enter_context(file_lock(path.with_suffix('.lock'), blocking=False))
                 break
-            except BlockingIOError:
+            except SessionBusy:
                 if not wait_for_publisher or time.monotonic() >= deadline:
                     return
                 # Allows an older artifact-only publisher to finish before this

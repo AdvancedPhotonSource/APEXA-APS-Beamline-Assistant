@@ -11,6 +11,26 @@ from apexa_powder import advise
 import gsas2_server as gsas
 
 
+def test_artifact_publisher_has_one_owner_and_releases_portable_lock(tmp_path, monkeypatch):
+    import apexa_powder_exports as exports
+    from apexa_sessions import file_lock
+    path = tmp_path / "export-request.json"
+    path.write_text(json.dumps({"output_dir": str(tmp_path), "max_wait_seconds": 30}))
+    published = []
+    def publish(*args):
+        published.append(args)
+        return {"state": "published"}
+    monkeypatch.setattr(exports, "publish", publish)
+    with file_lock(path.with_suffix('.lock'), blocking=False):
+        exports.follow(path)
+        assert not published
+    exports.follow(path)
+    assert len(published) == 1
+    assert json.loads((tmp_path / "export-status.json").read_text())["state"] == "published"
+    with file_lock(path.with_suffix('.lock'), blocking=False):
+        pass
+
+
 def test_powder_plan_roundtrip_preserves_per_observation_bindings():
     observations = [{"data_path": "lab.xye", "instrument_path": "lab.prm", "cif_paths": ["phase.cif"]},
                     {"data_path": "beamline.xye", "instrument_path": "synchrotron.prm", "cif_paths": ["phase.cif"]}]
