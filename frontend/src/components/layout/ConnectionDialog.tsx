@@ -7,19 +7,23 @@ const labels: Record<string, string> = {
   'alcf-minerva': 'ALCF Minerva', 'alcf-sophia': 'ALCF Sophia',
 }
 const accessGroups = [
-  { id: 'facility', label: 'University / facility access', presets: ['argo', 'alcf-sophia', 'alcf-minerva', 'mag', 'custom'] },
+  { id: 'argo', label: 'ANL Argo (ANL network / VPN)', presets: ['argo'] },
   { id: 'api', label: 'Personal API key', presets: ['openai', 'anthropic', 'gemini'] },
   { id: 'local', label: 'Local / self-hosted models', presets: ['ollama', 'custom'] },
+  { id: 'facility', label: 'Other university / facility access', presets: ['alcf-sophia', 'alcf-minerva', 'mag', 'custom'] },
 ]
 function accessFor(preset: string) {
-  return accessGroups.find(group => group.presets.includes(preset))?.id ?? 'facility'
+  // A custom URL does not record whether it is a campus or self-hosted service.
+  if (preset === 'custom') return 'facility'
+  return accessGroups.find(group => group.presets.includes(preset))?.id ?? 'argo'
 }
 export function ConnectionDialog({ onClose }: { onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const title = useId()
+  const modelList = useId()
   const [settings, setSettings] = useState<ConnectionSettings | null>(null)
   const [config, setConfig] = useState<ConnectionConfig | null>(null)
-  const [access, setAccess] = useState('facility')
+  const [access, setAccess] = useState('argo')
   const [key, setKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
@@ -66,11 +70,12 @@ export function ConnectionDialog({ onClose }: { onClose: () => void }) {
     finally { setBusy(false) }
   }
   const input = 'w-full rounded border border-[var(--apexa-border)] bg-[var(--apexa-surface-2)] p-2 text-xs text-[var(--apexa-text)]'
+  const modelSuggestions = settings?.presets.find(p => p.id === config?.preset)?.model_suggestions ?? []
   return <dialog ref={dialog} aria-labelledby={title} onCancel={e => { if (busy) e.preventDefault(); else onClose() }}
     className="m-auto w-[calc(100%_-_2rem)] max-w-lg max-h-[calc(100dvh_-_2rem)] overflow-y-auto rounded-xl border border-[var(--apexa-border)] bg-[var(--apexa-surface)] p-4 text-[var(--apexa-text)] shadow-2xl backdrop:bg-black/50">
     <div className="mb-3 flex items-center justify-between"><h2 id={title} className="text-sm font-semibold">LLM connection</h2>
       <button type="button" onClick={onClose} disabled={busy} aria-label="Close connection settings">×</button></div>
-    <p className="mb-3 text-xs text-[var(--apexa-text-muted)]">Choose how APEXA’s WebUI and CLI access a model, then select the provider or host.</p>
+    <p className="mb-3 text-xs text-[var(--apexa-text-muted)]">ANL Argo is the default connection. You can also choose a personal API, local model or another facility.</p>
     {config && settings && <form className="space-y-3" onSubmit={e => { e.preventDefault(); void act(true) }}>
       <label className="block text-xs">Access type<select aria-label="Access type" className={input} value={access} disabled={busy} onChange={e => {
         const group = accessGroups.find(g => g.id === e.target.value)
@@ -81,14 +86,17 @@ export function ConnectionDialog({ onClose }: { onClose: () => void }) {
           if (first) selectProvider(first)
         }
       }}>{accessGroups.map(group => <option key={group.id} value={group.id}>{group.label}</option>)}</select></label>
-      <label className="block text-xs">Provider / host<select aria-label="Provider / host" className={input} value={config.preset} disabled={busy} onChange={e => selectProvider(e.target.value)}>
+      {access !== 'argo' && <label className="block text-xs">Provider / host<select aria-label="Provider / host" className={input} value={config.preset} disabled={busy} onChange={e => selectProvider(e.target.value)}>
         {settings.presets.filter(p => accessGroups.find(g => g.id === access)?.presets.includes(p.id)).map(p =>
           <option key={p.id} value={p.id}>{labels[p.id] ?? p.id}</option>)}
-      </select></label>
+      </select></label>}
+      {config.preset === 'argo' && <p className="text-xs text-[var(--apexa-text-muted)]">Use your ANL username on the ANL network or VPN. Argo does not require a personal API key.</p>}
       <label className="block text-xs">Endpoint URL<input className={input} value={config.base_url} required readOnly={config.preset !== 'custom'} disabled={busy}
         onChange={e => { update({ base_url: e.target.value }); setKey('') }} /></label>
-      <label className="block text-xs">Model / deployment ID<input className={input} value={config.model} required maxLength={200} disabled={busy}
+      <label className="block text-xs">Model / deployment ID<input className={input} value={config.model} required maxLength={200} disabled={busy} list={modelSuggestions.length ? modelList : undefined}
         placeholder="Exact model ID supplied by your provider" onChange={e => update({ model: e.target.value })} /></label>
+      {modelSuggestions.length > 0 && <datalist id={modelList}>{modelSuggestions.map(model => <option key={model} value={model} />)}</datalist>}
+      {config.preset === 'argo' && <p className="text-xs text-[var(--apexa-text-muted)]">Suggestions are recorded Argo aliases, not a live availability check. You can enter any exact model ID.</p>}
       {config.preset === 'ollama' && <p className="text-xs text-[var(--apexa-text-muted)]">Use the exact installed tag from <code>ollama list</code>, for example a Gemma or GPT-OSS model with tool support. Setup does not download models.</p>}
       {config.preset.startsWith('alcf-') && <p className="text-xs text-[var(--apexa-text-muted)]">ALCF hosts the model at the facility. Recorded options include GPT-OSS and Gemma on Sophia, and Inkling on Minerva; verify the exact model ID and current availability.</p>}
       {config.preset === 'argo' ? <label className="block text-xs">ANL username<input className={input} value={config.username} required disabled={busy} onChange={e => update({ username: e.target.value })} /></label>

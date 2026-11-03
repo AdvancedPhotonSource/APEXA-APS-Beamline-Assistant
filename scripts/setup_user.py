@@ -20,15 +20,17 @@ from dotenv import dotenv_values, load_dotenv
 from dotenv.parser import parse_stream
 
 import apexa_connection as connection
-from apexa_llm_endpoints import ALCF_CANDIDATES, PRESETS, EndpointRejected
+from apexa_llm_endpoints import ALCF_CANDIDATES, ARGO_SETUP_MODELS, PRESETS, EndpointRejected
 
 ACCESS_GROUPS = (
-    ("facility", "University / facility access"),
+    ("argo", "ANL Argo (ANL network / VPN)"),
     ("api", "Personal API key (separately billed)"),
     ("local", "Local / self-hosted models"),
+    ("facility", "Other university / facility access"),
 )
 PROVIDERS = {
-    "facility": (("argo", "ANL Argo"), ("alcf", "ALCF Inference Service"),
+    "argo": (("argo", "ANL Argo"),),
+    "facility": (("alcf", "ALCF Inference Service"),
                  ("mag", "AmSC Model Access Gateway"), ("custom", "Other university / facility gateway")),
     "api": (("openai", "OpenAI"), ("anthropic", "Anthropic"), ("gemini", "Google Gemini")),
     "local": (("ollama", "Ollama on this machine"), ("custom", "Other OpenAI-compatible model server")),
@@ -93,10 +95,13 @@ def client_config(client: str, repo: Path = ROOT) -> str:
 
 
 def show_options() -> None:
-    print("APEXA WebUI / CLI: access type -> provider or host -> model -> credential")
+    print("APEXA WebUI / CLI: ANL Argo by default; other connections grouped by access type")
     for index, (group, label) in enumerate(ACCESS_GROUPS, 1):
         print(f"  {index}) {label}")
-        print("     " + " | ".join(label for _, label in PROVIDERS[group]))
+        print("     ANL username -> Argo model" if group == "argo" else
+              "     " + " | ".join(label for _, label in PROVIDERS[group]))
+    print("\nArgo: choose a recorded model alias or enter an exact ID, e.g. gpt56sol.")
+    print("  Existing connections and model selections remain the defaults.")
     print("\nALCF: choose Sophia or Minerva, then a model available on that cluster.")
     print("  Recorded options include GPT-OSS/Gemma on Sophia and Inkling on Minerva.")
     print("Ollama: choose Gemma, GPT-OSS or another family, then its installed model tag.")
@@ -120,11 +125,15 @@ def choose_access(prompt, current_preset: str) -> str:
     for index, (_, label) in enumerate(ACCESS_GROUPS, 1):
         print(f"  {index}) {label}")
     print("\n  tools) Use APEXA tools in Codex / Claude Code (separate app, not APEXA chat)")
-    default = "api" if current_preset in dict(PROVIDERS["api"]) else ("local" if current_preset == "ollama" else "facility")
+    default = ("argo" if current_preset == "argo" else
+               "api" if current_preset in dict(PROVIDERS["api"]) else
+               "local" if current_preset == "ollama" else "facility")
     value = prompt("Access type", default)
     if value in PRESET_SHORTCUTS:
         return value
     group = value if value == "tools" else menu_value(value, ACCESS_GROUPS)
+    if group == "argo":
+        return "argo"
     if group == "tools":
         print("\nThis previews tool configuration for another app. Its login, chat and")
         print("approvals stay there; it does not connect a subscription to APEXA's WebUI.")
@@ -143,6 +152,12 @@ def choose_access(prompt, current_preset: str) -> str:
 
 
 def choose_model(prompt, preset: str, default: str) -> str:
+    if preset == "argo":
+        print("\nRecorded Argo model aliases (examples, not a live availability check):")
+        for index, model in enumerate(ARGO_SETUP_MODELS, 1):
+            print(f"  {index}) {model}")
+        value = prompt("Model number or exact Argo model ID", default)
+        return menu_value(value, tuple((model, model) for model in ARGO_SETUP_MODELS)) if value.isdigit() else value
     if preset.startswith("alcf-"):
         candidates = tuple((item["model"], item["model"]) for item in ALCF_CANDIDATES if item["preset"] == preset)
         print("\nRecorded ALCF model IDs (availability and tool support must be verified):")
@@ -161,6 +176,57 @@ def choose_model(prompt, preset: str, default: str) -> str:
             return prompt(f"Exact installed {family} tag", previous)
         return value
     return prompt("Exact model/deployment ID (must support tool calls)", default)
+
+
+def native_midas_candidates(repo: Path) -> list[Path]:
+    """Suggest local paths without importing engines or scanning other users' envs."""
+    bundled = (repo / ".venv").resolve()
+    search_path = os.pathsep.join(part for part in os.get_exec_path()
+                                  if not Path(part).resolve().is_relative_to(bundled))
+    executable = shutil.which("midas-pipeline", path=search_path)
+    candidates = [Path.home() / "opt" / "envs" / "midas" / "bin"]
+    if executable:
+        # Retain the environment's bin directory if the entrypoint is a symlink.
+        candidates.append(Path(executable).absolute().parent)
+    found, seen = [], set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.is_relative_to(bundled) or resolved in seen:
+            continue
+        cli = candidate / "midas-pipeline"
+        if cli.is_file() and os.access(cli, os.X_OK):
+            found.append(candidate)
+            seen.add(resolved)
+    return found
+
+
+def missing_runtime_path(key: str, value: str, repo: Path) -> None:
+    if not value or Path(value).expanduser().is_dir():
+        return
+    print(f"  {key} directory is missing: {value}")
+    print("  Enter keeps this path; '-' clears it; or enter the correct path.")
+    if key == "MIDAS_PATH":
+        print("  This clone is optional for native pip analysis; it is used for legacy/forward simulation.")
+        seen = set()
+        for candidate in (Path.home() / "Git" / "MIDAS", Path.home() / "opt" / "MIDAS", repo.parent / "MIDAS"):
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if (candidate / "utils" / "AutoCalibrateZarr.py").is_file():
+                print(f"  Possible clone (not selected or qualified): {candidate}")
+    else:
+        print("  Set this to your qualified native MIDAS environment's bin directory.")
+
+
+def confirm_save(prompt) -> bool:
+    while True:
+        value = prompt("Save configuration? Enter/y/yes saves; n/no cancels", "Y").lower()
+        if value in {"y", "yes"}:
+            return True
+        if value in {"n", "no"}:
+            return False
+        print("  Please enter y/yes to save or n/no to cancel.")
 
 
 def subscription_instructions(client: str, repo: Path) -> None:
@@ -259,6 +325,7 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
         base_url = prompt("Gateway base URL (including /v1 if required)", default_url)
     username = ""
     if selected == "argo":
+        print("\nArgo uses your ANL username and requires the ANL network or VPN. No API key needed.")
         username = prompt("ANL username", existing.get("ANL_USERNAME") or previous.get("username", ""))
     old_model = (existing.get("ARGO_MODEL", "") if existing.get("APEXA_LLM_PRESET")
                  else previous.get("model") or existing.get("ARGO_MODEL", ""))
@@ -289,15 +356,27 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
             fields += [("APEXA_ANALYSIS_HOST", "Linux analysis SSH host (or use WSL2)"),
                        ("APEXA_REMOTE_DATA_ROOTS", "Remote data roots, ':' separated")]
         else:
+            print("Native pip analysis uses APEXA_MIDAS_BIN. MIDAS_PATH is an optional clone.")
             fields += [("APEXA_MIDAS_BIN", "Native MIDAS environment bin directory"),
                        ("MIDAS_PATH", "Optional MIDAS repository clone (legacy/forward simulation)")]
         for key, label in fields:
             network_default = "data" if selected == "ollama" else ("web" if selected in {"openai", "anthropic", "gemini", "mag"} else "internal")
             default = existing.get(key) or (network_default if key == "APEXA_NETWORK" else "")
             if key == "APEXA_MIDAS_BIN" and not default:
-                executable = shutil.which("midas-pipeline")
-                if executable:
-                    default = str(Path(executable).resolve().parent)
+                candidates = native_midas_candidates(repo)
+                if candidates:
+                    print("  Found MIDAS environment(s); setup has not qualified their engines:")
+                    for candidate in candidates:
+                        print(f"    {candidate}")
+                    if len(candidates) == 1:
+                        default = str(candidates[0])
+                    else:
+                        print("  Multiple environments found. Enter the qualified bin path, or leave unset.")
+                else:
+                    print("  No external midas-pipeline found. Enter your native bin path, or leave unset.")
+                    print("  See docs/MIDAS_SETUP.md for installation and runtime validation.")
+            if key in {"APEXA_MIDAS_BIN", "MIDAS_PATH"}:
+                missing_runtime_path(key, default, repo)
             value = prompt(label, default)
             if value == "-":
                 removed_runtime.append(key)
@@ -306,7 +385,7 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
                     raise ValueError("Network tier must be web, internal or data")
                 updates[key] = str(Path(value).expanduser()) if key in {"APEXA_MIDAS_BIN", "MIDAS_PATH"} else value
                 if key in {"APEXA_MIDAS_BIN", "MIDAS_PATH"} and not Path(updates[key]).is_dir():
-                    print(f"  Directory does not exist yet: {updates[key]}")
+                    print(f"  Keeping unavailable {key}: {updates[key]}; correct it before using that runtime.")
 
     print(f"\nSelected: {config.preset} / {config.model} at {config.base_url}")
     print(f"Connection settings: {connection.settings_path()}")
@@ -314,8 +393,12 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
     if overrides:
         print("Saving will remove these old .env overrides: " + ", ".join(overrides))
         print("The new connection will use its own credential; old unscoped keys/helpers are not transferred.")
-    print("Other .env settings, including existing MIDAS routing, are preserved.")
-    if prompt("Save this configuration? y/N", "N").lower() != "y":
+    for key, value in updates.items():
+        print(f"  {key}={value}")
+    for key in removed_runtime:
+        print(f"  Clear {key}")
+    print("Other .env settings are preserved. Nothing is written until you confirm below.")
+    if not confirm_save(prompt):
         print("Cancelled. No configuration files changed.")
         return 0
 

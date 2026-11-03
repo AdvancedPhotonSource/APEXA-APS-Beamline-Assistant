@@ -23,7 +23,7 @@ extra**, never a base dependency.
 Do you have a native MIDAS on this host?
 │
 ├─ YES  (beamline host, shared /home/beams env, or you installed midas-suite yourself)
-│        → set APEXA_MIDAS_BIN=<that env>/bin   (setup_user.sh auto-detects it)
+│        → set APEXA_MIDAS_BIN=<that env>/bin   (setup can suggest local candidates)
 │        → done. Reconstruction/calibration/integration all route there.
 │
 └─ NO   (a bare dev laptop, nothing MIDAS installed)
@@ -37,11 +37,24 @@ Separately: do you need FORWARD SIMULATION?
          → everything else works without a clone.
 ```
 
-Run `./setup_user.sh` from the repository root to detect a native
-`midas-pipeline` environment and write `APEXA_MIDAS_BIN` into `.env`. The guided
-`docs/setup_user.sh` does the same while also probing network readiness; if no
-native environment is found, either script explains the `uv sync --extra midas`
-fallback.
+Run `./setup_user.sh` from the repository root. It preserves an existing
+`APEXA_MIDAS_BIN`; otherwise it looks for an executable `midas-pipeline` in
+`~/opt/envs/midas/bin` and on `PATH`, excluding this checkout's bundled `.venv`.
+One candidate is offered as the default; multiple candidates require you to
+enter the qualified bin path. Shared environments outside those locations must
+be entered explicitly. Finding an entrypoint does not qualify an engine.
+
+The older `docs/setup_user.sh` entry point runs the same wizard. Neither probes
+networks, imports scientific engines nor installs packages. Runtime settings are
+saved only after the final confirmation. If no native environment is found,
+enter its bin path or leave it unset and follow the install scenarios below.
+
+If `MIDAS_PATH` names a missing clone (for example, an old
+`~/opt/MIDAS_canonical`), setup reports that before the path prompt and suggests
+nearby clones when present. Enter preserves the path, `-` clears it, or a new
+path replaces it. The clone is optional for native pip analysis; clearing it
+does not clear `APEXA_MIDAS_BIN`. A missing native bin path must be corrected
+before running that runtime. Setup does not silently replace either route.
 
 ---
 
@@ -111,7 +124,7 @@ ran `--extra midas`).
 
 ### A. Beamline host with a shared gate-checked env (the common case)
 ```bash
-# setup_user.sh auto-detects this; or set it by hand in .env:
+# Retain the qualified path in setup, enter it explicitly, or set it in .env:
 APEXA_MIDAS_BIN=/home/beams12/S1IDUSER/opt/envs/midas/bin
 # MIDAS_PATH only if you also run forward simulation.
 uv sync          # no extra — do NOT bundle a second midas-suite

@@ -561,6 +561,14 @@ DEFAULT_PRESET = "argo"
 #: saved session keeps starting instead of dying on "unknown preset".
 LEGACY_PRESETS = {"argo-proxy": "argo"}
 
+# A short list of recorded aliases for setup, shared by the wizard and WebUI.
+# These are examples, not a live catalog or a claim of current availability.
+# Always allow an exact ID and preserve the operator's existing model.
+ARGO_SETUP_MODELS = (
+    "gpt56sol", "gpt55", "gpt61sol", "gpt6sol",
+    "claudeopus5", "claudesonnet55", "gemini35flash",
+)
+
 #: The retired sidecar's default address. An APEXA_LLM_BASE_URL still pointing
 #: here is a leftover: it would silently override the native endpoint and then
 #: fail to connect, which reads as "Argo is down" rather than "delete one line".

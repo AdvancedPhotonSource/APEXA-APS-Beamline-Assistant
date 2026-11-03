@@ -8,8 +8,11 @@
 ./setup_user.sh
 ```
 
-The script asks for an access type (facility, personal API key, or local/self-hosted),
-then its provider/host, model and credential. ALCF asks for the cluster and model;
+The script defaults directly to **ANL Argo**: enter your ANL username and select
+a recorded model alias or enter an exact ID such as `gpt56sol`. Existing
+connections and models remain the defaults. Other options group personal APIs,
+local/self-hosted models and other facilities by access type.
+ALCF asks for the cluster and model;
 Ollama asks for the model family and installed tag. Only Argo requires an ANL
 username. API keys use the OS keyring;
 selected connection settings use `~/.apexa/connection.json`. Use `--options` to
@@ -19,7 +22,9 @@ clients; APEXA WebUI subscription login remains unimplemented. See
 [connection setup](../CONNECTION_SETUP.md).
 
 Optional prompts cover the network tier and native MIDAS paths; existing values
-are preserved. Use `./setup_user.sh --connection-only` to skip runtime prompts.
+are preserved (`-` clears an optional setting). Review the final summary, then
+press **Enter** or type `yes` to save; `no` cancels without changing files.
+Use `./setup_user.sh --connection-only` to skip runtime prompts.
 Windows uses `.\docs\setup_user.ps1` with the same wizard.
 
 ### 2. Start APEXA

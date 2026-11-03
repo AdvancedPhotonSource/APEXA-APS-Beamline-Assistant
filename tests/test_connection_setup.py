@@ -166,7 +166,7 @@ def wizard(tmp_path, answers, key="", **kwargs):
 
 
 @pytest.mark.parametrize("preset,selection", [("openai", ["2", "1"]), ("anthropic", ["2", "2"]),
-                                            ("gemini", ["2", "3"]), ("mag", ["1", "3"])])
+                                            ("gemini", ["2", "3"]), ("mag", ["4", "2"])])
 def test_wizard_selects_personal_provider_without_anl_and_preserves_routing(tmp_path, isolated, preset, selection):
     from dotenv import dotenv_values
     path = tmp_path / ".env"
@@ -209,10 +209,11 @@ def test_wizard_no_keyring_failure_does_not_overwrite_files(tmp_path, monkeypatc
     assert not list(tmp_path.glob(".apexa-setup-*"))
 
 
-def test_wizard_cancel_and_exported_override_do_not_save(tmp_path, monkeypatch):
+@pytest.mark.parametrize("answer", ["n", "no", "NO"])
+def test_wizard_cancel_and_exported_override_do_not_save(tmp_path, monkeypatch, answer):
     path = tmp_path / ".env"
     path.write_text("MIDAS_PATH=/keep/this\n")
-    wizard(tmp_path, ["ollama", "fixture-model", "n"], connection_only=True)
+    wizard(tmp_path, ["ollama", "fixture-model", answer], connection_only=True)
     assert not C.settings_path().exists()
     assert path.read_text() == "MIDAS_PATH=/keep/this\n"
     monkeypatch.setenv("APEXA_LLM_API_KEY", "other-endpoint-secret")
@@ -230,8 +231,50 @@ def test_wizard_argo_and_ollama_need_no_key(tmp_path):
     assert E.active_endpoint().resolve_key() == "ollama"
 
 
+@pytest.mark.parametrize("access,model,confirmation", [
+    ("", "gpt56sol", ""), ("1", "1", "yes"), ("argo", "gpt56sol", "YES"),
+])
+def test_argo_direct_default_and_model_choice_save_without_provider_submenu(tmp_path, access, model, confirmation):
+    _, prompts = wizard(tmp_path, [access, "operator", model, confirmation], connection_only=True)
+    assert len(prompts) == 4
+    assert "[argo]" in prompts[0]
+    assert "Enter/y/yes saves; n/no cancels" in prompts[-1]
+    saved = C.load_saved()["config"]
+    assert saved["preset"] == "argo" and saved["model"] == "gpt56sol"
+    assert saved["username"] == "operator"
+    assert saved["base_url"] == E.PRESETS["argo"]().base_url
+
+
+@pytest.mark.parametrize("source", ["saved", "dotenv"])
+def test_argo_keeps_existing_username_and_unlisted_model_on_enter(tmp_path, source):
+    if source == "saved":
+        C.save_config(config("argo", username="operator").model_copy(update={"model": "existing-deployment"}), "", None)
+    else:
+        (tmp_path / ".env").write_text("ANL_USERNAME=operator\nARGO_MODEL=existing-deployment\n")
+    wizard(tmp_path, ["", "", "", ""], connection_only=True)
+    saved = C.load_saved()["config"]
+    assert saved["model"] == "existing-deployment" and saved["username"] == "operator"
+
+
+def test_invalid_confirmation_reprompts_without_writing(tmp_path, capsys):
+    _, prompts = wizard(tmp_path, ["argo", "operator", "gpt56sol", "maybe", "no"], connection_only=True)
+    assert prompts[-1] == prompts[-2]
+    assert "Please enter y/yes" in capsys.readouterr().out
+    assert not C.settings_path().exists() and not (tmp_path / ".env").exists()
+
+
+def test_setup_and_webui_share_recorded_argo_model_suggestions(monkeypatch):
+    from argo_mcp_client import APEXAClient
+    monkeypatch.setenv("APEXA_SESSION_DIR", str(C.settings_path().parent / "sessions"))
+    models = {model for group in APEXAClient().available_models.values() for model in group}
+    presets = {preset["id"]: preset for preset in C.describe()["presets"]}
+    assert presets["argo"]["model_suggestions"] == list(E.ARGO_SETUP_MODELS)
+    assert set(E.ARGO_SETUP_MODELS) <= models
+    assert all(not preset["model_suggestions"] for name, preset in presets.items() if name != "argo")
+
+
 def test_wizard_custom_gateway_and_headless_credential(tmp_path, monkeypatch):
-    wizard(tmp_path, ["1", "4", "https://campus.example/v1", "deployment-id", "y"], connection_only=True)
+    wizard(tmp_path, ["4", "3", "https://campus.example/v1", "deployment-id", "y"], connection_only=True)
     assert C.apply_saved()
     monkeypatch.setenv("APEXA_LLM_API_KEY", "headless-secret")
     ep = E.active_endpoint()
@@ -249,6 +292,57 @@ def test_wizard_full_setup_keeps_paths_and_writes_network_tier(tmp_path):
     assert data["APEXA_NETWORK"] == "web"
     assert data["APEXA_MIDAS_BIN"] == "/existing/native/bin"
     assert data["APEXA_ANALYSIS_HOST"] == "worker"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Native MIDAS paths are configured on POSIX analysis hosts")
+@pytest.mark.parametrize("action", ["keep", "clear", "replace"])
+def test_stale_clone_is_explained_and_never_changes_native_routing(tmp_path, monkeypatch, capsys, action):
+    from pathlib import Path
+    from dotenv import dotenv_values
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    native = tmp_path / "qualified" / "bin"
+    native.mkdir(parents=True)
+    clone = tmp_path / "Git" / "MIDAS"
+    (clone / "utils").mkdir(parents=True)
+    (clone / "utils" / "AutoCalibrateZarr.py").touch()
+    stale = tmp_path / "missing-MIDAS"
+    path = tmp_path / ".env"
+    path.write_text(f"APEXA_MIDAS_BIN='{native}'\nMIDAS_PATH='{stale}'\nAPEXA_NETWORK=internal\nSITE_LABEL='keep me'\n")
+    answer = {"keep": "", "clear": "-", "replace": str(clone)}[action]
+    wizard(tmp_path, ["1", "operator", "gpt56sol", "", "", answer, ""])
+    data = dotenv_values(path)
+    assert data["APEXA_MIDAS_BIN"] == str(native)
+    assert data["SITE_LABEL"] == "keep me" and data["APEXA_NETWORK"] == "internal"
+    assert data.get("MIDAS_PATH") == {"keep": str(stale), "clear": None, "replace": str(clone)}[action]
+    output = capsys.readouterr().out
+    assert "MIDAS_PATH directory is missing" in output
+    assert "optional for native pip analysis" in output
+    assert f"Possible clone (not selected or qualified): {clone}" in output
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable/symlink discovery")
+def test_native_discovery_excludes_bundled_env_and_preserves_entrypoint_environment(tmp_path, monkeypatch):
+    from pathlib import Path
+    from scripts import setup_user as setup
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    repo = tmp_path / "apexa"
+    native = tmp_path / "opt" / "envs" / "midas" / "bin"
+    bundled = repo / ".venv" / "bin"
+    for directory in (native, bundled):
+        directory.mkdir(parents=True)
+        executable = directory / "midas-pipeline"
+        executable.write_text("#!/bin/sh\nexit 99\n")  # Discovery must not run it.
+        executable.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bundled))
+    assert setup.native_midas_candidates(repo) == [native]
+    entry = tmp_path / "other-env" / "bin" / "midas-pipeline"
+    entry.parent.mkdir(parents=True)
+    entry.symlink_to(native / "midas-pipeline")
+    monkeypatch.setenv("PATH", os.pathsep.join((str(bundled), str(entry.parent))))
+    assert setup.native_midas_candidates(repo) == [native, entry.parent]
+    _, prompts = wizard(repo, ["argo", "operator", "gpt56sol", "", "", "", "no"])
+    assert "directory [" not in next(prompt for prompt in prompts if "Native MIDAS" in prompt)
+    assert not (repo / ".env").exists()  # Neither environment was silently selected.
 
 
 def test_env_updates_preserve_multiline_values_and_quote_special_paths():
@@ -303,7 +397,7 @@ def test_subscription_menu_is_preview_only(tmp_path, capsys, client, choice):
     ("2", "new-deployment", "alcf-minerva", "new-deployment"),
 ])
 def test_grouped_alcf_selects_cluster_and_its_model(tmp_path, cluster, model, preset, expected):
-    wizard(tmp_path, ["1", "2", cluster, model, "y"], connection_only=True)
+    wizard(tmp_path, ["4", "1", cluster, model, "y"], connection_only=True)
     saved = C.load_saved()["config"]
     assert saved["preset"] == preset and saved["model"] == expected
     assert saved["base_url"] == E.PRESETS[preset]().base_url

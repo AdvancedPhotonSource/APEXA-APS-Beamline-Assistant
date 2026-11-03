@@ -10,7 +10,7 @@ export interface ConnectionSettings {
   environment_override: boolean
   restart_required: boolean
   error: string | null
-  presets: { id: string; base_url: string; wire: string }[]
+  presets: { id: string; base_url: string; wire: string; model_suggestions?: string[] }[]
 }
 async function request(path: string, init?: RequestInit) {
   const res = await fetch(`/api/connection${path}`, { ...init, cache: 'no-store', signal: AbortSignal.timeout(50000) })

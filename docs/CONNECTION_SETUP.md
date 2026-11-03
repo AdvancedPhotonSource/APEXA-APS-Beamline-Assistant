@@ -16,15 +16,25 @@ account. No login or credential is required:
 ./setup_user.sh --mcp-config claude  # Print JSON for Claude Code; does not install it
 ```
 
-Windows accepts the same arguments after `.\docs\setup_user.ps1`. The setup menu
-groups connections by access type, then asks for the provider or host:
+Windows accepts the same arguments after `.\docs\setup_user.ps1`. **ANL Argo is
+the direct default** for a new setup. Other connections remain grouped by access
+type. An existing connection remains the default, including non-Argo providers:
 
 | Access type | Next choices | Works in APEXA WebUI? |
 | --- | --- | --- |
-| 1. University / facility | ANL Argo, ALCF, AmSC, other university/facility gateway | Yes |
+| 1. ANL Argo | ANL username, then Argo model | Yes |
 | 2. Personal API key | OpenAI, Anthropic, Google Gemini | Yes |
 | 3. Local / self-hosted models | Ollama on this machine, other compatible model server | Yes |
+| 4. Other university / facility | ALCF, AmSC, other university/facility gateway | Yes |
 | Separate `tools` option | Codex or Claude Code tool-configuration preview | Uses that app's chat, not APEXA WebUI |
+
+For Argo, select **1** (or press Enter on a new/Argo setup), enter your ANL
+username, then select a recorded model alias or type an exact ID such as
+`gpt56sol`. Existing model choices are preserved on Enter. Argo needs the ANL
+network or VPN and uses your ANL username; no personal API key or proxy is needed.
+The short model list contains examples, not a live catalog or an availability
+guarantee. The WebUI's **LLM connection** dialog has the same direct Argo choice
+and model suggestions.
 
 For ALCF, first choose **Sophia or Minerva**, then a model from the recorded list
 or enter an exact deployment ID. Recorded examples include GPT-OSS and Gemma on
@@ -52,8 +62,18 @@ enter `-` to clear an optional setting. The wizard does not probe networks or
 install scientific engines. For Argo on Copland, retain `internal` and the
 existing native `APEXA_MIDAS_BIN`.
 
+If a configured MIDAS directory is missing, setup explains how to keep it, clear
+it with `-`, or replace it. `MIDAS_PATH` is an optional clone for legacy/forward
+simulation; a stale path such as `~/opt/MIDAS_canonical` does not mean the native
+pip runtime is missing. Setup suggests nearby clones without choosing one for
+you. See [MIDAS setup](MIDAS_SETUP.md) for native runtime discovery.
+
 The final summary identifies any old `.env` connection overrides that will be
-removed when you save. Unrelated `.env` settings are retained. An existing
+removed when you save and lists the runtime settings to save or clear.
+**At the final prompt, Enter, `y` or `yes` saves; `n` or `no` cancels.** Nothing is
+written before confirmation. Older versions defaulted to No: a run ending with
+`Cancelled. No configuration files changed.` did not save the selected model.
+Unrelated `.env` settings are retained. An existing
 exported connection/key/token override in the calling shell stops setup with
 instructions to unset it first; this prevents a saved selection being silently
 ignored or receiving a credential intended for another endpoint. Headless hosts
