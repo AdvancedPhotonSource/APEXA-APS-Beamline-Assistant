@@ -292,12 +292,16 @@ class OpenAICompatProvider:
     # ── model resolution ────────────────────────────────────────────────────
 
     async def _resolve_model(self) -> str:
-        """Map APEXA's model id onto whatever the proxy actually serves.
+        """Map APEXA's model id onto whatever the Argo endpoint actually serves.
 
-        Argo ids are compact (``claudeopus5``); a proxy may expose dashed ids
-        (``claude-opus-5``). Match case/punctuation-insensitively so operators
-        don't have to care, and fail with the near-misses listed rather than a
-        bare 404.
+        The doc-canonical Argo id is the compact string (``gpt55``,
+        ``claudeopus5``) — "Argo LLM Model Names" in the Argo API docs says the
+        ``model`` field must be one of those. But Argo's native ``/v1/models``
+        listing returns *display* names (``GPT-5.5``, ``Claude Opus 5.5``), so we
+        match case/punctuation-insensitively against the listing and send the
+        listed id. (The compact id is also accepted per the docs; a Gate-0
+        ``--raw`` run confirms it on-site — see scripts/gate0_llm_smoke.py.)
+        Fails with the near-misses listed rather than a bare 404.
         """
         if self._resolved_model:
             return self._resolved_model
@@ -330,8 +334,8 @@ class OpenAICompatProvider:
         try:
             served = [m.id for m in (await self._client.models.list()).data]
         except Exception as e:
-            # A proxy that simply doesn't implement /models is tolerable — fall
-            # through and try the raw id. An UNREACHABLE proxy is not: swallowing
+            # An endpoint that simply doesn't implement /models is tolerable — fall
+            # through and try the raw id. An UNREACHABLE endpoint is not: swallowing
             # that here would make preflight report success against a dead
             # endpoint and render APEXA_LLM_STRICT useless (observed: pointing at
             # the wrong port resolved "fine" and only failed at first query).
@@ -380,7 +384,9 @@ class OpenAICompatProvider:
             )
 
         self._resolved_model = hit
-        print(f"  \033[2m↪ model {self.model!r} → {hit!r} (as served by proxy)\033[0m",
+        # Note: Argo's doc-canonical id is the compact one (self.model); `hit` is
+        # the display name the native /v1/models listing returns. Not a proxy.
+        print(f"  \033[2m↪ model {self.model!r} matched Argo /v1 listing {hit!r}\033[0m",
               file=sys.stderr)
         return self._resolved_model
 
@@ -554,7 +560,7 @@ class OpenAICompatProvider:
         n_messages = len(messages)
 
         if os.environ.get("APEXA_DEBUG"):
-            print(f"  [debug] proxy {self.url} model={model} "
+            print(f"  [debug] endpoint {self.url} model={model} "
                   f"msgs={n_messages} tools={len(tools or [])} dropped={sorted(self._dropped)}",
                   file=sys.stderr)
 

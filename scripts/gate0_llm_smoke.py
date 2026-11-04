@@ -141,6 +141,12 @@ def main() -> int:
                     help="ANL username for Argo, or a bearer token / API key")
     ap.add_argument("--models", nargs="+", default=None)
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--raw", action="store_true",
+                    help="Send the model id VERBATIM (the Argo doc's compact id, e.g. "
+                         "'gpt55') instead of resolving it to the /v1/models display "
+                         "name ('GPT-5.5'). The Argo docs say the compact id is the "
+                         "canonical 'model' value; use this to confirm /v1 accepts it "
+                         "before changing OpenAICompatProvider to send it.")
     args = ap.parse_args()
 
     # A preset fills in whatever wasn't given explicitly. This is how you qualify a
@@ -214,14 +220,22 @@ def main() -> int:
     by_norm = {_norm(x): x for x in served}
     for model in args.models:
         print(f"── {model}")
-        sent = model if (not served or model in served) else by_norm.get(_norm(model))
-        if sent is None:
-            near = [x for x in served if _norm(model)[:6] in _norm(x)][:4]
-            print(f"    SKIP: not served. similar: {near or 'none'}\n")
-            results.append((model, False, "not served by this endpoint"))
-            continue
-        if sent != model:
-            print(f"    (listed as {sent!r})")
+        if args.raw:
+            # Send the doc-canonical compact id unresolved, even though the
+            # /v1/models listing uses display names. If this PASSES, Argo /v1
+            # accepts the compact id and OpenAICompatProvider can stop rewriting
+            # it to the display name.
+            sent = model
+            print(f"    (raw: sending {sent!r} verbatim — the Argo doc's compact id)")
+        else:
+            sent = model if (not served or model in served) else by_norm.get(_norm(model))
+            if sent is None:
+                near = [x for x in served if _norm(model)[:6] in _norm(x)][:4]
+                print(f"    SKIP: not served. similar: {near or 'none'}\n")
+                results.append((model, False, "not served by this endpoint"))
+                continue
+            if sent != model:
+                print(f"    (listed as {sent!r})")
         ok, detail = probe(client, sent, verbose=args.verbose)
         print(f"    {'PASS' if ok else 'FAIL'}: {detail}\n")
         results.append((model, ok, detail))
