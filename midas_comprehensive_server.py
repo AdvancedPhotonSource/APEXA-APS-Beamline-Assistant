@@ -1087,8 +1087,8 @@ async def run_ff_hedm_full_workflow(
     n_cpus: int = 4,
     start_layer: int = 1,
     end_layer: int = 1,
-    indexer_backend: str = "python",
-    refine_backend: str = "python",
+    indexer_backend: str = "c-omp",
+    refine_backend: str = "c-omp",
     device: str = "cpu",
     machine: str = "",
     n_nodes: int = 1,
@@ -1124,11 +1124,12 @@ async def run_ff_hedm_full_workflow(
         n_cpus: CPU cores (default 4). Use more for production runs.
         start_layer: First layer number (default 1).
         end_layer: Last layer number (default 1 = single layer).
-        indexer_backend: "python" (in-process, GPU-capable) or "c-omp"
-                         (bundled C binary, requires OpenMP; faster on CPU).
-                         Default: python.
-        refine_backend: "python" (PyTorch, differentiable, GPU) or "c-omp".
-                        Default: python.
+        indexer_backend: "c-omp" (default; the bundled OpenMP binary). This is the
+                         only backend current MIDAS accepts — the "python" indexer
+                         was removed (handbook rule 10b) and is rejected.
+        refine_backend: "c-omp" (default; the handbook-preferred path to Grains.csv).
+                        The "python" refiner is removed/known-broken and rejected by
+                        current MIDAS; do not pass it.
         device: "cpu", "cuda", or "mps". Default: cpu.
         skip_stages: Comma-separated stage names to skip, e.g.
                      "refinement,process_grains". Valid names:
@@ -1715,8 +1716,8 @@ async def run_pf_hedm_workflow(
     machine: str = "",
     n_nodes: int = 1,
     shard_gpus: str = "",
-    indexer_backend: str = "python",
-    refine_backend: str = "python",
+    indexer_backend: str = "c-omp",
+    refine_backend: str = "c-omp",
     one_sol_per_vox: bool = True,
     skip_stages: str = "",
     resume_from: str = "",
@@ -1736,8 +1737,9 @@ async def run_pf_hedm_workflow(
         beam_size_um: Beam half-width in µm (used for scan-position filter).
         n_cpus: CPU cores.
         device: "cpu", "cuda", or "mps".
-        indexer_backend: "python" or "c-omp".
-        refine_backend: "python" or "c-omp".
+        indexer_backend: "c-omp" (default; only backend current MIDAS accepts —
+                         "python" was removed per handbook rule 10b and is rejected).
+        refine_backend: "c-omp" (default; same — do not pass "python").
         one_sol_per_vox: One orientation per voxel (default True).
         skip_stages: Comma-separated stages to skip.
         resume_from: Stage name to restart from.
@@ -12287,7 +12289,7 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
                                f"→ full FF-HEDM grain reconstruction",
                         "params": {"param_file": f"<{pf}>",
                                    "result_folder": "<where to write Grains.csv>",
-                                   "refine_backend": "python"},
+                                   "refine_backend": "c-omp"},
                         "output": "Grains.csv (grain centroid / orientation / strain)",
                         "alternative": "run_nf_hedm_reconstruction (near-field grain map) | "
                                        "run_pf_hedm_workflow (point-focus scanning)",
@@ -12310,7 +12312,7 @@ async def recommend_workflow(path: str = "", goal: str = "") -> str:
                         "params": {"param_file": f"<{_sp}{_sp_note}>",
                                    "data_file": f"<raw detector file within {sample_ffs[0]}>",
                                    "result_folder": "<Grains.csv output>",
-                                   "refine_backend": "python"},
+                                   "refine_backend": "c-omp"},
                         "sample_candidates": sample_ffs[:6],
                         "output": "Grains.csv (grain centroid / orientation / strain)",
                     })
