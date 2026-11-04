@@ -20,6 +20,18 @@ import os
 import logging
 from pathlib import Path
 
+# Load .env so operator settings reach THIS server. The MCP client spawns each
+# server with env=None (a minimal env: HOME/PATH/USER-ish), so shell `export`s do
+# NOT propagate here — .env is the only channel. Without this, operator flags read
+# below (notably APEXA_ALLOW_UNSANDBOXED_COMMANDS, which gates mkdir/find/cp/mv and
+# remote exec) are permanently invisible and un-settable. midas/synthesis already
+# do this; the core server must too.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # Suppress noisy third-party library startup messages
 logging.getLogger("numexpr").setLevel(logging.WARNING)
 logging.getLogger("numexpr.utils").setLevel(logging.WARNING)
@@ -452,9 +464,12 @@ def _command_error(command: str, *, remote=False):
     if _RAW_HARDWARE_WRITE.search(command):
         detail = "Raw EPICS writes are not available through analysis commands; use the commissioned motor broker."
     elif not _exploratory_enabled():
-        detail = ("Only simple local read-only commands are enabled. An operator may enable "
-                  "APEXA_ALLOW_UNSANDBOXED_COMMANDS=1 for shell/interpreter/SSH analysis only "
-                  "under an OS identity isolated from EPICS writes and restricted to approved data/output roots.")
+        detail = ("Only simple local read-only commands are enabled (so mkdir/find/cp/mv "
+                  "and SSH are blocked). An operator may enable them by setting "
+                  "APEXA_ALLOW_UNSANDBOXED_COMMANDS=1 in APEXA's .env (a shell export does "
+                  "NOT reach this server) and restarting — for shell/interpreter/SSH analysis "
+                  "only, under an OS identity isolated from EPICS writes and restricted to "
+                  "approved data/output roots.")
     else:
         detail = "Command is outside the configured exploratory executable list."
     return format_result({"success": False, "status": "error", "error_code": "command_policy_denied",

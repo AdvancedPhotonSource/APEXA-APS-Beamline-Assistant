@@ -405,9 +405,17 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
             print("Native pip analysis uses APEXA_MIDAS_BIN. MIDAS_PATH is an optional clone.")
             fields += [("APEXA_MIDAS_BIN", "Native MIDAS environment bin directory"),
                        ("MIDAS_PATH", "Optional MIDAS repository clone (legacy/forward simulation)")]
+        # Exploratory shell gate. Reaches the core server via .env (beamline_core_server
+        # now load_dotenv's it). Default 0 = read-only; 1 lets the agent run
+        # mkdir/find/cp/mv and SSH analysis commands (rm/rmdir/unlink still need live
+        # approval). NOT a sandbox — enable only under an OS identity with no
+        # EPICS/hardware write rights, restricted to approved data/output roots.
+        fields.append(("APEXA_ALLOW_UNSANDBOXED_COMMANDS",
+                       "Allow analysis shell cmds (mkdir/find/cp/mv, SSH)? 0=read-only, 1=enable"))
         for key, label in fields:
             network_default = "data" if selected == "ollama" else ("web" if selected in {"openai", "anthropic", "gemini", "mag"} else "internal")
-            default = existing.get(key) or (network_default if key == "APEXA_NETWORK" else "")
+            default = existing.get(key) or (network_default if key == "APEXA_NETWORK"
+                      else ("0" if key == "APEXA_ALLOW_UNSANDBOXED_COMMANDS" else ""))
             if key == "APEXA_NETWORK" and selected in {"openai", "anthropic", "gemini"}:
                 print("  Personal API verification needs 'web'. Enter preserves the displayed tier.")
             if key == "APEXA_MIDAS_BIN" and not default:
@@ -431,6 +439,12 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
             elif value:
                 if key == "APEXA_NETWORK" and value not in {"web", "internal", "data"}:
                     raise ValueError("Network tier must be web, internal or data")
+                if key == "APEXA_ALLOW_UNSANDBOXED_COMMANDS":
+                    if value not in {"0", "1"}:
+                        raise ValueError("APEXA_ALLOW_UNSANDBOXED_COMMANDS must be 0 or 1")
+                    if value == "1":
+                        print("  Enabling analysis shell commands (mkdir/find/cp/mv, SSH). "
+                              "Run APEXA under an OS identity with no EPICS/hardware write access.")
                 updates[key] = str(Path(value).expanduser()) if key in {"APEXA_MIDAS_BIN", "MIDAS_PATH"} else value
                 if key in {"APEXA_MIDAS_BIN", "MIDAS_PATH"} and not Path(updates[key]).is_dir():
                     print(f"  Keeping unavailable {key}: {updates[key]}; correct it before using that runtime.")

@@ -35,6 +35,15 @@ from pathlib import Path
 
 import logging
 
+# The MCP client spawns servers with env=None (minimal env), so shell exports don't
+# reach here — .env is the channel. APEXA_TOMO_PYTHON (and other settings) must be
+# read from it. (Same fix midas/synthesis/core use.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from mcp.server.mcpserver import MCPServer  # mcp>=2: FastMCP was renamed
 
 logging.getLogger("mcp").setLevel(logging.WARNING)

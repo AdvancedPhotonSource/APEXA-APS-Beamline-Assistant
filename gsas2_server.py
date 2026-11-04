@@ -43,6 +43,15 @@ from pathlib import Path
 
 import logging
 
+# The MCP client spawns servers with env=None (minimal env), so shell exports don't
+# reach here — .env is the channel. APEXA_GSASII_PYTHON / APEXA_AGENTIC_GSAS2 must be
+# read from it. (Same fix midas/synthesis/core use.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from apexa_powder_contract import execution_state, outcome_summary
 
 from mcp.server.mcpserver import MCPServer  # mcp>=2: FastMCP was renamed
