@@ -24,9 +24,18 @@ if [ -d "frontend" ]; then
         NEED_BUILD=1
     fi
     if [ "$NEED_BUILD" = "1" ]; then
-        echo "🔨 Building React frontend..."
-        (cd frontend && npm install --silent && npm run build) 2>&1 | tail -3
-        echo "✓ Frontend built"
+        if command -v npm >/dev/null 2>&1; then
+            echo "🔨 Building React frontend..."
+            (cd frontend && npm install --silent && npm run build) 2>&1 | tail -3
+            echo "✓ Frontend built"
+        elif [ -f frontend/dist/index.html ]; then
+            # No npm but a committed bundle exists — serve it. (mtimes after a git
+            # checkout make NEED_BUILD fire spuriously; the shipped dist is current.)
+            echo "ℹ Using the committed frontend/dist (npm absent — not rebuilding)."
+        else
+            echo "No prebuilt frontend/dist and npm is absent. Install Node/npm or deploy a prebuilt dist."
+            exit 1
+        fi
     fi
 fi
 

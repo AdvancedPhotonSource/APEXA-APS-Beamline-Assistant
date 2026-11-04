@@ -34,14 +34,25 @@ if [ -d "frontend" ]; then
         if [ "$config" -nt frontend/dist/index.html ]; then NEED_BUILD=1; fi
     done
     if [ "$NEED_BUILD" = "1" ]; then
-        echo ""
-        echo "🔨 Building React frontend..."
-        if [ ! -d frontend/node_modules ]; then
-            echo "Frontend build dependencies are absent. Stage them with npm ci on a connected setup host, or deploy a prebuilt frontend/dist."
+        if [ -d frontend/node_modules ]; then
+            echo ""
+            echo "🔨 Building React frontend..."
+            (cd frontend && npm run build)
+            echo "✓ Frontend built"
+        elif [ -f frontend/dist/index.html ]; then
+            # Can't rebuild (no npm deps), but a committed bundle is present. The
+            # shipped frontend/dist is self-contained, so SERVE IT rather than
+            # failing — this is the documented no-Node deploy path. (NEED_BUILD here
+            # is just the mtime heuristic firing: git checkout does not preserve
+            # mtimes, so a source file routinely looks "newer" than dist/index.html
+            # on a fresh clone/pull even though the bundle is current.)
+            echo "ℹ Using the committed frontend/dist (npm deps absent — not rebuilding)."
+            echo "  To refresh it later: run 'npm ci && npm run build' in frontend/ on a connected host."
+        else
+            echo "No prebuilt frontend/dist and npm build deps are absent."
+            echo "Stage deps with 'npm ci' in frontend/ on a connected host, or deploy a prebuilt frontend/dist."
             exit 1
         fi
-        (cd frontend && npm run build)
-        echo "✓ Frontend built"
     fi
 fi
 
