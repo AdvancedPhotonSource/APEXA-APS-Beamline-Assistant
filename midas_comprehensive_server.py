@@ -1719,6 +1719,8 @@ async def run_pf_hedm_workflow(
     indexer_backend: str = "c-omp",
     refine_backend: str = "c-omp",
     one_sol_per_vox: bool = True,
+    scan_work_dir: str = "",
+    num_files_per_scan: int = 0,
     skip_stages: str = "",
     resume_from: str = "",
 ) -> str:
@@ -1741,6 +1743,15 @@ async def run_pf_hedm_workflow(
                          "python" was removed per handbook rule 10b and is rejected).
         refine_backend: "c-omp" (default; same — do not pass "python").
         one_sol_per_vox: One orientation per voxel (default True).
+        scan_work_dir: ABSOLUTE dir for per-scan intermediates (zarr, Temp/AllPeaks,
+                       reduction CSVs). **Critical:** if omitted, midas-pipeline writes
+                       these INTO THE RAW DATA TREE next to the detector files (pf
+                       capsule phase-3-run.md:46) — polluting /gdata. APEXA therefore
+                       ALWAYS passes it, defaulting to <result_folder>/scan_work so
+                       nothing is written beside the raw data.
+        num_files_per_scan: Files per scan position. Pass it for a per-frame
+                       TIFF/.h5 series (e.g. 1440); it defaults to 1 in midas-pipeline,
+                       which silently yields a 0-voxel layer (pf capsule phase-3).
         skip_stages: Comma-separated stages to skip.
         resume_from: Stage name to restart from.
 
@@ -1752,6 +1763,15 @@ async def run_pf_hedm_workflow(
         result_path = Path(result_folder).expanduser().absolute()
         result_path.mkdir(parents=True, exist_ok=True)
         _announce_output("run_pf_hedm_workflow", result_path, n_scans=n_scans, device=device)
+
+        # Per-scan intermediates must NOT land in the raw data tree. midas-pipeline
+        # writes them next to the raw detector files unless --scan-work-dir is an
+        # ABSOLUTE path (pf capsule phase-3-run.md:46). Default it under the result
+        # folder (the designated output area) and ALWAYS pass it, so a PF run never
+        # scatters zarr/Temp/CSVs into /gdata beside the data.
+        work_path = (Path(scan_work_dir).expanduser().absolute() if scan_work_dir
+                     else result_path / "scan_work")
+        work_path.mkdir(parents=True, exist_ok=True)
 
         valid, param_path = validate_file(param_file)
         if not valid:
@@ -1776,7 +1796,11 @@ async def run_pf_hedm_workflow(
             "--device", device,
             "--indexer-backend", indexer_backend,
             "--refine-backend", refine_backend,
+            # ALWAYS redirect per-scan work out of the raw data tree (absolute path).
+            "--scan-work-dir", str(work_path),
         ]
+        if num_files_per_scan and num_files_per_scan > 0:
+            cmd += ["--num-files-per-scan", str(num_files_per_scan)]
         # Compute dispatch (see docs/COMPUTE_DISPATCH.md): route to a GPU cluster.
         if machine:
             cmd += ["--machine", machine]
