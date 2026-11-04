@@ -90,7 +90,7 @@ export function ConnectionDialog({ onClose }: { onClose: () => void }) {
       <button type="button" onClick={onClose} disabled={busy} aria-label="Close connection settings">×</button></div>
     {loading && <p role="status" className="text-xs text-[var(--apexa-text-muted)]">Loading connection settings…</p>}
     {error && <p role="alert" className="mb-3 text-xs text-red-500">{error}</p>}
-    {!loading && !settings && <button type="button" className="apexa-compact-button" onClick={() => {
+    {!loading && !settings && <button type="button" className="apexa-dialog-button" onClick={() => {
       setError(''); setLoading(true); setLoadAttempt(attempt => attempt + 1)
     }}>Retry loading settings</button>}
     {config && settings && <form className="space-y-3" onSubmit={e => { e.preventDefault(); void act(true) }}>
@@ -131,8 +131,8 @@ export function ConnectionDialog({ onClose }: { onClose: () => void }) {
       {config.preset === 'ollama' && <p className="text-xs text-[var(--apexa-text-muted)]">Use the exact installed tag from <code>ollama list</code>, for example a Gemma or GPT-OSS model with tool support. Setup does not download models.</p>}
       {config.preset.startsWith('alcf-') && <p className="text-xs text-[var(--apexa-text-muted)]">ALCF hosts the model at the facility. Recorded options include GPT-OSS and Gemma on Sophia, and Inkling on Minerva; verify the exact model ID and current availability.</p>}
       <p className="text-xs text-[var(--apexa-text-muted)]">Verify sends two small synthetic requests to the endpoint above and may use API credits. No conversation or experimental data is sent.</p>
-      <div className="flex justify-end gap-2"><button type="button" className="apexa-compact-button" disabled={busy || !config.model} onClick={() => void act(false)}>Verify connection</button>
-        <button type="submit" className="apexa-compact-button" disabled={busy}>Save for restart</button></div>
+      <div className="flex flex-wrap justify-end gap-2"><button type="button" className="apexa-dialog-button" disabled={busy || !config.model} onClick={() => void act(false)}>Verify connection</button>
+        <button type="submit" className="apexa-dialog-button" disabled={busy}>Save for restart</button></div>
     </form>}
     {settings && <details className="mt-3 text-xs text-[var(--apexa-text-muted)]"><summary>What about ChatGPT / Claude subscriptions?</summary>
       <p className="mt-2">Subscription login is not available in APEXA’s WebUI. The separate tool integration lets Codex or Claude Code call APEXA analysis tools from their own chat interface. API accounts have separate billing.</p>

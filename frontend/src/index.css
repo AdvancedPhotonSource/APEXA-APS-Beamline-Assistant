@@ -159,6 +159,15 @@
 .apexa-compact-button:focus-visible { outline: 2px solid var(--apexa-accent); outline-offset: 1px; }
 .apexa-compact-button:disabled { opacity: 0.4; cursor: default; }
 .apexa-topbar .apexa-compact-button { width: 24px; height: 24px; border-radius: 4px; }
+/* Text actions size to their labels; compact buttons above are square icons. */
+.apexa-dialog-button {
+  display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center;
+  min-height: 32px; padding: 6px 12px; border: 1px solid var(--apexa-border); border-radius: 6px;
+  font-size: 12px; line-height: 1.4; white-space: nowrap;
+  cursor: pointer; color: var(--apexa-text-2); background: var(--apexa-surface-2);
+}
+.apexa-dialog-button:hover:not(:disabled) { border-color: var(--apexa-accent); }
+.apexa-dialog-button:disabled { opacity: 0.4; cursor: default; }
 .apexa-send-button:not(:disabled) { background: var(--apexa-accent); color: white; border-color: var(--apexa-accent); }
 .apexa-layout-switch {
   display: flex; flex-shrink: 0; padding: 1px; gap: 1px; border-radius: 5px;
@@ -247,6 +256,7 @@
 }
 @media (pointer: coarse) {
   .apexa-compact-button, .apexa-topbar .apexa-compact-button { width: 36px; height: 36px; }
+  .apexa-dialog-button { min-height: 44px; }
   .apexa-model-select { height: 36px; }
   .apexa-layout-switch button { min-height: 36px; }
 }
