@@ -20,7 +20,7 @@ from dotenv import dotenv_values, load_dotenv
 from dotenv.parser import parse_stream
 
 import apexa_connection as connection
-from apexa_llm_endpoints import ALCF_CANDIDATES, API_SETUP_MODELS, ARGO_SETUP_MODELS, PRESETS, EndpointRejected
+from apexa_llm_endpoints import PRESETS, EndpointRejected, setup_model_choices
 
 ACCESS_GROUPS = (
     ("argo", "ANL Argo (ANL network / VPN)"),
@@ -101,7 +101,7 @@ def show_options() -> None:
         print(f"  {index}) {label}")
         print("     ANL username -> Argo model" if group == "argo" else
               "     " + " | ".join(label for _, label in PROVIDERS[group]))
-    print("\nArgo: choose a recorded model alias or enter an exact ID, e.g. gpt56sol.")
+    print("\nArgo: choose a model by name/number; APEXA fills in its ID.")
     print("  Existing connections and model selections remain the defaults.")
     print("\nALCF: choose Sophia or Minerva, then a model available on that cluster.")
     print("  Recorded options include GPT-OSS/Gemma on Sophia and Inkling on Minerva.")
@@ -172,9 +172,10 @@ def required_model(prompt, label: str, default: str = "") -> str:
 
 
 def choose_model(prompt, preset: str, default: str) -> str:
-    if preset in API_SETUP_MODELS:
-        provider = dict(PROVIDERS["api"])[preset]
-        candidates = API_SETUP_MODELS[preset]
+    candidates = setup_model_choices(preset)
+    if candidates:
+        provider = {**dict(PROVIDERS["api"]), "argo": "ANL Argo", "mag": "AmSC gateway",
+                    "alcf-sophia": "ALCF Sophia", "alcf-minerva": "ALCF Minerva"}[preset]
         choices = (*candidates, ("custom", "Other model (advanced)"))
         print(f"\n{provider} models:")
         for index, (_, label) in enumerate(choices, 1):
@@ -199,19 +200,6 @@ def choose_model(prompt, preset: str, default: str) -> str:
             if value == "custom":
                 return required_model(prompt, f"{provider} model ID", default)
             return value
-    if preset == "argo":
-        print("\nRecorded Argo model aliases (examples, not a live availability check):")
-        for index, model in enumerate(ARGO_SETUP_MODELS, 1):
-            print(f"  {index}) {model}")
-        value = required_model(prompt, "Model number or exact Argo model ID", default)
-        return menu_value(value, tuple((model, model) for model in ARGO_SETUP_MODELS)) if value.isdigit() else value
-    if preset.startswith("alcf-"):
-        candidates = tuple((item["model"], item["model"]) for item in ALCF_CANDIDATES if item["preset"] == preset)
-        print("\nRecorded ALCF model IDs (availability and tool support must be verified):")
-        for index, (model, _) in enumerate(candidates, 1):
-            print(f"  {index}) {model}")
-        value = required_model(prompt, "Model number or exact model ID", default)
-        return menu_value(value, candidates) if value.isdigit() else value
     if preset == "ollama":
         print("\nLocal model family (run ollama list to see exact installed tags):")
         print("  1) Gemma\n  2) GPT-OSS\n  3) Other installed model")

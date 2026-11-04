@@ -29,16 +29,20 @@ type. An existing connection remains the default, including non-Argo providers:
 | 5. External app integration | Codex or Claude Code tool-configuration preview | Uses that app's chat, not APEXA WebUI |
 
 For Argo, select **1** (or press Enter on a new/Argo setup), enter your ANL
-username, then select a recorded model alias or type an exact ID such as
-`gpt56sol`. Existing model choices are preserved on Enter. Argo needs the ANL
+username, then choose a model by name/number, such as **GPT-5.6 Sol** or
+**Claude Sonnet 5.5**. APEXA fills in Argo's model ID. Existing model choices are
+preserved on Enter. Argo needs the ANL
 network or VPN and uses your ANL username; no personal API key or proxy is needed.
 The short model list contains examples, not a live catalog or an availability
-guarantee. The WebUI's **LLM connection** dialog has the same direct Argo choice
-and model suggestions.
+guarantee. The WebUI's **LLM connection → Model** dropdown offers the same named
+choices. **Other model (advanced)** is available for an unlisted model; ordinary
+setup does not require knowing or typing an ID. The CLI still accepts direct IDs
+for experienced users.
 
-For ALCF, first choose **Sophia or Minerva**, then a model from the recorded list
-or enter an exact deployment ID. Recorded examples include GPT-OSS and Gemma on
-Sophia, and Inkling on Minerva. ALCF is the hosting service, not a model family.
+For ALCF, first choose **Sophia or Minerva**, then a model by name. Recorded
+examples include GPT-OSS and Gemma on Sophia, and Inkling on Minerva. AmSC also
+offers named Claude models. The CLI and WebUI fill in each host's own ID;
+advanced entry remains available. ALCF is the hosting service, not a model family.
 For Ollama, choose **Gemma, GPT-OSS or another installed model**, then enter the
 exact local model tag (see `ollama list`). A family name does not install a model
 or establish that its build supports tool calls. Setup does not download models,
@@ -76,7 +80,9 @@ to look up or type one. For example, Anthropic offers Claude Sonnet 5.5, Haiku
 present). The WebUI offers the same named choices in a **Model** dropdown.
 **Other model (advanced)** allows an exact ID for models outside the short list;
 direct ID entry in the terminal still works. Existing model choices, including
-unlisted IDs, are preserved. Empty advanced input asks again. Ctrl+C cancels setup.
+unlisted IDs, are preserved. The WebUI shows an unlisted saved selection as
+**Current model**; editing its ID requires choosing **Other model (advanced)**.
+Empty advanced input asks again in the terminal. Ctrl+C cancels setup.
 
 The offline choices were checked against provider documentation on **2026-11-03**:
 
@@ -208,6 +214,9 @@ managed deployment, restart the APEXA service through its supervisor.
 The connection dialog shows loading progress and a specific error if settings
 cannot be fetched. After correcting the server, choose **Retry loading settings**;
 opening the dialog and retrying only read settings and make no model requests.
+If the dialog asks you to restart to load the named model menu, the running
+backend still has the older model catalog. Restart the server and reopen the
+dialog; refreshing the browser alone cannot update that catalog.
 
 Open **gear → LLM connection** in the compact WebUI header. Choose **Access type**,
 then **Provider / host** for non-Argo access, paste the key in the **API key**

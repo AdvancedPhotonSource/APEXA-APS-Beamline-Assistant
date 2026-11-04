@@ -173,7 +173,7 @@ def save_config(config: ConnectionConfig, api_key: str, expected_revision: str |
 
 
 def describe() -> dict:
-    from apexa_llm_endpoints import API_SETUP_MODELS, ARGO_SETUP_MODELS
+    from apexa_llm_endpoints import ARGO_SETUP_MODELS, setup_model_choices
     error = None
     try:
         saved = load_saved()
@@ -190,7 +190,7 @@ def describe() -> dict:
             "presets": [{"id": name, "base_url": cls().base_url, "wire": cls().wire,
                          "model_suggestions": list(ARGO_SETUP_MODELS) if name == "argo" else [],
                          "model_choices": [{"id": model, "label": label}
-                                           for model, label in API_SETUP_MODELS.get(name, ())]}
+                                           for model, label in setup_model_choices(name)]}
                         for name, cls in PRESETS.items()
                         if cls().tool_calling and cls().wire in SUPPORTED_WIRES]}
 

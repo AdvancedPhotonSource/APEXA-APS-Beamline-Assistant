@@ -43,7 +43,7 @@ export function ConnectionDialog({ onClose }: { onClose: () => void }) {
     getConnection(controller.signal).then(data => {
       if (live) {
         const current = data.saved?.config ?? data.active
-        setSettings(data); setConfig(current); setAccess(accessFor(current.preset)); setError(data.error ?? '')
+        setSettings(data); setConfig(current); setAccess(accessFor(current.preset)); setManualModel(false); setError(data.error ?? '')
       }
     }).catch(e => {
       if (live) setError(e instanceof Error ? e.message : 'Could not load connection settings. Check the APEXA server and retry.')
@@ -83,7 +83,8 @@ export function ConnectionDialog({ onClose }: { onClose: () => void }) {
   const selectedPreset = settings?.presets.find(p => p.id === config?.preset)
   const modelSuggestions = selectedPreset?.model_suggestions ?? []
   const modelChoices = selectedPreset?.model_choices ?? []
-  const customModel = manualModel || (!!config?.model && !modelChoices.some(model => model.id === config.model))
+  const unlistedModel = !!config?.model && !modelChoices.some(model => model.id === config.model)
+  const needsModelMenu = !!config && !['custom', 'ollama'].includes(config.preset) && modelChoices.length === 0
   return <dialog ref={dialog} aria-labelledby={title} onCancel={e => { if (busy) e.preventDefault(); else onClose() }}
     className="m-auto w-[calc(100%_-_2rem)] max-w-lg max-h-[calc(100dvh_-_2rem)] overflow-y-auto rounded-xl border border-[var(--apexa-border)] bg-[var(--apexa-surface)] p-4 text-[var(--apexa-text)] shadow-2xl backdrop:bg-black/50">
     <div className="mb-3 flex items-center justify-between"><h2 id={title} className="text-sm font-semibold">LLM connection</h2>
@@ -115,24 +116,28 @@ export function ConnectionDialog({ onClose }: { onClose: () => void }) {
       <label className="block text-xs">Endpoint URL<input className={input} value={config.base_url} required readOnly={config.preset !== 'custom'} disabled={busy}
         onChange={e => { update({ base_url: e.target.value }); setKey('') }} /></label>
       {modelChoices.length > 0 && <label className="block text-xs">Model<select aria-label="Model" className={input}
-        value={customModel ? CUSTOM_MODEL : config.model} required disabled={busy} onChange={e => {
+        value={manualModel ? CUSTOM_MODEL : config.model} required disabled={busy} onChange={e => {
           const manual = e.target.value === CUSTOM_MODEL
-          setManualModel(manual); update({ model: manual ? '' : e.target.value })
+          setManualModel(manual); update({ model: manual ? config.model : e.target.value })
         }}>
         <option value="" disabled>Choose a model</option>
         {modelChoices.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+        {unlistedModel && !manualModel && <option value={config.model}>Current model ({config.model})</option>}
         <option value={CUSTOM_MODEL}>Other model (advanced)</option>
       </select></label>}
-      {(modelChoices.length === 0 || customModel) && <label className="block text-xs">Model / deployment ID<input className={input} value={config.model} required maxLength={200} disabled={busy} list={modelSuggestions.length ? modelList : undefined}
-        placeholder="Exact model ID supplied by your provider" onChange={e => update({ model: e.target.value })} /></label>}
-      {modelChoices.length > 0 && <p className="text-xs text-[var(--apexa-text-muted)]">APEXA fills in the API ID for the model you select. Verify connection checks access for your account.</p>}
+      {needsModelMenu && <p role="status" className="text-xs text-[var(--apexa-text-muted)]">Restart the APEXA server to load the named model menu, then reopen this dialog.</p>}
+      {((!needsModelMenu && modelChoices.length === 0) || manualModel) && <label className="block text-xs">
+        {manualModel ? 'Model ID (advanced)' : config.preset === 'ollama' ? 'Installed model' : 'Model / deployment name'}
+        <input className={input} value={config.model} required maxLength={200} disabled={busy} list={modelSuggestions.length ? modelList : undefined}
+          placeholder={config.preset === 'ollama' ? 'Model tag shown by ollama list' : 'Exact name from your model server or provider'}
+          onChange={e => update({ model: e.target.value })} /></label>}
+      {modelChoices.length > 0 && <p className="text-xs text-[var(--apexa-text-muted)]">Choose a model by name. APEXA fills in its ID. Verify connection checks access for your account.</p>}
       {modelSuggestions.length > 0 && <datalist id={modelList}>{modelSuggestions.map(model => <option key={model} value={model} />)}</datalist>}
-      {config.preset === 'argo' && <p className="text-xs text-[var(--apexa-text-muted)]">Suggestions are recorded Argo aliases, not a live availability check. You can enter any exact model ID.</p>}
       {config.preset === 'ollama' && <p className="text-xs text-[var(--apexa-text-muted)]">Use the exact installed tag from <code>ollama list</code>, for example a Gemma or GPT-OSS model with tool support. Setup does not download models.</p>}
-      {config.preset.startsWith('alcf-') && <p className="text-xs text-[var(--apexa-text-muted)]">ALCF hosts the model at the facility. Recorded options include GPT-OSS and Gemma on Sophia, and Inkling on Minerva; verify the exact model ID and current availability.</p>}
+      {config.preset.startsWith('alcf-') && <p className="text-xs text-[var(--apexa-text-muted)]">ALCF runs the selected model on facility servers. Use Verify connection to check your access.</p>}
       <p className="text-xs text-[var(--apexa-text-muted)]">Verify sends two small synthetic requests to the endpoint above and may use API credits. No conversation or experimental data is sent.</p>
-      <div className="flex flex-wrap justify-end gap-2"><button type="button" className="apexa-dialog-button" disabled={busy || !config.model} onClick={() => void act(false)}>Verify connection</button>
-        <button type="submit" className="apexa-dialog-button" disabled={busy}>Save for restart</button></div>
+      <div className="flex flex-wrap justify-end gap-2"><button type="button" className="apexa-dialog-button" disabled={busy || needsModelMenu || !config.model} onClick={() => void act(false)}>Verify connection</button>
+        <button type="submit" className="apexa-dialog-button" disabled={busy || needsModelMenu}>Save for restart</button></div>
     </form>}
     {settings && <details className="mt-3 text-xs text-[var(--apexa-text-muted)]"><summary>What about ChatGPT / Claude subscriptions?</summary>
       <p className="mt-2">Subscription login is not available in APEXA’s WebUI. The separate tool integration lets Codex or Claude Code call APEXA analysis tools from their own chat interface. API accounts have separate billing.</p>

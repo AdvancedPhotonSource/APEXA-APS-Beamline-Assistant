@@ -599,10 +599,16 @@ LEGACY_PRESETS = {"argo-proxy": "argo"}
 # A short list of recorded aliases for setup, shared by the wizard and WebUI.
 # These are examples, not a live catalog or a claim of current availability.
 # Always allow an exact ID and preserve the operator's existing model.
-ARGO_SETUP_MODELS = (
-    "gpt56sol", "gpt55", "gpt61sol", "gpt6sol",
-    "claudeopus5", "claudesonnet55", "gemini35flash",
+ARGO_SETUP_MODEL_CHOICES = (
+    ("gpt56sol", "GPT-5.6 Sol"),
+    ("gpt55", "GPT-5.5"),
+    ("gpt61sol", "GPT-6.1 Sol"),
+    ("gpt6sol", "GPT-6 Sol"),
+    ("claudeopus5", "Claude Opus 5"),
+    ("claudesonnet55", "Claude Sonnet 5.5"),
+    ("gemini35flash", "Gemini 3.5 Flash"),
 )
+ARGO_SETUP_MODELS = tuple(model for model, _ in ARGO_SETUP_MODEL_CHOICES)
 
 # Short, offline setup menus shared by the terminal and WebUI. Labels map to
 # public API IDs, not Argo aliases. Existing selections are never migrated.
@@ -649,29 +655,59 @@ _RETIRED_SIDECAR = re.compile(r"^https?://(127\.0\.0\.1|localhost|\[::1\]):44497
 ALCF_CANDIDATES: list[dict] = [
     # preset          model id                                    flags     note
     {"preset": "alcf-sophia",  "model": "openai/gpt-oss-120b",
+     "label": "GPT-OSS 120B",
      "flags": "B,R,T,H", "note": "only Sophia model with all four flags; Harmony-native"},
     {"preset": "alcf-sophia",  "model": "openai/gpt-oss-20b",
+     "label": "GPT-OSS 20B",
      "flags": "B,R,T,H", "note": "same flags, smaller/faster — cheap-turn fallback"},
     {"preset": "alcf-sophia",  "model": "google/gemma-4-31B-it",
+     "label": "Gemma 4 31B",
      "flags": "R,T,H",   "note": "reasoning + tools + hot; small for APEXA's scope"},
     {"preset": "alcf-sophia",  "model": "google/gemma-4-E4B-it",
+     "label": "Gemma 4 E4B",
      "flags": "R,T,H",   "note": "smallest hot Gemma 4"},
     {"preset": "alcf-sophia",  "model": "google/gemma-3-27b-it",
+     "label": "Gemma 3 27B",
      "flags": "B,T",     "note": "no reasoning flag; cold start"},
     {"preset": "alcf-sophia",  "model": "nvidia/nemotron-3-super-120b",
+     "label": "Nemotron 3 Super 120B",
      "flags": "R,T",     "note": "reasoning + tools but NOT hot → 10-15 min cold start"},
     {"preset": "alcf-sophia",  "model": "arcee-ai/Trinity-Large-Thinking-W4A16",
+     "label": "Trinity Large Thinking (W4A16)",
      "flags": "R,T",     "note": "reasoning + tools; 4-bit quantized; not hot"},
     {"preset": "alcf-sophia",  "model": "meta-llama/Llama-3.3-70B-Instruct",
+     "label": "Llama 3.3 70B Instruct",
      "flags": "B,T",     "note": "mature tool calling, no reasoning flag"},
     {"preset": "alcf-sophia",  "model": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+     "label": "Llama 4 Scout 17B Instruct",
      "flags": "B,T",     "note": "long context MoE"},
     # Minerva: always-hot, tool calling UNCONFIRMED — the reason to measure.
     {"preset": "alcf-minerva", "model": "inkling-bf16",
+     "label": "Inkling (BF16)",
      "flags": "H(+T*)",  "note": "no T flag in docs, but CHAINS — measured 3.8s, fastest"},
     {"preset": "alcf-minerva", "model": "nemotron-3-ultra",
+     "label": "Nemotron 3 Ultra",
      "flags": "H(+T*)",  "note": "no T flag in docs, but CHAINS — measured 3.9s"},
 ]
+
+
+def setup_model_choices(preset: str) -> tuple[tuple[str, str], ...]:
+    """Readable, offline choices shared by terminal setup and the WebUI.
+
+    IDs belong to the selected host: Argo aliases, public API IDs and facility
+    deployments must not be interchanged. Custom/local tags remain host-specific.
+    """
+    if preset == "argo":
+        return ARGO_SETUP_MODEL_CHOICES
+    if preset in API_SETUP_MODELS:
+        return API_SETUP_MODELS[preset]
+    if preset.startswith("alcf-"):
+        return tuple((item["model"], item["label"]) for item in ALCF_CANDIDATES
+                     if item["preset"] == preset)
+    if preset == "mag":
+        return (("claude-sonnet", "Claude Sonnet"), ("claude-opus", "Claude Opus"),
+                ("claude-haiku", "Claude Haiku"))
+    return ()
 
 
 def preset_for_model(model_id: str) -> Optional[str]:

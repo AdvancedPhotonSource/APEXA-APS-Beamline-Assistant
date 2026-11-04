@@ -350,12 +350,33 @@ def test_setup_and_webui_share_recorded_argo_model_suggestions(monkeypatch):
     assert all(not preset["model_suggestions"] for name, preset in presets.items() if name != "argo")
 
 
-def test_webui_and_terminal_share_named_api_choices():
+def test_webui_and_terminal_share_named_model_choices():
     presets = {preset["id"]: preset for preset in C.describe()["presets"]}
-    for provider, choices in E.API_SETUP_MODELS.items():
+    for provider in ("argo", "openai", "anthropic", "gemini", "alcf-sophia", "alcf-minerva", "mag"):
+        choices = E.setup_model_choices(provider)
         assert presets[provider]["model_choices"] == [{"id": model, "label": label} for model, label in choices]
         assert all(model != label for model, label in choices)
     assert presets["custom"]["model_choices"] == []
+    assert presets["ollama"]["model_choices"] == []
+    # Same displayed model name uses different IDs on Argo and the public API.
+    by_label = lambda provider: {choice["label"]: choice["id"] for choice in presets[provider]["model_choices"]}
+    assert by_label("argo")["Claude Sonnet 5.5"] == "claudesonnet55"
+    assert by_label("anthropic")["Claude Sonnet 5.5"] == "claude-sonnet-5-5"
+
+
+@pytest.mark.parametrize("provider,number,label,model", [
+    ("argo", "1", "GPT-5.6 Sol", "gpt56sol"),
+    ("argo", "6", "Claude Sonnet 5.5", "claudesonnet55"),
+    ("alcf-sophia", "3", "Gemma 4 31B", "google/gemma-4-31B-it"),
+    ("alcf-minerva", "1", "Inkling (BF16)", "inkling-bf16"),
+    ("mag", "2", "Claude Opus", "claude-opus"),
+])
+def test_named_facility_selection_stores_the_hosts_model_id(tmp_path, capsys, provider, number, label, model):
+    identity = ["operator"] if provider == "argo" else []
+    wizard(tmp_path, [provider, *identity, number, "yes"], connection_only=True)
+    saved = C.load_saved()["config"]
+    assert saved["preset"] == provider and saved["model"] == model
+    assert f"{number}) {label}" in capsys.readouterr().out
 
 
 def test_wizard_custom_gateway_and_headless_credential(tmp_path, monkeypatch):
