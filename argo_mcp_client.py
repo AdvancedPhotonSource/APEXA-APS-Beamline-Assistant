@@ -3047,7 +3047,7 @@ class APEXAClient:
 
                     if _preset:
                         os.environ["APEXA_LLM_PRESET"] = _preset
-                        os.environ["APEXA_LLM_MODE"] = "proxy"   # ALCF is proxy-path only
+                        os.environ["APEXA_LLM_MODE"] = "native"  # ALCF is native-path only
                         os.environ.pop("APEXA_LLM_BASE_URL", None)  # let the preset supply it
                         self.selected_model = _canon
                         self.environment = _preset

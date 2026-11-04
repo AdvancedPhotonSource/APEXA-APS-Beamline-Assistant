@@ -98,26 +98,27 @@ class Profile:
 # already paid for), then an institutional gateway, then personal keys, with the
 # local model last — it always works, so anything above it should win.
 BUILTIN_PROFILES: List[Profile] = [
-    # llm_mode="proxy" is what makes this profile use the endpoint at all:
-    # select_provider() only builds OpenAICompatProvider in proxy mode, and the
-    # global default is still "argo". Without it, a host whose .env does not
-    # already say proxy silently got the legacy /chat/ provider instead.
-    Profile("anl", "argo", requires=ANL, llm_mode="proxy",
+    # llm_mode="native" is what makes this profile use the endpoint at all:
+    # select_provider() only builds OpenAICompatProvider on the native path. The
+    # global default is now "native" too, but set it explicitly so the profile is
+    # self-describing and immune to a future default change. ("proxy" is still
+    # accepted as a back-compat alias — see native_mode_enabled.)
+    Profile("anl", "argo", requires=ANL, llm_mode="native",
             notes="Beamline default. Argo's native OpenAI endpoint — no sidecar."),
     Profile("alcf", "alcf-minerva", model="inkling-bf16", requires=ALCF,
-            llm_mode="proxy",
+            llm_mode="native",
             notes="ALCF Inference Service, per-user Globus identity. On-prem DOE hardware."),
     Profile("mag", "mag", requires=WEB, external=True,
             notes="AmSC Model Access Gateway (DOE). Anthropic wire, AMSC_TOKEN."),
-    Profile("institutional", "custom", requires=WEB, llm_mode="proxy", external=True,
+    Profile("institutional", "custom", requires=WEB, llm_mode="native", external=True,
             notes="Another institution's OpenAI-compatible gateway. Set base_url."),
     Profile("anthropic-personal", "anthropic", requires=WEB, external=True,
             notes="api.anthropic.com with a personal key. Native /v1/messages wire."),
-    Profile("openai-personal", "openai", requires=WEB, llm_mode="proxy", external=True,
+    Profile("openai-personal", "openai", requires=WEB, llm_mode="native", external=True,
             notes="api.openai.com with a personal key."),
-    Profile("gemini-personal", "gemini", requires=WEB, llm_mode="proxy", external=True,
+    Profile("gemini-personal", "gemini", requires=WEB, llm_mode="native", external=True,
             notes="Gemini via Google's OpenAI-compatibility layer."),
-    Profile("local", "ollama", requires=LOCAL, llm_mode="proxy",
+    Profile("local", "ollama", requires=LOCAL, llm_mode="native",
             notes="A model on this machine. Nothing leaves the host."),
 ]
 

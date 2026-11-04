@@ -287,7 +287,7 @@ def main() -> int:
         print(f"\n{len(good)}/{len(rows)} models can drive APEXA.")
         print(f"Fastest qualified: {fastest['model']} ({fastest['latency_s']}s)")
         print("\nTo use one:")
-        print(f"  APEXA_LLM_MODE=proxy")
+        print(f"  APEXA_LLM_MODE=native")
         print(f"  APEXA_LLM_PRESET={good[0]['preset']}")
         print(f"  ARGO_MODEL={good[0]['model']}")
         from apexa_llm_endpoints import _default_token_cmd

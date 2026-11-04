@@ -51,7 +51,7 @@ from apexa_provider_openai import (
     OpenAICompatProvider,
     ProviderUnavailable,
     preflight as llm_preflight,
-    proxy_mode_enabled,
+    native_mode_enabled,
     strict_mode,
 )
 from apexa_ledger import ToolLedger
@@ -984,8 +984,9 @@ def select_provider(username: str, model: str):
       (api.anthropic.com — native /v1/messages, NOT OpenAI-compatible, so the
       OpenAI client physically cannot reach it; this must be decided before the
       proxy branch below)
-    - ``APEXA_LLM_MODE=proxy``                             → OpenAICompatProvider
-      (Argo native /v1, ALCF, …; STRUCTURED tool results on every turn)
+    - ``APEXA_LLM_MODE=native`` (default; ``proxy`` is a back-compat alias)
+      → OpenAICompatProvider (Argo native /v1, ALCF, …; STRUCTURED tool results
+      on every turn)
     - ``APEXA_PROVIDER=streaming`` + a ``claude*`` model    → StreamingAnthropicProvider
     - anything else                                         → ArgoProvider
 
@@ -994,10 +995,10 @@ def select_provider(username: str, model: str):
     default preset (argo) is OpenAI-wired, so this branch never fires for
     an existing install and today's behaviour is unchanged.
 
-    The proxy path is preferred: Argo's ``/chat/`` sanitizer flattens messages to
+    The native path is preferred: Argo's ``/chat/`` sanitizer flattens messages to
     strings, so tool results can only be fed back as prose there, which is what
-    forces the fragile text ``TOOL_CALL:`` protocol. The `anl` profile selects it;
-    an explicit APEXA_LLM_MODE=argo keeps the legacy transport — see
+    forces the fragile text ``TOOL_CALL:`` protocol. It is the default; an explicit
+    APEXA_LLM_MODE=argo keeps the legacy transport — see
     ``scripts/gate0_llm_smoke.py``. If the endpoint is misconfigured we fall
     back rather than stranding an operator mid-experiment.
 
@@ -1015,20 +1016,21 @@ def select_provider(username: str, model: str):
     if _ep is not None and getattr(_ep, "wire", "openai") == "anthropic":
         return StreamingAnthropicProvider(username, model, endpoint=_ep)
 
-    if proxy_mode_enabled():
+    if native_mode_enabled():
         try:
             return OpenAICompatProvider(username, model)
         except ProviderUnavailable as e:
             if strict_mode():
-                # Beamline default: a broken proxy must not silently downgrade to
-                # the fabrication-prone text path. Set APEXA_LLM_STRICT=0 to allow.
+                # Beamline default: a broken native endpoint must not silently
+                # downgrade to the fabrication-prone text path. APEXA_LLM_STRICT=0 allows it.
                 raise ProviderUnavailable(
-                    f"APEXA_LLM_MODE=proxy but the proxy is unusable: {e}\n"
+                    f"The native LLM endpoint is unusable: {e}\n"
                     f"Refusing to fall back to the legacy Argo text protocol "
                     f"(APEXA_LLM_STRICT is on). Check the configured endpoint, or set "
-                    f"APEXA_LLM_STRICT=0 to permit the degraded transport."
+                    f"APEXA_LLM_STRICT=0 to permit the degraded transport, or "
+                    f"APEXA_LLM_MODE=argo to choose it deliberately."
                 ) from e
-            print(f"  \033[33m⚠ APEXA_LLM_MODE=proxy unavailable ({e}) — "
+            print(f"  \033[33m⚠ native LLM endpoint unavailable ({e}) — "
                   f"falling back to Argo /chat/\033[0m", file=sys.stderr)
 
     prov = (os.environ.get("APEXA_PROVIDER") or "").lower()

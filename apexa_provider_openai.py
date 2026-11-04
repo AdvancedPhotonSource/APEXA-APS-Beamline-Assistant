@@ -29,7 +29,8 @@ same ``close()``, same ``~/.apexa/timing.jsonl`` instrumentation.
 
 Setup (ANL internal network or VPN required) — nothing to install or run:
 
-    export APEXA_LLM_MODE=proxy        # or select the `anl` profile, which sets it
+    export APEXA_LLM_MODE=native       # the default; the `anl` profile also sets it.
+                                       # (`proxy` is accepted as a back-compat alias.)
 
 Verify multi-turn tool calling with ``scripts/gate0_llm_smoke.py``.
 """
@@ -92,13 +93,29 @@ def endpoint_failure_hint(url: str, exc_name: str = "") -> str:
             "Argo's native endpoint) and that you are on the ANL network/VPN.")
 
 
-def proxy_mode_enabled() -> bool:
-    """True when APEXA should route through the OpenAI-compatible proxy.
+def native_mode_enabled() -> bool:
+    """True when APEXA routes through the native OpenAI-compatible Argo /v1 path.
 
-    ``APEXA_LLM_MODE`` is tri-state: ``proxy`` → on, ``argo`` → off, unset →
-    off (the conservative default while the proxy soaks at the beamline).
+    ``APEXA_LLM_MODE`` is tri-state:
+      * ``native`` (default when unset) → the native Argo ``/v1`` transport
+      * ``argo`` → the legacy Argo ``/chat/`` text transport, kept only for an
+        explicit opt-in while it is retired
+      * ``proxy`` → **back-compat alias for ``native``.** The argo-proxy sidecar is
+        gone (Argo serves ``/v1`` itself), but old ``.env`` files, profiles, and
+        saved connections that still say ``proxy`` keep working unchanged.
+
+    The default flipped from ``argo`` to ``native`` once the sidecar was removed and
+    the native path became the standard: the legacy transport now requires an
+    explicit ``APEXA_LLM_MODE=argo``.
     """
-    return (os.environ.get("APEXA_LLM_MODE") or "argo").strip().lower() == "proxy"
+    mode = (os.environ.get("APEXA_LLM_MODE") or "native").strip().lower()
+    return mode in ("native", "proxy")
+
+
+# Back-compat alias: named for the retired argo-proxy sidecar, but the path it gates
+# is the native Argo /v1 transport, not a proxy. Callers (argo_mcp_client,
+# apexa_agents) import either name; both resolve to the same function.
+proxy_mode_enabled = native_mode_enabled
 
 
 def base_url() -> str:
@@ -129,30 +146,31 @@ def api_key_for(username: str) -> str:
 def strict_mode() -> bool:
     """Refuse to silently downgrade to the legacy Argo transport.
 
-    At a beamline deployment a proxy that failed to start must be an operator-
-    visible failure, not a quiet fall back to the text ``TOOL_CALL:`` path — that
-    path is the fabrication-prone one, and nobody would notice APEXA had been
+    At a beamline deployment a native endpoint that failed to start must be an
+    operator-visible failure, not a quiet fall back to the text ``TOOL_CALL:`` path —
+    that path is the fabrication-prone one, and nobody would notice APEXA had been
     running on it for weeks. Same philosophy as the deletion permission gate: fail
     closed on the integrity-relevant path.
 
-    Defaults ON whenever ``APEXA_LLM_MODE=proxy`` is explicitly requested; set
-    ``APEXA_LLM_STRICT=0`` to allow the fallback (reasonable on a dev laptop).
+    Defaults ON whenever the native path is active (i.e. not an explicit
+    ``APEXA_LLM_MODE=argo``); set ``APEXA_LLM_STRICT=0`` to allow the fallback
+    (reasonable on a dev laptop).
     """
     raw = (os.environ.get("APEXA_LLM_STRICT") or "").strip().lower()
     if raw in ("1", "true", "yes", "on"):
         return True
     if raw in ("0", "false", "no", "off"):
         return False
-    return proxy_mode_enabled()
+    return native_mode_enabled()
 
 
 async def preflight(username: str, model: str) -> tuple[bool, str]:
-    """Check at STARTUP that the proxy is reachable and the model resolves.
+    """Check at STARTUP that the native endpoint is reachable and the model resolves.
 
     Without this the first failure surfaces mid-experiment as a failed query.
     Returns ``(ok, human_readable_detail)``; never raises.
     """
-    if not proxy_mode_enabled():
+    if not native_mode_enabled():
         return True, "APEXA_LLM_MODE=argo — legacy Argo /chat/ transport"
     try:
         p = OpenAICompatProvider(username, model)

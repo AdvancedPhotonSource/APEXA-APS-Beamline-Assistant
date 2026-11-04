@@ -129,7 +129,7 @@ def apply_saved() -> bool:
         return False
     config = ConnectionConfig.model_validate(saved["config"])
     os.environ.update(APEXA_LLM_PRESET=config.preset, APEXA_LLM_BASE_URL=config.base_url,
-        APEXA_LLM_MODE="proxy", APEXA_LLM_STRICT="1", ARGO_MODEL=config.model,
+        APEXA_LLM_MODE="native", APEXA_LLM_STRICT="1", ARGO_MODEL=config.model,
         APEXA_LLM_KEYRING_ACCOUNT=config.keyring_account(saved["revision"]))
     if config.preset == "argo":
         os.environ["ANL_USERNAME"] = config.username

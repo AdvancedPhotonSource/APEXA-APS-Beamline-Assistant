@@ -48,7 +48,7 @@ def test_web_applies_same_anl_profile_as_cli_before_connecting(startup, monkeypa
     anl = next(p for p in profiles.BUILTIN_PROFILES if p.name == "anl")
     monkeypatch.setattr(profiles, "resolve_active", lambda: (anl, "env"))
     asyncio.run(web.initialize_mcp_client())
-    assert startup == ["profile", ("connect", "argo" if legacy else "proxy",
+    assert startup == ["profile", ("connect", "argo" if legacy else "native",
                                   [{"name": "core", "script_path": "never-started.py"}])]
     assert web.mcp_client.selected_model == "gpt55"
     assert os.environ["APEXA_ACTIVE_PROFILE"] == "anl"
