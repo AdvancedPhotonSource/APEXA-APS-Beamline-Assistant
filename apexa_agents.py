@@ -55,6 +55,7 @@ from apexa_provider_openai import (
     strict_mode,
 )
 from apexa_ledger import ToolLedger
+from apexa_llm_endpoints import provider_error_message
 from apexa_toolsurface import (
     disclosure_enabled,
     handle_meta_tool,
@@ -255,6 +256,9 @@ class AgentResponse:
     content: str
     tool_calls: List[ToolCall] = field(default_factory=list)
     stop_reason: str = "end_turn"
+    # Native Anthropic blocks (including signed thinking) must survive a tool
+    # round-trip unchanged. They are protocol state, not user-facing narration.
+    native_content: Optional[List[Dict]] = field(default=None, repr=False)
 
 
 # ── Argo Provider ────────────────────────────────────────────────────────────
@@ -711,25 +715,39 @@ class StreamingAnthropicProvider:
 
     @staticmethod
     def _split_system(messages: List[Dict]) -> tuple:
-        """Anthropic native takes ``system`` as a top-level string, not a role
-        in the messages array. Extract system turns and coerce content to str."""
+        """Extract system text and translate our structured history to Messages.
+
+        The shared runner uses OpenAI tool turns. Anthropic requires assistant
+        tool_use blocks and user tool_result blocks, including all parallel
+        results in one turn. Preserve native blocks rather than JSON-stringifying
+        them (which loses signed thinking and the tool/result relationship).
+        """
         sys_parts: List[str] = []
         others:    List[Dict] = []
         for m in messages:
             role = m.get("role", "user")
             c    = m.get("content", "")
-            if c is None:
-                c = ""
-            elif not isinstance(c, str):
-                try:
-                    c = json.dumps(c)
-                except Exception:
-                    c = str(c)
             if role == "system":
+                if isinstance(c, list):
+                    c = "\n".join(b.get("text", "") for b in c if b.get("type") == "text")
                 if c:
-                    sys_parts.append(c)
+                    sys_parts.append(str(c))
             else:
-                others.append({"role": role, "content": c})
+                if role == "tool":
+                    blocks = [{"type": "tool_result", "tool_use_id": m["tool_call_id"],
+                               "content": c or ""}]
+                    role = "user"
+                else:
+                    blocks = list(c) if isinstance(c, list) else ([{"type": "text", "text": str(c)}] if c else [])
+                    for call in m.get("tool_calls", []):
+                        fn = call["function"]
+                        arguments = fn.get("arguments", "{}")
+                        blocks.append({"type": "tool_use", "id": call["id"], "name": fn["name"],
+                                       "input": json.loads(arguments) if isinstance(arguments, str) else arguments})
+                if others and others[-1]["role"] == role:
+                    others[-1]["content"].extend(blocks)
+                else:
+                    others.append({"role": role, "content": blocks})
         return "\n\n".join(sys_parts), others
 
     def _build_payload(self, messages: List[Dict], temperature: float,
@@ -743,8 +761,9 @@ class StreamingAnthropicProvider:
         }
         if system_str:
             payload["system"] = system_str
-        # The Opus 5.x / 4.8 / 4.7 family silently drops temperature; the rest accept it.
-        if not drops_sampling_params(self.model):
+        # Keep native API defaults: newer Claude models manage thinking and may
+        # reject sampling overrides. Preserve the legacy Argo route's behavior.
+        if not self.structured_tools and not drops_sampling_params(self.model):
             payload["temperature"] = temperature
         if tools and self.structured_tools:
             payload["tools"] = to_anthropic_tools(tools)
@@ -777,7 +796,11 @@ class StreamingAnthropicProvider:
         tool_raw:      List[Dict] = []
         input_tokens  = 0
         output_tokens = 0
-        current_tool: Optional[Dict[str, Any]] = None
+        blocks: Dict[int, Dict] = {}
+        open_blocks: set[int] = set()
+        tool_json: Dict[int, str] = {}
+        stop_reason = "end_turn"
+        completed = False
         stream_error  = ""
         status        = 0
 
@@ -786,38 +809,45 @@ class StreamingAnthropicProvider:
                                            json=payload, headers=headers) as resp:
                 status = resp.status_code
                 if status != 200:
-                    body = (await resp.aread())[:400]
+                    await resp.aread()
+                    try:
+                        error_body = resp.json()
+                    except ValueError:
+                        error_body = None
                     stream_error = f"http_{status}"
                     self._log_row(t0=t0, status=status, prompt_tok=prompt_est,
                                   n_messages=n_messages, temperature=temperature,
                                   content="", tool_calls_n=0,
                                   t_first_token=None, input_tokens=prompt_est,
                                   output_tokens=0, error=stream_error)
-                    resp.raise_for_status()
+                    raise httpx.HTTPStatusError(provider_error_message(status, error_body),
+                                                request=resp.request, response=resp)
 
                 async for line in resp.aiter_lines():
                     if not line or not line.startswith("data:"):
                         continue
                     raw = line[5:].strip()
                     if raw == "[DONE]":
+                        completed = True
                         break
                     try:
                         ev = json.loads(raw)
                     except json.JSONDecodeError:
-                        continue
+                        raise ValueError("Provider returned an invalid stream event; no tool was executed") from None
                     typ = ev.get("type", "")
                     if typ == "message_start":
                         usage = ev.get("message", {}).get("usage", {})
                         input_tokens = usage.get("input_tokens", 0) or input_tokens
                     elif typ == "content_block_start":
-                        block = ev.get("content_block", {})
-                        if block.get("type") == "tool_use":
-                            current_tool = {
-                                "id":         block.get("id", ""),
-                                "name":       block.get("name", ""),
-                                "input_json": "",
-                            }
+                        block = dict(ev.get("content_block", {}))
+                        blocks[ev["index"]] = block
+                        open_blocks.add(ev["index"])
+                        if block.get("type") == "text" and block.get("text"):
+                            t_first_token = t_first_token or time.monotonic()
+                            content_parts.append(block["text"])
                     elif typ == "content_block_delta":
+                        index = ev["index"]
+                        block = blocks[index]
                         delta = ev.get("delta", {})
                         dtype = delta.get("type", "")
                         if dtype == "text_delta":
@@ -825,31 +855,45 @@ class StreamingAnthropicProvider:
                             if txt and t_first_token is None:
                                 t_first_token = time.monotonic()
                             content_parts.append(txt)
-                        elif dtype == "input_json_delta" and current_tool is not None:
-                            current_tool["input_json"] += delta.get("partial_json", "")
+                            block["text"] = block.get("text", "") + txt
+                        elif dtype == "input_json_delta":
+                            tool_json[index] = tool_json.get(index, "") + delta.get("partial_json", "")
+                        elif dtype == "thinking_delta":
+                            block["thinking"] = block.get("thinking", "") + delta.get("thinking", "")
+                        elif dtype == "signature_delta":
+                            block["signature"] = block.get("signature", "") + delta.get("signature", "")
                     elif typ == "content_block_stop":
-                        if current_tool is not None:
+                        index = ev["index"]
+                        block = blocks[index]
+                        open_blocks.remove(index)
+                        if block.get("type") == "tool_use":
                             try:
-                                current_tool["input"] = json.loads(
-                                    current_tool.get("input_json") or "{}")
+                                if index in tool_json:
+                                    block["input"] = json.loads(tool_json[index])
                             except json.JSONDecodeError:
-                                current_tool["input"] = {}
-                            tool_raw.append({
-                                "id":    current_tool["id"],
-                                "name":  current_tool["name"],
-                                "input": current_tool["input"],
-                            })
-                            current_tool = None
+                                raise ValueError("Provider returned incomplete tool arguments; no tool was executed") from None
+                            if not isinstance(block.get("input"), dict):
+                                raise ValueError("Provider returned invalid tool arguments; no tool was executed")
+                            tool_raw.append(block)
                     elif typ == "message_delta":
+                        stop_reason = ev.get("delta", {}).get("stop_reason") or stop_reason
                         usage = ev.get("usage", {})
                         output_tokens = usage.get("output_tokens", 0) or output_tokens
                     elif typ == "error":
-                        err_body = ev.get("error", {})
-                        stream_error = f"stream_error:{err_body.get('type','?')}"
+                        stream_error = "provider_stream_error"
+                        raise RuntimeError(provider_error_message(0, ev))
+                    elif typ == "message_stop":
+                        completed = True
+                if not completed:
+                    raise RuntimeError("Provider stream ended before completion; no tool was executed")
+                if open_blocks:
+                    raise RuntimeError("Provider stream ended with incomplete content blocks; no tool was executed")
+                if stop_reason == "max_tokens" and any(b.get("type") == "tool_use" for b in blocks.values()):
+                    raise RuntimeError("Provider reached its output limit during a tool call; no tool was executed")
         except httpx.HTTPStatusError:
             raise
         except Exception as e:
-            stream_error = f"exception:{type(e).__name__}"
+            stream_error = stream_error or f"exception:{type(e).__name__}"
             # Emit the log row before re-raising so partial timing survives.
             self._log_row(t0=t0, status=status or 0, prompt_tok=prompt_est,
                           n_messages=n_messages, temperature=temperature,
@@ -873,7 +917,8 @@ class StreamingAnthropicProvider:
         parsed = AgentResponse(
             content=content,
             tool_calls=tool_calls,
-            stop_reason="tool_use" if tool_calls else "end_turn",
+            stop_reason=stop_reason,
+            native_content=[blocks[index] for index in sorted(blocks)] if self.structured_tools else None,
         )
         self._log_row(t0=t0, status=status, prompt_tok=prompt_est,
                       n_messages=n_messages, temperature=temperature,
@@ -903,13 +948,13 @@ class StreamingAnthropicProvider:
             tpot_ms = ((elapsed - ttft_s) / (output_tokens - 1)) * 1000.0
             gen_tps = (output_tokens - 1) / (elapsed - ttft_s)
         empty = not (content or tool_calls_n)
-        temp_reported = None if drops_sampling_params(self.model) else temperature
+        temp_reported = None if self.structured_tools or drops_sampling_params(self.model) else temperature
         if not error:
             record_llm_call(elapsed_s=elapsed,
                             prompt_tok=input_tokens,
                             response_tok=output_tokens)
         log_llm_call({
-            "endpoint":     "argo-messages",
+            "endpoint":     f"{getattr(self._endpoint, 'name', 'argo')}-messages",
             "query_id":     current_query_id() or "",
             "model":        self.model,
             "attempt":      0,
@@ -2409,6 +2454,8 @@ class AgentRunner:
         be replayed as prose.
         """
         if structured:
+            if resp.native_content is not None:
+                return {"role": "assistant", "content": resp.native_content}
             msg: Dict[str, Any] = {"role": "assistant", "content": resp.content or ""}
             if resp.tool_calls:
                 msg["tool_calls"] = [

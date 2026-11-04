@@ -283,8 +283,14 @@ def subscription_instructions(client: str, repo: Path) -> None:
         print("Later: install Codex, run codex login (headless: codex login --device-auth),")
         print("then merge this TOML into your Codex config.toml without replacing other settings.")
     else:
-        print("Later: install Claude Code, sign in with /login, and save this JSON")
-        print("outside the repository, e.g. ~/.apexa/integrations/claude-mcp.json.")
+        print("Install Claude Code and sign in with /login using your Claude subscription.")
+        print("To save this JSON without copying it, run from the APEXA directory:")
+        if os.name == "nt":
+            print('  New-Item -ItemType Directory -Force "$HOME/.apexa/integrations" | Out-Null')
+            print('  .\\docs\\setup_user.ps1 --mcp-config claude | Set-Content -Encoding utf8 "$HOME/.apexa/integrations/claude-mcp.json"')
+        else:
+            print("  mkdir -p ~/.apexa/integrations")
+            print("  ./setup_user.sh --mcp-config claude > ~/.apexa/integrations/claude-mcp.json")
         print("Launch with: claude --mcp-config ~/.apexa/integrations/claude-mcp.json")
     print("Use /mcp in that client to check tool registration. No APEXA WebUI/session integration.")
     print("Engine readiness and client approvals still apply. See docs/CONNECTION_SETUP.md.\n")
@@ -360,6 +366,9 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
     saved = connection.load_saved()
     previous = saved["config"] if saved else {}
     current_preset = existing.get("APEXA_LLM_PRESET") or previous.get("preset") or "argo"
+    print("Enter keeps the value in brackets; a number selects a different option.")
+    if saved or existing.get("APEXA_LLM_PRESET"):
+        print(f"Current connection: {dict(PROVIDERS['api']).get(current_preset, current_preset)}. Setup remembers this choice.\n")
     selected = choose_access(prompt, current_preset)
     if selected in {"codex", "claude"}:
         subscription_instructions(selected, repo)
@@ -411,6 +420,8 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
         for key, label in fields:
             network_default = "data" if selected == "ollama" else ("web" if selected in {"openai", "anthropic", "gemini", "mag"} else "internal")
             default = existing.get(key) or (network_default if key == "APEXA_NETWORK" else "")
+            if key == "APEXA_NETWORK" and selected in {"openai", "anthropic", "gemini"}:
+                print("  Personal API verification needs 'web'. Enter preserves the displayed tier.")
             if key == "APEXA_MIDAS_BIN" and not default:
                 candidates = native_midas_candidates(repo)
                 if candidates:
@@ -446,6 +457,11 @@ def run_setup(repo: Path = ROOT, *, connection_only=False, ask=None, secret=None
         print(f"  {key}={value}")
     for key in removed_runtime:
         print(f"  Clear {key}")
+    network = (os.environ.get("APEXA_NETWORK") or updates.get("APEXA_NETWORK")
+               or (existing.get("APEXA_NETWORK") if "APEXA_NETWORK" not in removed_runtime else None))
+    if selected in {"openai", "anthropic", "gemini"} and network in {"internal", "data"}:
+        print(f"  APEXA_NETWORK={network} blocks Verify connection for this public API.")
+        print("  Select 'web' in full setup when public internet access is permitted; saving does not change it automatically.")
     print("Other .env settings are preserved. Nothing is written until you confirm below.")
     if not confirm_save(prompt):
         print("Cancelled. No configuration files changed.")

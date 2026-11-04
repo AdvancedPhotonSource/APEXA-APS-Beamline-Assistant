@@ -114,6 +114,8 @@ async def test_verifies_structured_result_not_transcript_text(preset):
         calls.append(body)
         if len(calls) == 1:
             if preset == "anthropic":
+                assert body["tool_choice"] == {"type": "auto"}
+                assert body["max_tokens"] == 4096
                 return httpx.Response(200, json={"content": [{"type": "tool_use", "id": "probe-id", "name": "apexa_connection_probe", "input": {}}]})
             return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": None,
                 "tool_calls": [{"type": "function", "id": "probe-id", "function": {"name": "apexa_connection_probe", "arguments": "{}"}}]}}]})
@@ -495,12 +497,42 @@ def test_local_model_family_requires_installed_tag(tmp_path, family, tag):
     assert C.load_saved()["config"]["preset"] == "ollama"
 
 
-def test_saved_provider_remains_the_group_default(tmp_path):
+def test_saved_provider_remains_the_group_default(tmp_path, capsys):
     C.save_config(config("anthropic"), "stored", None)
     _, prompts = wizard(tmp_path, ["", "", "", "y"], connection_only=True)
     assert "[anthropic]" in prompts[1]
     assert C.load_saved()["config"]["preset"] == "anthropic"
     assert C.load_saved()["config"]["model"] == "fixture-model"
+    assert "Current connection: Anthropic. Setup remembers this choice." in capsys.readouterr().out
+
+
+def test_public_api_setup_explains_preserved_internal_network(tmp_path, monkeypatch, capsys):
+    from dotenv import dotenv_values
+    monkeypatch.delenv("APEXA_NETWORK")
+    path = tmp_path / ".env"
+    path.write_text("APEXA_NETWORK=internal\n")
+    wizard(tmp_path, ["anthropic", "", "yes"], "fixture-key", connection_only=True)
+    assert dotenv_values(path)["APEXA_NETWORK"] == "internal"
+    assert "blocks Verify connection" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_anthropic_verifier_explains_billing_without_echoing_provider_body():
+    def handler(request):
+        return httpx.Response(400, json={"error": {"type": "invalid_request_error", "message":
+            "Your credit balance is too low to access the Anthropic API. secret-echo private-prompt"}})
+    with pytest.raises(ValueError, match="API account has insufficient credits") as error:
+        await C.verify(config("anthropic"), "secret-echo", transport=httpx.MockTransport(handler))
+    assert "subscription does not include API credits" in str(error.value)
+    assert "secret-echo" not in str(error.value) and "private-prompt" not in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_anthropic_auto_verification_still_requires_a_real_tool_call():
+    def handler(request):
+        return httpx.Response(200, json={"content": [{"type": "text", "text": "Connection verified!"}]})
+    with pytest.raises(ValueError, match="structured tool call"):
+        await C.verify(config("anthropic"), "fixture-key", transport=httpx.MockTransport(handler))
 
 
 def test_changing_local_family_does_not_reuse_previous_family_tag(tmp_path):

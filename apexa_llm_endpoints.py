@@ -139,6 +139,41 @@ class EndpointRejected(RuntimeError):
     """The endpoint cannot support APEXA (e.g. no tool calling)."""
 
 
+def provider_error_message(status: int, body: object) -> str:
+    """Translate known provider failures without echoing upstream/private text.
+
+    Error bodies can contain credentials, prompts or gateway HTML. Use their
+    fields only to select fixed guidance, shared by chat and connection checks.
+    """
+    error = body.get("error", {}) if isinstance(body, dict) else {}
+    if not isinstance(error, dict):
+        error = {}
+    message = str(error.get("message", "")).lower()
+    kind = str(error.get("type", error.get("code", ""))).lower()
+    if ("credit balance is too low" in message or kind == "insufficient_quota"
+            or "insufficient credits" in message):
+        detail = ("The API account has insufficient credits or quota. Check the provider's "
+                  "API billing console, or choose ANL Argo in setup. A Claude/ChatGPT "
+                  "chat subscription does not include API credits.")
+    elif status == 401 or kind == "authentication_error":
+        detail = "The API credential was rejected. Check the key for the selected provider."
+    elif status == 403 or kind == "permission_error":
+        detail = "This API account does not have permission for the requested endpoint or model."
+    elif status == 429 or kind == "rate_limit_error":
+        detail = "The provider's rate limit was reached. Wait before retrying and check API usage limits."
+    elif status == 404 or kind == "not_found_error":
+        detail = "The endpoint or model was not found. Check the model ID and account access."
+    elif "tool_choice" in message and "not supported" in message:
+        detail = "This model does not support the requested tool choice. Update APEXA's provider adapter."
+    elif status == 413 or "prompt is too long" in message:
+        detail = "The request exceeds the provider's size or context limit. Start a shorter conversation."
+    elif status >= 500 or kind == "overloaded_error":
+        detail = "The provider is temporarily unavailable. Retry later."
+    else:
+        detail = "The provider rejected the request. Check the endpoint, model and tool-call compatibility."
+    return f"Provider returned HTTP {status}: {detail}" if status else f"Provider stream failed: {detail}"
+
+
 @dataclass
 class OpenAIEndpoint:
     """Base: any OpenAI-compatible ``/v1/chat/completions`` service."""

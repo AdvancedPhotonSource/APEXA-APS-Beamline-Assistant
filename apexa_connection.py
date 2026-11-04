@@ -238,10 +238,12 @@ async def verify(config: ConnectionConfig, api_key: str = "", *, transport=None)
         headers = {("Authorization" if ep.auth_style == "bearer" else "x-api-key"):
                    ("Bearer " + key if ep.auth_style == "bearer" else key), "anthropic-version": "2023-06-01"}
         route = "/v1/messages"
-        body = {"model": config.model, "max_tokens": 256,
+        # Opus/Sonnet 5.5 reject forced tool choice and always manage thinking.
+        # Auto still has to produce a real tool call/result to pass below.
+        body = {"model": config.model, "max_tokens": 4096,
                 "messages": [{"role": "user", "content": prompt}],
                 "tools": [{"name": "apexa_connection_probe", "description": "Return a connection receipt", "input_schema": schema}],
-                "tool_choice": {"type": "tool", "name": "apexa_connection_probe"}}
+                "tool_choice": {"type": "auto"}}
     else:
         route = "/chat/completions"
         body = {"model": config.model, "max_completion_tokens": 256,
@@ -253,7 +255,11 @@ async def verify(config: ConnectionConfig, api_key: str = "", *, transport=None)
         async def post():
             response = await client.post(config.base_url + route, headers=headers, json=body)
             if not response.is_success:
-                raise ValueError(f"Provider returned HTTP {response.status_code}; check the endpoint, model and credential")
+                try:
+                    error = response.json()
+                except ValueError:
+                    error = None
+                raise ValueError(endpoints.provider_error_message(response.status_code, error))
             return response.json()
         async with asyncio.timeout(45):
             first = await post()

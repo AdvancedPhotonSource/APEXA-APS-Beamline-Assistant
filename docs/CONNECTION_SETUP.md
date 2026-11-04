@@ -163,6 +163,17 @@ and [Codex MCP configuration](https://developers.openai.com/codex/mcp/) document
    `/mcp`. Use `/status` to confirm the account; existing API/cloud-provider
    credentials can take precedence over a subscription login.
 
+On Linux/macOS, export and launch from the APEXA directory without copying JSON:
+
+```bash
+mkdir -p ~/.apexa/integrations
+./setup_user.sh --mcp-config claude > ~/.apexa/integrations/claude-mcp.json
+claude --mcp-config ~/.apexa/integrations/claude-mcp.json
+```
+
+The interactive option **5** only previews configuration. These export commands
+write the separate client configuration; they do not change APEXA's saved LLM.
+
 See [Claude Code authentication](https://code.claude.com/docs/en/authentication)
 and [Claude Code MCP](https://code.claude.com/docs/en/mcp). Plan eligibility,
 workspace policy, networking and usage limits are controlled by the provider.
@@ -255,3 +266,27 @@ Supply credentials separately. Public-provider verification requires
 `APEXA_NETWORK=web`; `data` permits only loopback verification. A university
 OAuth/Entra endpoint without the supported API shape needs a site gateway or
 adapter. Provider verification does not establish scientific accuracy.
+
+## Anthropic API errors and subscription billing
+
+An Anthropic **HTTP 400** can mean the API account has no credit, even when the
+key is valid and the selected model appears in the API catalog. APEXA reports
+recognized billing, authentication and rate-limit failures with fixed guidance;
+it does not display raw provider bodies, keys or prompts. Check API credits in
+[Claude Console billing](https://platform.claude.com/settings/billing).
+Unused Claude subscription allowance does **not** provide Anthropic API credit.
+Use ANL Argo for facility access, or option **5 → Claude Code** to use APEXA tools
+from a separately authenticated Claude Code subscription session.
+
+Saving a connection makes no provider requests and cannot establish API credit
+availability. **Verify connection** checks an actual synthetic tool round-trip;
+Anthropic checks use automatic tool selection and allow up to 4,096 output
+tokens per request, including thinking. The check fails if no structured tool
+call or matching result is returned. This accommodates Opus/Sonnet 5.5, which
+[reject forced tool selection](https://platform.claude.com/docs/en/build-with-claude/tool-use/implement-tool-use).
+Normal Anthropic chat preserves native tool/result blocks and signed thinking
+across turns. Failed or interrupted streams do not dispatch partial tool calls.
+
+When switching from Argo, full setup preserves an existing network tier and
+explains that `internal` blocks public-provider verification. Select `web` when
+public access is permitted. Setup does not change an existing tier silently.
