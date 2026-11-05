@@ -679,6 +679,19 @@ def _curated_relational(params: dict, pipe: str, source_h5: str) -> list:
             "(FF §4b). Confirm this Lsd is the calibrated sample-to-detector "
             "distance.", "FF §4b")
 
+    if pipe == "pf":
+        # PF phase-2-configure §RingNumbers — PF indexing/refinement needs an explicit
+        # RingNumbers list (which rings to index/refine on). MIDAS's own `midas-params
+        # validate` does not flag a missing RingNumbers, so a PF run started without it
+        # indexes on the wrong/default rings → a wrong or empty grain list.
+        if not have("ringnumbers"):
+            add("error", "RingNumbers",
+                "RingNumbers is not set. PF HEDM must be told which rings to "
+                "index/refine on (pf-hedm phase-2-configure §RingNumbers). Without it "
+                "the run indexes on default/wrong rings and produces a wrong or empty "
+                "grain list. Set RingNumbers to the bright, on-detector rings (prefer "
+                "those best for strain).", "PF phase-2 §RingNumbers")
+
     if pipe == "nf":
         # §3g — the GE SkipFrame-1 rule must NOT cross to NF.
         if have("skipframe") and str(

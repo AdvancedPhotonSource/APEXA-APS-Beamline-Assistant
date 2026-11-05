@@ -37,6 +37,8 @@ try:
 except ImportError:
     pass
 
+import apexa_data_guard as _data_guard  # raw-data write guard (never write into data/)
+
 # Suppress verbose MCP server logging
 logging.getLogger("mcp").setLevel(logging.WARNING)
 logging.getLogger("fastmcp").setLevel(logging.WARNING)
@@ -1066,6 +1068,32 @@ def _announce_output(tool: str, out_path, **extras) -> None:
     print(f"[{tool}] → output: {out_path}" + (f"  ({kv})" if kv else ""), file=sys.stderr)
 
 
+def _guard_output_dir(tool: str, *paths) -> Optional[str]:
+    """Refuse (fail-closed) if a tool would write into the raw-data `data/` tree.
+
+    Beamline convention: raw detector data lives in a ``data/`` folder; APEXA must
+    never write analysis output there — not even when a MIDAS manual/capsule/example
+    *instructs* it to (that is exactly how PF scattered intermediates into /gdata).
+    Every tool that creates an output / result / work directory passes its resolved
+    target(s) here BEFORE the first mkdir. Returns a ``format_result`` error string
+    to return immediately, or ``None`` when all targets are safe. Operator override:
+    ``APEXA_ALLOW_DATA_WRITE=1`` (see apexa_data_guard)."""
+    for p in paths:
+        if not p:
+            continue
+        msg = _data_guard.check_write_target(p, what=f"run {tool} writing to")
+        if msg:
+            return format_result({
+                "tool": tool,
+                "status": "error",
+                "nothing_was_run": True,
+                "error": msg,
+                "hint": ("Re-run with result_folder/output_dir pointing at a non-'data' "
+                         "folder (e.g. an 'analysis/' sibling of the data dir)."),
+            })
+    return None
+
+
 # =============================================================================
 # FF-HEDM PRODUCTION TOOLS
 # =============================================================================
@@ -1214,6 +1242,13 @@ async def run_ff_hedm_full_workflow(
                             f"The actual MIDAS installation is at {str(MIDAS_ROOT)}."
                         ),
                     })
+
+        # Never write FF output into the raw-data tree — not even if result_folder
+        # (from a user, a manifest, or a MIDAS example) points there. Host-agnostic:
+        # the 'data/' segment rule applies to local and remote result paths alike.
+        _blocked = _guard_output_dir("run_ff_hedm_full_workflow", result_folder)
+        if _blocked:
+            return _blocked
 
         # ── Decide execution locality (local vs a remote analysis host) ──────
         # Drive the decision off the must-exist INPUTS (param_file, data_file);
@@ -1723,6 +1758,7 @@ async def run_pf_hedm_workflow(
     num_files_per_scan: int = 0,
     skip_stages: str = "",
     resume_from: str = "",
+    ignore_handbook_traps: bool = False,
 ) -> str:
     """Run Point-Focus (scanning) HEDM via midas-pipeline --scan-mode pf.
 
@@ -1761,6 +1797,11 @@ async def run_pf_hedm_workflow(
     try:
         import shutil as _shutil
         result_path = Path(result_folder).expanduser().absolute()
+        _work_preview = (Path(scan_work_dir).expanduser().absolute() if scan_work_dir
+                         else result_path / "scan_work")
+        _blocked = _guard_output_dir("run_pf_hedm_workflow", result_path, _work_preview)
+        if _blocked:
+            return _blocked
         result_path.mkdir(parents=True, exist_ok=True)
         _announce_output("run_pf_hedm_workflow", result_path, n_scans=n_scans, device=device)
 
@@ -1777,6 +1818,31 @@ async def run_pf_hedm_workflow(
         if not valid:
             return format_result({"tool": "run_pf_hedm_workflow",
                                   "status": "error", "error": param_path})
+
+        # Pre-dispatch handbook lint (same gate as FF/NF): hard-block on an
+        # unambiguous PF parameter error (e.g. missing RingNumbers, which MIDAS's
+        # own validator does not catch) unless ignore_handbook_traps=True.
+        try:
+            pf_traps = _lint_handbook_traps(param_path, "pf")
+        except Exception:
+            pf_traps = []
+        _blockers = [t for t in pf_traps if t.get("severity") == "error"]
+        if _blockers and not ignore_handbook_traps:
+            for _t in pf_traps:
+                _mark = {"error": "⛔", "warning": "⚠"}.get(_t["severity"], "ℹ")
+                _sec = f" [{_t['section']}]" if _t.get("section") else ""
+                print(f"  {_mark} {_t['key']}{_sec}: {_t['message']}", file=sys.stderr)
+            return format_result({
+                "tool": "run_pf_hedm_workflow",
+                "status": "error",
+                "error": (
+                    "Blocked by handbook lint before dispatch — the PF parameter file "
+                    "has an unambiguous error that would corrupt the run (see "
+                    "handbook_traps). Fix the parameter file, or pass "
+                    "ignore_handbook_traps=True to override. NOTHING was run."
+                ),
+                "handbook_traps": pf_traps,
+            })
 
         _pipeline_bin = _shutil.which("midas-pipeline", path=midas_search_path())
         if not _pipeline_bin:
@@ -2254,6 +2320,9 @@ async def run_nf_hedm_reconstruction(
         ]
         if result_folder:
             rp = Path(result_folder).expanduser().absolute()
+            _blocked = _guard_output_dir("run_nf_hedm_reconstruction", rp)
+            if _blocked:
+                return _blocked
             rp.mkdir(parents=True, exist_ok=True)
             _announce_output("run_nf_hedm_reconstruction", rp)
             cmd += ["--result-folder", str(rp)]
@@ -4354,6 +4423,11 @@ async def midas_integrate_2d_to_1d(
 
         out_dir = Path(result_folder).expanduser().absolute() if result_folder \
                   else image_path.parent / "integration"
+        # The default (image_path.parent/integration) lands INSIDE the data tree when
+        # the image is in a data/ folder — refuse rather than pollute it.
+        _blocked = _guard_output_dir("midas_integrate_2d_to_1d", out_dir)
+        if _blocked:
+            return _blocked
         out_dir.mkdir(parents=True, exist_ok=True)
         _announce_output("midas_integrate_2d_to_1d", out_dir)
 
@@ -4944,6 +5018,11 @@ async def midas_integrate_series(
         midas_python = await asyncio.to_thread(find_midas_python)
         out_root = (Path(result_folder).expanduser().absolute() if result_folder
                     else files[0].parent / "integration_series")
+        # Default lands beside the raw frames (inside data/) — refuse unless the
+        # operator pointed result_folder at a real output area.
+        _blocked = _guard_output_dir("midas_integrate_series", out_root)
+        if _blocked:
+            return _blocked
         out_root.mkdir(parents=True, exist_ok=True)
         # Flag when output landed at the DEFAULT location (inside the raw data dir)
         # because result_folder was not passed. Surfaced in the returned summary —

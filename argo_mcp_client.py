@@ -1919,6 +1919,66 @@ class APEXAClient:
                             "blocked before execution. The files were NOT deleted. Do "
                             "not retry or claim success; ask the user how to proceed.")
 
+        # ===== RAW-DATA WRITE GATE =====
+        # The detector `data/` tree is instrument output; APEXA must never write there
+        # — not even when a MIDAS manual/capsule/example instructs it to (that is how
+        # PF scattered intermediates into /gdata). Fail-closed at the shared chokepoint,
+        # same principle as the deletion gate: a write whose OUTPUT target resolves
+        # inside a data/ folder is refused before the tool runs, with a message to use
+        # an analysis/output folder. Operator override: APEXA_ALLOW_DATA_WRITE=1.
+        # The read-only INPUT args (param_file, data_file, dark_file, image_file) are
+        # deliberately NOT checked — reading from data/ is correct; only writes are
+        # blocked. The per-tool guards in the MIDAS/core servers are the first line;
+        # this is the un-bypassable backstop.
+        try:
+            import apexa_data_guard as _dg
+            if not _dg.data_write_allowed():
+                _out_arg_names = ("result_folder", "output_dir", "output_folder",
+                                  "output_file", "scan_work_dir", "work_dir",
+                                  "out_dir", "out_root", "file_path")
+                _write_targets = [arguments[k] for k in _out_arg_names
+                                  if isinstance(arguments.get(k), str) and arguments.get(k)]
+                # write_file's target is file_path (already in the list). For a raw
+                # shell command, only WRITE-POSITION tokens count — a data/ path given
+                # as a read INPUT (e.g. `--dataFile /…/data/foo.h5`) is legitimate and
+                # must NOT be flagged. We flag only: the target of an output flag
+                # (-o/--output/--result-folder/--scan-work-dir/--out*), a redirect
+                # target (> / >>), and the argument to mkdir/cp/mv/tee/touch.
+                if tool_name in ("run_command", "run_remote_command"):
+                    import shlex as _shlex
+                    _cmdstr = str(arguments.get("command", ""))
+                    try:
+                        _toks = _shlex.split(_cmdstr)
+                    except Exception:
+                        _toks = _cmdstr.split()
+                    _out_flags = ("-o", "--output", "--output-dir", "--out", "--out-dir",
+                                  "--result-folder", "--resultfolder", "--scan-work-dir",
+                                  "--work-dir", "--outdir", "--dest", "--destination")
+                    _mk_cmds = ("mkdir", "touch", "tee", "cp", "mv", "install", "rsync")
+                    for _i, _tok in enumerate(_toks):
+                        if _tok in (">", ">>") and _i + 1 < len(_toks):
+                            _write_targets.append(_toks[_i + 1])
+                        elif _tok in _out_flags and _i + 1 < len(_toks):
+                            _write_targets.append(_toks[_i + 1])
+                        elif "=" in _tok and _tok.split("=", 1)[0] in _out_flags:
+                            _write_targets.append(_tok.split("=", 1)[1])
+                        elif _tok.rstrip(">") == "" and _tok and _i + 1 < len(_toks):
+                            _write_targets.append(_toks[_i + 1])
+                    # mkdir/cp/mv/tee/touch: their path operands are write targets
+                    if _toks and Path(_toks[0]).name in _mk_cmds:
+                        _write_targets += [t for t in _toks[1:]
+                                           if not t.startswith("-") and ("/" in t or t.startswith("~"))]
+                for _tgt in _write_targets:
+                    _prot, _why = _dg.is_protected_data_path(_tgt)
+                    if _prot:
+                        _msg = _dg.check_write_target(_tgt, what=f"run `{tool_name}` writing to")
+                        print(f"  \033[31m⛔ data-write gate:\033[0m {tool_name} — {_tgt}")
+                        return (f"{_msg} The tool did NOT run; do not claim success. "
+                                "Ask the user for an analysis/output folder outside the "
+                                "data/ tree, or re-run with that folder as the output.")
+        except Exception:
+            pass  # fail-open on a guard error — never wedge a legitimate run
+
         # ===== TECHNIQUE SCOPE GATE =====
         # Each technique's handbook ("capsule") is beamline-scoped — its geometry
         # and conventions do NOT transfer across beamlines. When APEXA_BEAMLINE is

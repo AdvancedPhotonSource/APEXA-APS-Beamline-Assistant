@@ -50,6 +50,7 @@ from apexa_mcp import TracedMCPServer as MCPServer
 
 from apexa_remote_exec import remote_run, ssh_hint, is_local_host, _SSH_OPTS, _wrap_login
 from apexa_subprocess import run as run_subprocess
+import apexa_data_guard as _data_guard  # raw-data write guard (never write into data/)
 
 # Suppress verbose MCP server logging
 logging.getLogger("mcp").setLevel(logging.WARNING)
@@ -1008,6 +1009,14 @@ async def write_file(file_path: str, content: str, encoding: str = "utf-8", appe
     """
     try:
         path = Path(file_path).expanduser().resolve()
+
+        # Never write into the raw detector `data/` tree (fail-closed; operator
+        # override APEXA_ALLOW_DATA_WRITE=1). The data folder is instrument output.
+        _refuse = _data_guard.check_write_target(path, what="write a file")
+        if _refuse:
+            return format_result({"tool": "write_file", "status": "refused",
+                                  "error": _refuse, "file_path": str(path)})
+
         mode = 'a' if append else 'w'
 
         with open(path, mode, encoding=encoding) as f:
