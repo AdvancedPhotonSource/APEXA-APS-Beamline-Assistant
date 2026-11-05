@@ -44,7 +44,9 @@ to "the calibration succeeded".
 Each finding carries the lever for that specific failure, and **which lever
 depends on which parameter railed**. Getting this wrong wastes runs: at 20-ID a
 railed `tz` was read as a distortion problem and the `full → radial → none`
-ladder was tried three times, none of which can move a tilt bound.
+ladder was tried three times; widening `tol_tilts_deg` is what freed it. (The
+ladder proved nothing either way: the reduced settings silently ran the full
+model until commit 88d7a75.)
 
 | railed | lever |
 |---|---|
