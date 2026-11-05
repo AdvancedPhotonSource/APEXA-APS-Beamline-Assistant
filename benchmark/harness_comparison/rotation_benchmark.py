@@ -621,6 +621,44 @@ def sandboxed(argv: List[str], deny: List[str], *, read_only=()) -> List[str]:
     return [SANDBOX, "-p", profile] + argv
 
 
+def run_bounded(argv: List[str], *, cwd: Path, env: Dict[str, str], timeout: float) -> subprocess.CompletedProcess:
+    """subprocess.run, but a timeout kills the harness's whole process tree.
+
+    subprocess.run(timeout=) kills only the direct child. A harness that had
+    launched a solver left it running, and it loaded the host through the NEXT
+    arm's run (Pi's orphaned fit was still going while the APEXA arm started).
+    Leftovers of a normal exit are reaped from the session's group the same way.
+    """
+    import signal
+    import psutil
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
+
+    def reap(tree):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        for p in tree:
+            try:
+                p.kill()
+            except psutil.Error:
+                pass
+
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            tree = psutil.Process(proc.pid).children(recursive=True)
+        except psutil.Error:
+            tree = []
+        reap(tree)
+        proc.communicate()
+        raise
+    reap([])
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
+
+
 _DENIED = re.compile(r"(Operation not permitted|Permission denied)", re.I)
 
 
@@ -685,6 +723,17 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         env["PYTHONNOUSERSITE"] = "1"
         env.pop("PYTHONSTARTUP", None)
         env.pop("PYTHONPATH", None)
+        # PWD is inherited, not updated by cwd=: it still names this repo, which is
+        # denied to external arms, and OpenCode lstat()s it at start-up -> EPERM ->
+        # every A4 run exited in 3 s and was recorded as a harness error.
+        env["PWD"] = str(ws)
+        if arm.harness != "apexa":
+            # `uv run` put this repo's .venv first on PATH; for an external arm every
+            # lookup there is a sandbox EPERM before it falls through to the solver env.
+            venv = env.pop("VIRTUAL_ENV", None)
+            env["PATH"] = os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep)
+                                          if p and not _real(p).startswith(_real(REPO) + os.sep)
+                                          and (not venv or _real(p) != _real(Path(venv) / "bin")))
         # Credential-bearing configuration lives outside kept artifacts and is
         # removed with the trial root. No user's global provider file is changed.
         oc = ""
@@ -740,7 +789,7 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             return r
         t0 = time.time()
         try:
-            process = subprocess.run(argv, cwd=ws, env=env, capture_output=True, text=True, timeout=timeout)
+            process = run_bounded(argv, cwd=ws, env=env, timeout=timeout)
         except subprocess.TimeoutExpired:
             r.outcome, r.elapsed_s, r.detail = "timeout", time.time() - t0, f">{timeout}s; external child reconciliation may be required"
             return r

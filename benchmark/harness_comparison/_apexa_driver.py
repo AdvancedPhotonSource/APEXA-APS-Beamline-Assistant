@@ -45,9 +45,41 @@ def server_configs(repo: Path = REPO) -> list[dict]:
     return [configs[name] for name in ANALYSIS_SERVERS]
 
 
+def solver_environment() -> dict:
+    """Every arm runs the same solver release; for APEXA that release is APEXA_MIDAS_BIN."""
+    bin_dir = os.environ.get("APEXA_MIDAS_BIN", "").strip()
+    if not bin_dir or not (Path(bin_dir) / "python").exists():
+        raise RuntimeError("APEXA_MIDAS_BIN must name the shared solver environment's bin/ "
+                           "(with its python); without it APEXA probes its own .venv")
+    return {"APEXA_MIDAS_BIN": bin_dir}
+
+
+def inherit_server_environment() -> None:
+    """Give the analysis servers this process's environment.
+
+    APEXA starts its MCP servers with env=None, and the MCP SDK then passes only
+    HOME/LOGNAME/PATH/SHELL/TERM/USER. Every per-arm setting the runner exports --
+    APEXA_MIDAS_BIN, the pinned knowledge manifest -- was dropped: the midas server
+    probed APEXA's own .venv, found no solver, and every APEXA calibration refused
+    before fitting. The external harnesses' tools inherit the full arm environment;
+    the APEXA servers now do too.
+    """
+    import argo_mcp_client
+    original = argo_mcp_client.StdioServerParameters
+
+    def with_environment(**kwargs):
+        if kwargs.get("env") is None:
+            kwargs["env"] = dict(os.environ)
+        return original(**kwargs)
+
+    argo_mcp_client.StdioServerParameters = with_environment
+
+
 async def _go(prompt: str, timeout: int) -> str:
     knowledge_preflight()
+    solver_environment()
     from argo_mcp_client import APEXAClient
+    inherit_server_environment()
     client = APEXAClient()
     cfgs = server_configs()
     try:
@@ -90,6 +122,7 @@ def main() -> int:
     try:
         if a.preflight:
             print(json.dumps({"servers": server_configs(), "knowledge": knowledge_preflight(),
+                              "solver": solver_environment(),
                               "model_calls": 0, "mcp_processes_started": 0}))
             return 0
         if not a.prompt or a.timeout <= 0:
