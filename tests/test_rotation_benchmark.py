@@ -251,8 +251,11 @@ def test_apexa_ablation_is_explicitly_a_bundled_intervention():
     A = rb.ARMS
     assert A["A1"].harness == A["A2"].harness and A["A1"].manuals == A["A2"].manuals
     assert "bundled" in A["A2"].note
-    assert rb.policy_environment(A["A1"]) == {"APEXA_STAGE_GUARDRAILS": "1", "APEXA_ASSUME_SCAN_METADATA": "0"}
-    assert rb.policy_environment(A["A2"]) == {"APEXA_STAGE_GUARDRAILS": "0", "APEXA_ASSUME_SCAN_METADATA": "1"}
+    # Shell access is a deployment setting, identical in both arms -- not part of the ablation.
+    assert rb.policy_environment(A["A1"]) == {"APEXA_STAGE_GUARDRAILS": "1", "APEXA_ASSUME_SCAN_METADATA": "0",
+                                              "APEXA_ALLOW_UNSANDBOXED_COMMANDS": "1"}
+    assert rb.policy_environment(A["A2"]) == {"APEXA_STAGE_GUARDRAILS": "0", "APEXA_ASSUME_SCAN_METADATA": "1",
+                                              "APEXA_ALLOW_UNSANDBOXED_COMMANDS": "1"}
     assert rb.policy_environment(A["A3"]) == {}
     assert A["A3"].harness == A["A6"].harness
     assert A["A3"].manuals and not A["A6"].manuals
@@ -564,7 +567,7 @@ def test_staged_driver_help_and_preflight_run_while_benchmark_stays_denied(tmp_p
     deny = rb.deny_paths(rb.ARMS["A1"], reference)
     driver = rb.stage_apexa_driver(tmp_path / "runtime")
     assert str((rb.REPO / "benchmark").resolve()) in deny
-    env = dict(os.environ, APEXA_BENCH_REPO=str(rb.REPO))
+    env = dict(os.environ, APEXA_BENCH_REPO=str(rb.REPO), APEXA_MIDAS_BIN=str(Path(sys.executable).parent))
     manifest = _knowledge_manifest(tmp_path)
     env[rb.MANIFEST_ENV] = str(manifest)
     env[rb.DIGEST_ENV] = hashlib.sha256(manifest.read_bytes()).hexdigest()
@@ -573,6 +576,10 @@ def test_staged_driver_help_and_preflight_run_while_benchmark_stays_denied(tmp_p
     assert result.returncode == 0, result.stderr
     ok, detail = rb.preflight_apexa_driver(driver, env, deny)
     assert ok, detail
+    # Without the shared solver env APEXA would probe its own .venv: refuse the arm.
+    env.pop("APEXA_MIDAS_BIN")
+    ok, detail = rb.preflight_apexa_driver(driver, env, deny)
+    assert not ok and "APEXA_MIDAS_BIN" in detail
 
 
 def test_pi_current_capability_and_isolated_profile(tmp_path, monkeypatch):
@@ -606,7 +613,7 @@ def test_runner_does_not_treat_stderr_success_as_final_acceptance(tmp_path, monk
         (ws / "final.txt").write_text("tz -3.5\n")
         _manifest(ws, status="rejected")
         return subprocess.CompletedProcess(argv, 0, "Do not use this geometry.", "Solver succeeded: tz=-3.5")
-    monkeypatch.setattr(rb.subprocess, "run", fake_run)
+    monkeypatch.setattr(rb, "run_bounded", fake_run)
     result = rb.run_one(rb.ARMS["A3"], source, 250, 0, {250: {"predicted_tz": -3.5}},
                         None, "https://example.invalid/v1", "test-key", "m", .1, 60,
                         tmp_path / "out", False, ground_truth=tmp_path / "truth" / "summary.csv")
@@ -642,7 +649,7 @@ def test_nonzero_harness_exit_is_not_graded_as_scientific_success(tmp_path, monk
         (ws / "final.txt").write_text("tz -3.5\n")
         _manifest(ws)
         return subprocess.CompletedProcess(argv, 2, "Successful calibration tz=-3.5", "startup failed")
-    monkeypatch.setattr(rb.subprocess, "run", fake_run)
+    monkeypatch.setattr(rb, "run_bounded", fake_run)
     result = rb.run_one(rb.ARMS["A3"], source, 250, 0, {250: {"predicted_tz": -3.5}},
                         None, "https://example.invalid/v1", "key", "m", .1, 60,
                         tmp_path / "out", False, ground_truth=tmp_path / "truth" / "summary.csv")
@@ -681,3 +688,70 @@ def test_claude_home_is_denied_to_every_arm(tmp_path):
         pytest.skip("no ~/.claude here")
     for arm in ("A1", "A3", "A6"):
         assert claude_home in rb.deny_paths(rb.ARMS[arm], gt)
+
+
+# ── the second void run: endpoint drops, permissions, sick hosts ───────────────
+def _stub_run_one(tmp_path, monkeypatch, fake):
+    import shutil
+    source = tmp_path / "raw_000250.h5"; source.write_bytes(b"stub")
+    monkeypatch.setattr(rb, "_place_input", lambda src, dst: shutil.copy2(src, dst))
+    monkeypatch.setattr(rb, "sandboxed", lambda argv, deny, **kwargs: argv)
+    monkeypatch.setattr(rb, "run_bounded", fake)
+    return rb.run_one(rb.ARMS["A3"], source, 250, 0, {250: {"predicted_tz": -3.5}},
+                      None, "https://example.invalid/v1", "key", "m", .1, 60,
+                      tmp_path / "out", False, ground_truth=tmp_path / "truth" / "summary.csv")
+
+
+def test_unreachable_endpoint_is_infra_error_and_excluded_from_rates(tmp_path, monkeypatch):
+    import subprocess
+    def fake(argv, cwd, **kwargs):
+        return subprocess.CompletedProcess(argv, 1, "API Error: Can't reach the API server -- check your internet or DNS (ENOTFOUND)\n", "")
+    r = _stub_run_one(tmp_path, monkeypatch, fake)
+    assert r.outcome == "infra_error"
+    s = rb.summarise([r, _run(arm="A3", outcome="correct")])["A3"]
+    assert s["n"] == 2 and s["n_scored"] == 1 and s["correct_rate"] == 1.0
+
+
+def test_external_arm_gets_its_workspace_as_pwd_and_no_repo_venv(tmp_path, monkeypatch):
+    import subprocess
+    seen = {}
+    def fake(argv, cwd, env, **kwargs):
+        seen.update(cwd=str(cwd), env=env)
+        return subprocess.CompletedProcess(argv, 1, "", "boom")
+    monkeypatch.setenv("PATH", os.pathsep.join([str(rb.REPO / ".venv" / "bin"), "/usr/bin"]))
+    _stub_run_one(tmp_path, monkeypatch, fake)
+    assert seen["env"]["PWD"] == seen["cwd"]       # OpenCode lstat()s $PWD at start-up
+    assert str(rb.REPO) not in seen["env"]["PATH"]
+
+
+def test_wait_for_host_stops_instead_of_burning_a_trial(monkeypatch):
+    monkeypatch.setattr(rb, "host_snapshot", lambda url: {"problems": ["load 170 on 10 cores"]})
+    with pytest.raises(SystemExit, match="load 170"):
+        rb.wait_for_host("https://example.invalid/v1", budget_s=0)
+    monkeypatch.setattr(rb, "host_snapshot", lambda url: {"problems": [], "load1": 1.0})
+    assert rb.wait_for_host("https://example.invalid/v1", budget_s=0)["load1"] == 1.0
+
+
+def test_run_bounded_kills_the_whole_tree_on_timeout(tmp_path):
+    import subprocess, psutil
+    pidfile = tmp_path / "grandchild.pid"
+    child = [sys.executable, "-c",
+             "import subprocess, sys, time; "
+             f"p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+             f"open({str(pidfile)!r}, 'w').write(str(p.pid)); time.sleep(60)"]
+    with pytest.raises(subprocess.TimeoutExpired):
+        rb.run_bounded(child, cwd=tmp_path, env=None, timeout=3)
+    grandchild = int(pidfile.read_text())
+    assert not psutil.pid_exists(grandchild) or psutil.Process(grandchild).status() == psutil.STATUS_ZOMBIE
+
+
+def test_apexa_servers_inherit_the_arm_environment(monkeypatch):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_apexa_driver", rb.HERE / "_apexa_driver.py")
+    driver = importlib.util.module_from_spec(spec); spec.loader.exec_module(driver)
+    import argo_mcp_client
+    monkeypatch.setattr(argo_mcp_client, "StdioServerParameters", argo_mcp_client.StdioServerParameters)
+    monkeypatch.setenv("APEXA_MIDAS_BIN", "/opt/solver/bin")
+    driver.inherit_server_environment()
+    params = argo_mcp_client.StdioServerParameters(command="python", args=["x.py"], env=None)
+    assert params.env["APEXA_MIDAS_BIN"] == "/opt/solver/bin"
