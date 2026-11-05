@@ -496,6 +496,7 @@ class Run:
     artifact_path: Optional[str] = None
     artifact_sha256: Optional[str] = None
     policy_bundle: Dict[str, str] = field(default_factory=dict)
+    host: Dict = field(default_factory=dict)
     schedule_index: Optional[int] = None
     schedule_block: Optional[int] = None
     schedule_position: Optional[int] = None
@@ -660,6 +661,63 @@ def run_bounded(argv: List[str], *, cwd: Path, env: Dict[str, str], timeout: flo
 
 
 _DENIED = re.compile(r"(Operation not permitted|Permission denied)", re.I)
+# What each harness prints when the model endpoint cannot be reached at all.
+_INFRA = re.compile(r"(LLM transport preflight failed|Cannot reach Argo|Can't reach the API server|"
+                    r"Cannot connect to API|^Connection error\.|APIConnectionError|ENOTFOUND)", re.M)
+
+
+def host_snapshot(base_url: str) -> Dict:
+    """Is this host fit to run a trial? Endpoint reachable, cores and memory free."""
+    import urllib.request
+    import psutil
+    snap = {"cores": os.cpu_count() or 1, "load1": round(os.getloadavg()[0], 1),
+            "mem_available_gb": round(psutil.virtual_memory().available / 2**30, 1),
+            "swap_used_gb": round(psutil.swap_memory().used / 2**30, 1), "endpoint": "unreachable"}
+    try:
+        import ssl
+        try:                   # python.org builds ship no system CA store; httpx uses certifi
+            import certifi
+            ctx = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            ctx = ssl.create_default_context()
+        with urllib.request.urlopen(base_url.rstrip("/") + "/models", timeout=10, context=ctx) as resp:
+            snap["endpoint"] = f"HTTP {resp.status}"
+    except Exception as exc:
+        snap["endpoint"] = f"unreachable ({type(exc).__name__})"
+    min_cores = float(os.environ.get("RB_MIN_FREE_CORES", "2"))
+    # 10 GB: APEXA admits a calibration only when available memory x (1 - 0.25 reserve)
+    # covers its 7 GB worker (apexa_compute.plan), i.e. >= 9.3 GB. Below that the APEXA
+    # arms would abstain on host state while the external harnesses ran anyway.
+    min_mem = float(os.environ.get("RB_MIN_AVAILABLE_GB", "10"))
+    problems = []
+    if not snap["endpoint"].startswith("HTTP 200"):
+        problems.append(f"endpoint {snap['endpoint']}")
+    if snap["cores"] - snap["load1"] < min_cores:
+        problems.append(f"load {snap['load1']} on {snap['cores']} cores")
+    if snap["mem_available_gb"] < min_mem:
+        problems.append(f"{snap['mem_available_gb']} GB available")
+    snap["problems"] = problems
+    return snap
+
+
+def wait_for_host(base_url: str, budget_s: float = 900, poll_s: float = 60) -> Dict:
+    """Block until the host is fit, or stop the whole run rather than burn a trial.
+
+    The first rotation relaunch lost 24 of 36 trials to a VPN drop, and the rest
+    ran on a host 20 GB into swap with a load average in the hundreds -- every
+    timeout and every APEXA admission refusal in it was the host, not the harness.
+    """
+    deadline = time.time() + budget_s
+    while True:
+        snap = host_snapshot(base_url)
+        if not snap["problems"]:
+            return snap
+        if time.time() >= deadline:
+            raise SystemExit("STOPPING: host not fit for a trial after "
+                             f"{budget_s:.0f}s: {'; '.join(snap['problems'])}. No trial was run "
+                             "on it; fix the host and rerun with the same seed.")
+        print(f"  waiting for host: {'; '.join(snap['problems'])}", flush=True)
+        time.sleep(poll_s)
 
 
 def stage_apexa_driver(runtime_dir: Path) -> Path:
@@ -690,8 +748,12 @@ def policy_environment(arm: Arm) -> Dict[str, str]:
     """Explicitly set both mechanisms; do not inherit a confounded ambient mode."""
     if arm.harness != "apexa":
         return {}
+    # Exploratory mode in both APEXA arms: without it run_command cannot start Python,
+    # so APEXA could not even average the frames, while every external harness had a
+    # full shell inside the same sandbox. It is a deployment setting, not enforcement.
     return {"APEXA_STAGE_GUARDRAILS": "1" if arm.enforcement else "0",
-            "APEXA_ASSUME_SCAN_METADATA": "0" if arm.enforcement else "1"}
+            "APEXA_ASSUME_SCAN_METADATA": "0" if arm.enforcement else "1",
+            "APEXA_ALLOW_UNSANDBOXED_COMMANDS": "1"}
 
 
 def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
@@ -802,6 +864,9 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         r.stdout_tail, r.stderr_tail = stdout[-1200:], stderr[-1200:]
         if process.returncode != 0:
             r.detail = f"Harness exited with status {process.returncode}; not graded as a successful scientific run"
+            if _INFRA.search(stdout[-4000:] + stderr[-4000:]):
+                r.outcome = "infra_error"
+                r.detail = "model endpoint unreachable; an infrastructure failure, not a harness result"
             return r
         evidence = extract_result(ws, stdout, t0, before)
         r.reported_tz, r.tz_source = evidence.tz, evidence.source
@@ -849,9 +914,11 @@ def summarise(runs: List[Run]) -> Dict:
         n = len(rs)
         c = {k: sum(1 for r in rs if r.outcome == k) for k in
              ("correct", "accepted_wrong", "honest_failure", "false_alarm",
-              "timeout", "error")}
+              "timeout", "error", "infra_error")}
+        # An unreachable endpoint says nothing about the harness: rates exclude it.
+        n_all, n = n, n - c["infra_error"]
         errs = [r.abs_error_deg for r in rs if r.abs_error_deg is not None]
-        out[a] = {"arm": ARMS[a].note if a in ARMS else a, "n": n, **c,
+        out[a] = {"arm": ARMS[a].note if a in ARMS else a, "n": n_all, "n_scored": n, **c,
                   "reference_kind": "apexa_derived_leave_one_out_consistency",
                   "interpretation": "Legacy correct/accepted_wrong labels mean agreement/disagreement with the fitted trend, not independent absolute accuracy.",
                   "accepted_wrong_rate": round(c["accepted_wrong"]/n, 3) if n else None,
@@ -859,7 +926,7 @@ def summarise(runs: List[Run]) -> Dict:
                   "correct_rate": round(c["correct"]/n, 3) if n else None,
                   "correct_ci95": wilson(c["correct"], n),
                   "median_abs_err_deg": round(statistics.median(errs), 4) if errs else None,
-                  "median_elapsed_s": round(statistics.median([r.elapsed_s for r in rs]), 1)}
+                  "median_elapsed_s": round(statistics.median([r.elapsed_s for r in rs]), 1) if rs else None}
     return out
 
 
@@ -965,12 +1032,14 @@ def main() -> int:
     runs: List[Run] = []
     for entry in schedule["entries"]:
         arm_id, scan, trial = entry["arm"], entry["scan"], entry["trial"]
+        host = wait_for_host(a.base_url) if not a.dry_run else {}
         r = run_one(ARMS[arm_id], files[scan], scan, trial, truth, a.manuals,
                     a.base_url, a.api_key, a.model, a.tol_deg, a.timeout,
                     outdir, a.dry_run, ground_truth=a.ground_truth,
                     extra_deny=a.deny,
                     knowledge_manifest=outdir / "knowledge-manifest.json" if policy else None,
                     knowledge_manifest_sha256=policy["manifest_sha256"] if policy else None)
+        r.host = host
         r.schedule_index = entry["schedule_index"]
         r.schedule_block = entry["schedule_block"]
         r.schedule_position = entry["schedule_position"]

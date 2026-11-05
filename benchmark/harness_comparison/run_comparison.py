@@ -76,7 +76,11 @@ HARNESSES: Dict[str, Harness] = {
         # background work (session titles, summaries) to a separate small model;
         # pinning every tier to the same id keeps that from leaking a second model
         # into the arm. It wants the dashed id (claude-opus-5), which Argo accepts.
-        argv=["claude", "-p", "--model", "{model_anthropic}", "{prompt}"],
+        # -p has nobody to approve a tool call: without a permission mode every
+        # Bash/Write was refused and the arm stopped to ask. The kernel sandbox, not
+        # Claude Code's prompts, is what bounds the run.
+        argv=["claude", "-p", "--permission-mode", "bypassPermissions",
+              "--model", "{model_anthropic}", "{prompt}"],
         env={"ANTHROPIC_BASE_URL": "{base_url_root}", "ANTHROPIC_API_KEY": "{api_key}",
              "ANTHROPIC_SMALL_FAST_MODEL": "{model_anthropic}",
              "ANTHROPIC_DEFAULT_HAIKU_MODEL": "{model_anthropic}",
@@ -91,7 +95,9 @@ HARNESSES: Dict[str, Harness] = {
         # so without -m and a provider config this arm never reached Argo at all.
         # The runner writes a per-run config (write_opencode_config) and points
         # OPENCODE_CONFIG at it, leaving the user's global config untouched.
-        argv=["opencode", "run", "-m", "argo/{model}", "{prompt}"],
+        # `run` rejects any tool call that would prompt ("The user rejected permission");
+        # --auto approves what is not explicitly denied. The sandbox bounds the run.
+        argv=["opencode", "run", "--auto", "-m", "argo/{model}", "{prompt}"],
         env={"OPENCODE_CONFIG": "{opencode_config}"},
         supports_mcp=True,
         note="npm i -g opencode-ai"),
