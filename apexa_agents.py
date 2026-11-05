@@ -3142,6 +3142,13 @@ class AgentRunner:
                     continue
                 messages.append(self._assistant_message(response, provider.model, structured))
                 _emit_narration(response.content or "")   # narration before the ▸ markers
+                # Stage coaching waits until EVERY call in this batch has its tool
+                # message: an assistant turn with tool_calls must be answered by one
+                # tool message per call with nothing in between, or the API rejects
+                # the next request ("tool_calls must be followed by tool messages").
+                # A single call never exposed it; two parallel run_commands on
+                # copland did, killing the turn mid-run.
+                _deferred_coaching: List[Dict] = []
                 for tc in response.tool_calls:
                     _emit_tool_marker(tc.name)
                     ledger.dispatch(tc.id, tc.name, tc.arguments)
@@ -3184,15 +3191,16 @@ class AgentRunner:
                         try:
                             _cap = self._maybe_capsule_msg(tc.name, _injected_techniques, result, tc.arguments)
                             if _cap:
-                                messages.append(_cap)
+                                _deferred_coaching.append(_cap)
                             _sk = self._maybe_stage_skill_msg(tc.name, _injected_skills)
                             if _sk:
-                                messages.append(_sk)
+                                _deferred_coaching.append(_sk)
                             _vf = self._maybe_verifier_msg(tc.name, tc.arguments)
                             if _vf:
-                                messages.append(_vf)
+                                _deferred_coaching.append(_vf)
                         except Exception:
                             pass
+                messages.extend(_deferred_coaching)
                 continue
 
             # Acknowledging an inspection is not executing it. Give one bounded

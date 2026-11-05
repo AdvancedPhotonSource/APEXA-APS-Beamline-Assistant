@@ -147,6 +147,33 @@ def test_structured_multiturn_roundtrip():
     assert not any("TOOL_CALL:" in (m.get("content") or "") for m in second)
 
 
+def test_parallel_tool_results_are_contiguous_before_coaching(monkeypatch):
+    """Every tool_call is answered before any injected coaching message.
+
+    On copland two parallel run_commands each triggered stage coaching, which was
+    appended between the two tool messages; the API rejected the next request
+    ("tool_calls must be followed by tool messages") and the turn died.
+    """
+    monkeypatch.setenv("APEXA_STAGE_GUARDRAILS", "1")
+    monkeypatch.setattr(AgentRunner, "_maybe_stage_skill_msg",
+                        staticmethod(lambda name, seen: {"role": "system", "content": f"skill for {name}"}))
+    runner = _runner({"run_command": "midas-calibrate-v2 0.26.0"})
+    provider = StubProvider([
+        AgentResponse(content="Checking both environments.",
+                      tool_calls=[ToolCall(id="c1", name="run_command", arguments={"command": "a"}),
+                                  ToolCall(id="c2", name="run_command", arguments={"command": "b"})]),
+        AgentResponse(content="Both checked."),
+    ])
+    _run(runner, _agent(), provider)
+
+    second = provider.seen_messages[1]
+    i = next(k for k, m in enumerate(second) if m["role"] == "assistant" and m.get("tool_calls"))
+    follow = second[i + 1:]
+    assert [m["role"] for m in follow[:2]] == ["tool", "tool"]
+    assert [m["tool_call_id"] for m in follow[:2]] == ["c1", "c2"]
+    assert any(m["role"] == "system" and "skill for run_command" in m["content"] for m in follow[2:])
+
+
 def test_structured_path_skips_text_preamble():
     """_TOOL_PREAMBLE (~11K chars of text-protocol coaching) must not be sent."""
     runner = _runner()
