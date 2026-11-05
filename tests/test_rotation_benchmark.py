@@ -92,7 +92,8 @@ def test_stage_accepts_a_clean_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(rb, "REPO", tmp_path)
     policy = rb.load_manifest(_knowledge_manifest(tmp_path, {"manuals/phase-4-calibrate.md": hashlib.sha256(b"the recipe").hexdigest()}))
     staged = rb.stage(exposure, manuals, tmp_path / "ws", knowledge_policy=policy)
-    assert staged == ["ceria_000250.h5", "manuals/phase-4-calibrate.md"]
+    # approved docs plus the navigation pointers -- never an unapproved file
+    assert staged == ["ceria_000250.h5", "manuals/phase-4-calibrate.md", "AGENTS.md", "CLAUDE.md"]
     assert (tmp_path / "ws" / "manuals" / "phase-4-calibrate.md").exists()
     assert not (tmp_path / "ws" / "manuals" / "LAB_NOTEBOOK.md").exists()
 
@@ -646,3 +647,37 @@ def test_nonzero_harness_exit_is_not_graded_as_scientific_success(tmp_path, monk
                         None, "https://example.invalid/v1", "key", "m", .1, 60,
                         tmp_path / "out", False, ground_truth=tmp_path / "truth" / "summary.csv")
     assert result.outcome == "error" and result.return_code == 2 and result.claimed is None
+
+
+# ── every documented arm gets the skills; Claude Code can log in when isolated ─
+def test_skills_are_staged_for_every_documented_arm(tmp_path):
+    """The manifest approves APEXA's skill, but it lives outside the capsule root
+    and used to be skipped: APEXA got it injected, the external harnesses never
+    saw it. It must reach the workspace, natively for Claude Code too."""
+    from apexa_knowledge_policy import load_manifest
+    man = rb.REPO / "benchmark/harness_comparison/knowledge_manifest_calibrate.json"
+    if not man.exists():
+        pytest.skip("manifest not present")
+    policy = load_manifest(man)
+    src = tmp_path / "raw_000265.vrx.h5"; src.write_bytes(b"x")
+    staged = rb.stage(src, rb.REPO / "knowledge_base/capsules", tmp_path / "ws", knowledge_policy=policy)
+    assert "manuals/skills/midas-calibrate/SKILL.md" in staged
+    assert ".claude/skills/midas-calibrate/SKILL.md" in staged
+    assert (tmp_path / "ws/AGENTS.md").read_text() == (tmp_path / "ws/CLAUDE.md").read_text()
+
+
+def test_claude_profile_logs_in_without_an_unapproved_env_key(tmp_path):
+    cfg = rb.write_claude_profile(tmp_path / "claude", "someone")
+    settings = json.loads((cfg / "settings.json").read_text())
+    assert settings["apiKeyHelper"] == "printf %s someone"
+    assert oct((cfg / "settings.json").stat().st_mode & 0o777) == "0o600"
+
+
+def test_claude_home_is_denied_to_every_arm(tmp_path):
+    """This session's transcripts and memory -- the answers -- live under ~/.claude."""
+    gt = tmp_path / "gt.csv"; gt.write_text("x")
+    claude_home = os.path.realpath(os.path.expanduser("~/.claude"))
+    if not os.path.exists(claude_home):
+        pytest.skip("no ~/.claude here")
+    for arm in ("A1", "A3", "A6"):
+        assert claude_home in rb.deny_paths(rb.ARMS[arm], gt)

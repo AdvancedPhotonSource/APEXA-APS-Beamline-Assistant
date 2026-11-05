@@ -264,6 +264,35 @@ def stage(exposure: Path, manuals: Optional[Path], dest: Path, *, knowledge_poli
             staged.append(target.relative_to(dest).as_posix())
         if len(staged) == 1:
             raise KnowledgePolicyError("The reviewed manifest approves no files under the requested manual directory")
+        # Skills too, not just the capsule. The manifest approves APEXA's skill
+        # files, but they live under .agents/skills -- outside the manual root --
+        # so they used to be skipped silently: APEXA got its skill injected from
+        # the repo while the external harnesses never saw it, which broke the
+        # "identical documentation" premise. Staged twice: as plain docs every
+        # harness can read, and in Claude Code's native project-skills folder.
+        skills_root = (REPO / ".agents" / "skills").resolve()
+        for relative in sorted(knowledge_policy["files"]):
+            path = REPO / relative
+            if not path.resolve().is_relative_to(skills_root):
+                continue
+            if path.is_symlink():
+                raise KnowledgePolicyError("Study skills cannot be symlinks")
+            content = approved_file_bytes(path, policy=knowledge_policy, root=REPO)
+            if content is None:
+                raise KnowledgePolicyError("Approved skill path does not resolve to its reviewed identity")
+            rel = path.resolve().relative_to(skills_root)
+            for target in (dest / "manuals" / "skills" / rel, dest / ".claude" / "skills" / rel):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(content)
+                staged.append(target.relative_to(dest).as_posix())
+        # Navigation only -- where the docs are, no technical content -- so it adds
+        # nothing APEXA lacks. AGENTS.md is what OpenCode and Pi read; CLAUDE.md is
+        # what Claude Code reads. Identical text for every documented arm.
+        pointer = ("Documentation for this task is in ./manuals: the technique manual under\n"
+                   "./manuals/calibrate-integrate/ and skills under ./manuals/skills/.\n")
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            (dest / name).write_text(pointer)
+            staged.append(name)
     leaks = [str(p.relative_to(dest)) for p in dest.rglob("*")
              if p.is_file() and LEAK.search(p.name)]
     if leaks:
@@ -537,11 +566,33 @@ def _real(p) -> str:
     return os.path.realpath(os.path.expanduser(str(p)))
 
 
+def write_claude_profile(cfg_dir: Path, api_key: str) -> Path:
+    """A fresh, per-run Claude Code config directory that can actually log in.
+
+    Isolation needs a fresh CLAUDE_CONFIG_DIR (no user CLAUDE.md, memory, skills
+    or MCP servers leaking into the arm). But a fresh directory has never approved
+    a custom ANTHROPIC_API_KEY, and in print mode Claude Code then refuses with
+    "Not logged in". apiKeyHelper supplies the key without the approval step --
+    verified live: login works, only the fixed model is used, the staged skill is
+    discovered, and ~/.claude stays unreadable under the sandbox.
+    """
+    import shlex
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "settings.json").write_text(
+        json.dumps({"apiKeyHelper": f"printf %s {shlex.quote(api_key)}"}) + "\n")
+    (cfg_dir / "settings.json").chmod(0o600)
+    return cfg_dir
+
+
 def deny_paths(arm: "Arm", ground_truth: Path, extra=(), knowledge_policy: dict | None = None) -> List[str]:
     home = Path.home()
     deny = {_real(ground_truth.parent), _real(home / "Data"),
             _real(home / "Library" / "CloudStorage"),      # Box, Drive, OneDrive
-            _real(home / ".apexa" / "sessions")}
+            _real(home / ".apexa" / "sessions"),
+            # Claude Code's home holds this project's session transcripts and memory
+            # -- the whole analysis, answers included. CLAUDE_CONFIG_DIR only moves
+            # where Claude Code itself looks; an agent's shell could still `cat` them.
+            _real(home / ".claude"), _real(home / ".claude.json")}
     deny |= {_real(x) for x in extra}
     if arm.harness == "apexa":
         # APEXA's process needs its own code; not the material that records the answers.
@@ -648,11 +699,17 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             env["PI_CODING_AGENT_DIR"] = str(agent_dir)
             ensure_pi_provider(base_url, api_key, model, config_path=agent_dir / "models.json")
         elif arm.harness == "claude-code":
-            env["CLAUDE_CONFIG_DIR"] = str(profile / "claude")
+            env["CLAUDE_CONFIG_DIR"] = str(write_claude_profile(profile / "claude", api_key))
         ph = placeholders(base_url=base_url, api_key=api_key, model=model,
                           prompt=prompt, opencode_config=oc)
         for key, value in h.env.items():
             env[key] = value.format(**ph)
+        if arm.harness == "claude-code":
+            # Authenticated through the profile's apiKeyHelper instead: with a fresh
+            # CLAUDE_CONFIG_DIR an ANTHROPIC_API_KEY is an unapproved custom key and
+            # Claude Code answers "Not logged in" -- every Claude Code arm would have
+            # failed at login and been scored as a harness failure.
+            env.pop("ANTHROPIC_API_KEY", None)
         deny = deny_paths(arm, ground_truth, (*extra_deny, outdir), knowledge_policy=policy)
         if h.argv is None:
             driver = stage_apexa_driver(trial_root / "runtime")
