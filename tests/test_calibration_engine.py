@@ -631,3 +631,18 @@ def test_seed_file_tilts_are_parsed_and_reported_not_silently_dropped():
 def test_the_solver_trace_is_kept_with_the_run():
     src, _ = _auto_calibrate_fn()
     assert 'calibrate_runner.log' in src and '"solver_log"' in src
+
+
+# ── --refine-distortion must survive Stage 2's thaw (20-ID control was a no-op) ─
+def test_runner_restricts_distortion_after_stage2_thaw_and_checks_it():
+    """autocalibrate_four_stage re-thaws EVERY distortion coefficient before Stage 2,
+    so a restriction set beforehand was silently undone: the 20-ID radial and none
+    controls produced byte-identical parameter files. The runner must re-freeze after
+    the thaw, refuse when it cannot, and verify after the fit that frozen terms stayed
+    put. Verified live: full 15/15, radial exactly iso_R2/4/6, none 0/15."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "_calibrate_runner.py").read_text()
+    assert "_thaw_respecting_request" in src and "_fs._thaw_distortion = _thaw_respecting_request" in src
+    assert "_frozen_distortion = sorted(n for n in _PCN" in src          # read from the spec
+    assert "coefficients meant to stay frozen moved" in src               # post-fit check
+    assert '"distortion_frozen": _frozen_distortion' in src

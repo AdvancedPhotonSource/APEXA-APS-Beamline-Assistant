@@ -556,6 +556,41 @@ def main(argv=None):
     except Exception:
         pass
 
+    # ---- make --refine-distortion survive Stage 2 -----------------------------------
+    # autocalibrate_four_stage freezes all distortion for Stage 1, restores the flags,
+    # then calls _thaw_distortion(), which sets EVERY distortion coefficient refined
+    # (still true in 0.26.0). So the restriction above was undone before the only
+    # stage that refines distortion: every "radial" and "none" calibration was a full
+    # one, silently. On the 20-ID series the radial and none controls came out
+    # byte-identical -- same paramstest SHA-256 -- and "none" still railed phi6.
+    # Re-freeze exactly what the spec left unrefined, after the thaw. The frozen set
+    # is read from the spec itself, so v1->v2 key translation is never duplicated.
+    _frozen_distortion: list = []
+    if _keep != set(_ALL_PKEYS):
+        try:
+            from midas_calibrate_v2.pipelines import four_stage as _fs
+            from midas_calibrate_v2.forward.distortion import P_COEF_NAMES as _PCN
+        except Exception as e:
+            _fail(f"--refine-distortion {_rd} needs to restrict Stage 2's distortion "
+                  f"thaw, but this midas_calibrate_v2 build does not expose it: {e}",
+                  capabilities=caps, nothing_was_run=True)
+        if not callable(getattr(_fs, "_thaw_distortion", None)):
+            _fail(f"--refine-distortion {_rd}: this midas_calibrate_v2 build has no "
+                  f"four_stage._thaw_distortion to restrict, so the request cannot be "
+                  f"honoured; refusing rather than silently refining everything.",
+                  capabilities=caps, nothing_was_run=True)
+        _frozen_distortion = sorted(n for n in _PCN
+                                    if n in spec.parameters and not spec.parameters[n].refined)
+        _orig_thaw = _fs._thaw_distortion
+
+        def _thaw_respecting_request(spec_, *a, **k):
+            _orig_thaw(spec_, *a, **k)
+            for _n in _frozen_distortion:
+                if _n in spec_.parameters:
+                    spec_.parameters[_n].refined = False
+
+        _fs._thaw_distortion = _thaw_respecting_request
+
     # ---- panels (tiled detectors only) ----------------------------------------------
     layout = None
     n_panels = 0
@@ -597,6 +632,18 @@ def main(argv=None):
 
     try:
         res = autocalibrate_four_stage(v1, img, **run_kw)
+        if _frozen_distortion:
+            try:
+                _unp = res.stage2.unpacked
+                _moved = {n: float(_unp[n].reshape(-1)[0]) for n in _frozen_distortion
+                          if n in _unp and abs(float(_unp[n].reshape(-1)[0])) > 1e-12}
+            except Exception:
+                _moved = {}
+            if _moved:
+                _fail(f"--refine-distortion {_rd}: coefficients meant to stay frozen moved "
+                      f"({_moved}); the restriction did not hold, so this result is not "
+                      f"the requested model.", capabilities=caps, nothing_was_run=False)
+            notes.append(f"distortion frozen through Stage 2: {_frozen_distortion}")
     except Exception as e:
         _fail(f"autocalibrate_four_stage failed: {e}",
               capabilities=caps, seed=seed_info, notes=notes)
@@ -724,6 +771,7 @@ def main(argv=None):
         # question (rule 11), asked honestly instead of via a fake rail.
         "phases_at_seam": phases_at_seam,
         "refine_distortion": _rd,
+        "distortion_frozen": _frozen_distortion,
         "tol_tilts_deg": tilt_tol,
         "scope_gate": scope,
         "gate": gate,
