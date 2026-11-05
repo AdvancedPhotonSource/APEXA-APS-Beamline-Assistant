@@ -52,6 +52,8 @@ try:
 except ImportError:
     pass
 
+import apexa_data_guard as _data_guard  # raw-data write guard (never write into data/)
+
 from apexa_powder_contract import execution_state, outcome_summary
 
 from mcp.server.mcpserver import MCPServer  # mcp>=2: FastMCP was renamed
@@ -224,6 +226,12 @@ async def refine_pattern(
     if not cif_files:
         return format_result({"tool": "refine_pattern", "status": "error",
                               "error": "Supply CIFs. Use propose_structures for retrieval, then powder_refine_submit(mode='search') to compare mixtures."})
+    # Never write the GPX/CIF/plots into the raw-data tree.
+    _refuse = _data_guard.check_write_target(
+        Path(output_dir).expanduser(), what="run refine_pattern writing to")
+    if _refuse:
+        return format_result({"tool": "refine_pattern", "status": "refused",
+                              "error": _refuse})
     code = f"""
 import json, sys
 sys.path.insert(0, {DEFAULT_AGENTIC_REPO!r})

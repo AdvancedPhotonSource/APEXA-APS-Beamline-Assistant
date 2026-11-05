@@ -44,6 +44,8 @@ try:
 except ImportError:
     pass
 
+import apexa_data_guard as _data_guard  # raw-data write guard (never write into data/)
+
 from mcp.server.mcpserver import MCPServer  # mcp>=2: FastMCP was renamed
 
 logging.getLogger("mcp").setLevel(logging.WARNING)
@@ -212,6 +214,15 @@ async def run_tomo_reconstruction(
             "tool": "run_tomo_reconstruction", "status": "error",
             "error": "handedness must be 'left' or 'right' — it is not guessable from "
                      "the data (capsule hard rule 3)."})
+    # Never write the reconstruction into the raw-data tree. Guard the explicit
+    # output_dir, and the default (<data_folder>/tomo_recon, which is inside data/).
+    _tomo_out = Path(output_dir).expanduser() if output_dir \
+        else Path(data_folder).expanduser() / "tomo_recon"
+    _refuse = _data_guard.check_write_target(
+        _tomo_out, what="run run_tomo_reconstruction writing to")
+    if _refuse:
+        return format_result({"tool": "run_tomo_reconstruction", "status": "refused",
+                              "error": _refuse})
     args = ["--data", data_folder, "--pattern", file_pattern,
             "--pixel-size-um", str(pixel_size_um), "--handedness", handedness,
             "--omega-start", str(omega_start_deg), "--omega-step", str(omega_step_deg),

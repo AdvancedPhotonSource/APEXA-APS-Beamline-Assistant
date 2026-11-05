@@ -58,6 +58,8 @@ try:
 except Exception:  # noqa: BLE001 — absent python-dotenv: env vars or defaults only
     pass
 
+import apexa_data_guard as _data_guard  # raw-data write guard (never write into data/)
+
 DEFAULT_SYNTH_PYTHON = os.environ.get(
     "APEXA_SYNTH_PYTHON", str(Path.home() / ".apexa" / "envs" / "synth" / "bin" / "python"))
 SYNTH_CODE = os.environ.get("APEXA_SYNTH_CODE", "")
@@ -107,6 +109,14 @@ def _run_runner(subcmd: str, args: List[str], timeout: int = 600,
     err = _env_ok(need_engine)
     if err:
         return {"status": "error", "error": err}
+    # Never write synthesis output into the raw-data tree. If an explicit --output-dir
+    # resolves inside the protected data store, refuse before spawning the runner.
+    if "--output-dir" in args:
+        _od = args[args.index("--output-dir") + 1] if args.index("--output-dir") + 1 < len(args) else ""
+        _refuse = _data_guard.check_write_target(
+            Path(_od).expanduser(), what=f"run synthesis {subcmd} writing to") if _od else None
+        if _refuse:
+            return {"status": "refused", "error": _refuse}
     env = dict(os.environ, MPLBACKEND="Agg", PYTHONNOUSERSITE="1")
     for v in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
         env.setdefault(v, "4")

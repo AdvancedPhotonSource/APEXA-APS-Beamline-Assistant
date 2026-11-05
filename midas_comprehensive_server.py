@@ -3045,7 +3045,12 @@ async def run_forward_simulation(
         if guard is not None:
             return guard
 
+        # Outputs land next to the param file. If that is inside the data/ tree,
+        # refuse — point the param file / outputs at an analysis folder instead.
         work_dir = Path(param_path).parent
+        _blocked = _guard_output_dir(tool, work_dir)
+        if _blocked:
+            return _blocked
         _announce_output(tool, work_dir, params=Path(param_path).name,
                          prefix=output_prefix, n_cpus=n_cpus)
 
@@ -3218,7 +3223,11 @@ async def run_nf_forward_simulation(
         if guard is not None:
             return guard
 
+        # Outputs land next to the param file; refuse if that is inside data/.
         work_dir = Path(param_path).parent
+        _blocked = _guard_output_dir(tool, work_dir)
+        if _blocked:
+            return _blocked
         _announce_output(tool, work_dir, params=Path(param_path).name,
                          mic=Path(mic_path).name, prefix=output_prefix, n_cpus=n_cpus)
 
@@ -6747,6 +6756,12 @@ async def midas_auto_calibrate(
         # user for it before calling this tool (see APEXA_AGENT prompt).
         _calib_out = (Path(output_dir).expanduser().absolute()
                       if output_dir else image_path.parent)
+        # The default (image_path.parent) lands next to the detector image, inside the
+        # data/ tree. Refuse rather than write refined params/outputs there — ask the
+        # agent for an analysis/output dir (handbook: calibration output is NOT raw data).
+        _blocked = _guard_output_dir("midas_auto_calibrate", _calib_out)
+        if _blocked:
+            return _blocked
         _announce_output("midas_auto_calibrate", _calib_out,
                          engine=str(calibration_engine), image=image_path.name)
 
@@ -8227,6 +8242,9 @@ async def midas_batch_integrate(
                                            f"Use refined_MIDAS_params*.txt from midas_auto_calibrate."})
 
         _strip_empty_value_lines(param_path)
+        _blocked = _guard_output_dir("midas_batch_integrate", Path(result_folder).resolve())
+        if _blocked:
+            return _blocked
         _announce_output("midas_batch_integrate", Path(result_folder).resolve(),
                          frames=f"{start_frame}-{end_frame}", data=data_path.name)
 
@@ -13225,6 +13243,17 @@ async def build_detector_mask(
             if not v:
                 return format_result({"tool": "build_detector_mask",
                                       "status": "error", "error": msg})
+
+        # Never write the mask TIFF into the raw-data tree. Guard the explicit
+        # output_path, and the implicit default (<image_stem>_mask.tif next to the
+        # image, which is inside data/ when the image is).
+        _mask_target = (Path(output_path).expanduser() if output_path
+                        else (Path(image_path).expanduser().with_name(
+                              Path(image_path).stem + "_mask.tif") if image_path else None))
+        if _mask_target is not None:
+            _blocked = _guard_output_dir("build_detector_mask", _mask_target)
+            if _blocked:
+                return _blocked
 
         # Build CLI args. Use `--flag=value` for anything that may start with '-'
         # (argparse treats a bare leading-dash value as an option — see plan).
