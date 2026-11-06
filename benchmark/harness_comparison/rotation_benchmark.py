@@ -456,17 +456,29 @@ _FAIL = re.compile(r"\b(?:failed|unable|could\s+not|refused)\b", re.I)
 _ACCEPT = re.compile(r"\b(?:accepted|acceptable|success|succeeded|converged|passed|complete)\b", re.I)
 
 
+def prose_claims_success(stdout: str) -> bool:
+    """Does the final part of the transcript claim a usable result?"""
+    tail = (stdout or "")[-1500:]
+    final = list(_FINAL_SECTION.finditer(tail))
+    if final:
+        tail = tail[final[-1].end():]
+    return bool(_ACCEPT.search(tail)) and not _REJECTION.search(tail)
+
+
 def claimed_success(stdout: str, tz: Optional[float], scientific_status: Optional[str] = None) -> Tuple[bool, str]:
     if tz is None or not math.isfinite(tz):
         return False, "no verified finite geometry artifact"
+    # A hash-verified result_manifest.json is the agent's declared decision; it wins over
+    # regexes on prose. (The third rotation run scored a correct, manifest-accepted A2
+    # geometry as a false alarm because "rejected" appeared in its explanation.)
+    if scientific_status is not None:
+        return scientific_status == "accepted", f"manifest scientific_status={scientific_status}"
     tail = (stdout or "")[-1500:]
     final = list(_FINAL_SECTION.finditer(tail))
     if final:
         tail = tail[final[-1].end():]
     if _REJECTION.search(tail):
         return False, "explicit final rejection/provisional decision overrides prior numerical success"
-    if scientific_status is not None:
-        return scientific_status == "accepted", f"manifest scientific_status={scientific_status}"
     if _FAIL.search(tail) and not _ACCEPT.search(tail):
         return False, "geometry present but transcript disclaims it"
     return True, "unique generated geometry reported; legacy prose decision"
@@ -881,6 +893,11 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         r.claimed, r.claim_rule = claimed_success(stdout, r.reported_tz, evidence.scientific_status)
         if evidence.error:
             r.detail = evidence.error
+            if evidence.source == "unverified_transcript" and not prose_claims_success(stdout):
+                # Numbers in an abstention are not a claim: no artifact and no claim is an
+                # honest failure, not an error.
+                r.outcome = "honest_failure"
+                r.detail += "; the agent did not claim success"
             return r  # invalid/ambiguous evidence is an error, not a guessed success
         if r.reported_tz is not None and r.predicted_tz is not None:
             r.abs_error_deg = abs(r.reported_tz - r.predicted_tz)
