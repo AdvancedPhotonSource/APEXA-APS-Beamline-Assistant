@@ -91,3 +91,9 @@ inputs and adopted artifacts remain in `results/baseline-pilot-r1/`. Source,
 input and reference fingerprints were checked for agreement with revision 2
 before the native pilot restart. Main scoring is still pending scientific
 review of the revised pilot.
+
+## Completed pilot review
+
+All ten revision-2 pilot trials are terminal. See [PILOT_REVIEW.md](PILOT_REVIEW.md)
+and its JSON receipt for the final accounting and unresolved main-study gates.
+Do not relaunch from the stale completed count in the supervisor receipt.
