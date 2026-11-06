@@ -123,6 +123,29 @@ class Resources:
                 f"{self.mem_free_gb:.0f}/{self.mem_total_gb:.0f} GB free{g}")
 
 
+def _darwin_correction(load1: float, cores: int):
+    """macOS: busy cores from CPU idle time, free memory from the kernel's own level.
+
+    On macOS the load average counts threads blocked in I/O and sync daemons: a
+    Mac 75% idle read load 197 on 10 cores, so cores - load1 admitted nothing.
+    psutil's `available` also ignores memory the compressor can reclaim (6 GB
+    "available" while the kernel reported 40% free). Linux hosts are unchanged.
+    """
+    if sys.platform != "darwin":
+        return load1, None
+    try:
+        import psutil
+        load1 = cores * psutil.cpu_percent(interval=0.5) / 100.0
+    except Exception:
+        pass
+    try:
+        pct = float(subprocess.run(["sysctl", "-n", "kern.memorystatus_level"], capture_output=True,
+                                   text=True, timeout=2).stdout.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pct = None
+    return load1, pct
+
+
 #: Dependency-free inventory for data hosts. NVIDIA telemetry uses nvidia-smi,
 #: not importing a heavyweight tensor runtime just to populate a resource badge.
 _PROBE_SRC = r'''
@@ -212,11 +235,14 @@ def _local_inventory() -> Resources:
         load1 = os.getloadavg()[0]
     except (OSError, AttributeError):
         load1 = 0.0
+    load1, darwin_mem_pct = _darwin_correction(load1, cores)
     mem_total = mem_free = 0.0
     try:
         import psutil
         vm = psutil.virtual_memory()
         mem_total, mem_free = vm.total / 2**30, vm.available / 2**30
+        if darwin_mem_pct is not None:
+            mem_free = max(mem_free, mem_total * darwin_mem_pct / 100.0)
         limit = Path("/sys/fs/cgroup/memory.max").read_text().strip()
         if limit != "max":
             usage = int(Path("/sys/fs/cgroup/memory.current").read_text())

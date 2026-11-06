@@ -670,8 +670,14 @@ def host_snapshot(base_url: str) -> Dict:
     """Is this host fit to run a trial? Endpoint reachable, cores and memory free."""
     import urllib.request
     import psutil
-    snap = {"cores": os.cpu_count() or 1, "load1": round(os.getloadavg()[0], 1),
-            "mem_available_gb": round(psutil.virtual_memory().available / 2**30, 1),
+    import apexa_compute
+    cores = os.cpu_count() or 1
+    # The same measure APEXA's admission gate uses, so the two cannot disagree.
+    load1, mem_pct = apexa_compute._darwin_correction(os.getloadavg()[0], cores)
+    vm = psutil.virtual_memory()
+    mem_free = max(vm.available, vm.total * mem_pct / 100.0) if mem_pct is not None else vm.available
+    snap = {"cores": cores, "load1": round(load1, 1),
+            "mem_available_gb": round(mem_free / 2**30, 1),
             "swap_used_gb": round(psutil.swap_memory().used / 2**30, 1), "endpoint": "unreachable"}
     try:
         import ssl
