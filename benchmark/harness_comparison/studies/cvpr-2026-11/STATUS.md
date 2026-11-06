@@ -19,9 +19,9 @@ writes outside the workspace while permitting workspace writes. The temporary
 trial directory was empty afterward.
 
 Preparation inspected and hashed 14 original inputs without modifying them,
-verified MIDAS calibrate v2 0.26.0, and froze the pilot/main schedules. Only
-`results/qualification/` exists. **Scientific runs: 0.** The 180 scheduled main
-trials and ten pilot trials are not run. These smoke results are not a harness
+verified MIDAS calibrate v2 0.26.0, and froze the pilot/main schedules. At completion
+of startup qualification, only `results/qualification/` existed and scientific
+runs numbered zero. The 180 main and ten pilot trials had not started. These smoke results are not a harness
 ranking or a calibration result. Local regression validation: 195 tests passed.
 
 Remote evidence under `setup/`:
@@ -48,3 +48,21 @@ review the scientific pilot, verify procedure delivery in A1, and audit executio
 evidence, effective inputs and final decisions. Main execution remains blocked
 in code. The gold FF transfer study still needs its exact acquisition and
 evaluation protocol identified.
+
+## Scientific pilot launched on 2026-11-06
+
+Following the user's instruction to run, the ten-trial native-system pilot was
+launched on Copland under a detached supervisor. Its live receipt and log are
+`setup/pilot-launch-r1.json` and `setup/pilot-r1.log`; the run directory is
+`results/pilot-20261106-112931/`. The original frozen native-harness code and
+schedule are unchanged. Do not infer completion from this launch record.
+
+The [B0 fixed numerical baseline](BASELINE.md) was separately frozen and its
+two pilot trials queued behind the same scientific-run lock. It uses MIDAS's
+documented tilted-detector pipeline with no LLM and no distance/tilt hints.
+All fourteen embedded dark arrays were checked against its explicit zero-dark
+precondition. Its local tests (12) and Copland sandbox/startup probe passed;
+those checks performed no numerical fits. Live baseline status is in
+`setup/baseline-launch-r1.json`; output goes to `results/baseline-pilot-r1/`
+once it acquires the lock. Main scoring remains blocked pending review of these
+scientific pilot results.
