@@ -4,6 +4,18 @@ This directory contains adapters for APEXA, Claude Code, OpenCode and Pi, plus a
 
 `run_comparison.py`'s historical 31 records remain **withdrawn**. The old rig leaked a reference file into the workspace, admitted a nominal filename answer through its tolerance, assumed APEXA-specific output names, and inferred execution from file modification times. Its provider/CLI adapters are reused; its legacy scoring is not a publication reference. This README supersedes earlier claims that these scripts isolate the harness by construction.
 
+## Copland setup, November 2026
+
+The new [development protocol](studies/cvpr-2026-11/PROTOCOL.md) lives in the dedicated remote directory `/home/beams/S20HEDM/apexa_eval/harness-comparison/` (canonical path `/home/beams45/S20HEDM/apexa_eval/harness-comparison/`). Its isolated `source/`, `runtime/`, `setup/`, `work/` and `results/` directories keep installation, evidence and temporary work together. Production APEXA and MIDAS installations are read-only dependencies. Failed setup logs are retained separately from scientific trials.
+
+`bootstrap_remote.py` installs pinned Claude Code 2.1.318, OpenCode 1.18.23 and Pi 1.2.0 with an official checksum-verified Node 22 runtime. Package installation runs on Chiltepin in Bubblewrap, with writes confined to the study tree and private temporary storage. Copland runs the trials. No global package or home configuration is changed.
+
+`study.py prepare` freezes source, solver and launcher identities, the npm lock, raw-input hashes, reference hash and balanced schedules. `verify` checks these identities again, including raw inputs and schedules. `qualify` requires Linux containment checks and performs only a synthetic exact-copy task with all five conditions. Model request metadata, returned identity, usage, full process output and workspaces are retained; raw prompts and credentials are not stored in the model audit. The actual qualification outcome is in `setup/qualification.json`, not implied by installation.
+
+The conditions are A1/A3/A4/A5 plus A7, which disables only automatic procedure delivery. The model relay imposes a request limit and per-request output ceiling and rejects unqualified model traffic from scientific aggregation. Structured CLI events are preserved, but only final assistant text enters prose scoring. These controls do not establish identical inference settings across transports or prevent every possible network information flow.
+
+Use the generated `setup/run-study.py` launcher on Copland with `verify` or `qualify`; it uses the existing APEXA ARGO login in memory. Qualification records are exclusive: preserve a failed revision before repairing and rerunning it. `run --cohort pilot` is separate from setup. Main execution is deliberately blocked until a deterministic numerical baseline and scientific pilot review are complete. The planned 180 main trials are **not run** merely because their schedule exists.
+
 ## What the rotation reference measures
 
 `rotation_benchmark.py` uses leave-one-out robust fits within each calibrant group. With the existing APEXA summary, one exposure is compared with a trend fitted from other APEXA calibration results. Holding the graded exposure out prevents direct self-inclusion, but **does not make that trend independent ground truth**. Shared coordinate, model or engine errors can remain in all rows. The benchmark does not directly read a calibrated detector goniometer.
@@ -24,6 +36,7 @@ Absolute accuracy claims require independent pose/readback/metrology with a just
 | A4 | OpenCode | Yes | Native harness configuration |
 | A5 | Pi | Yes | Native harness configuration; this rig does not configure common MCP servers |
 | A6 | Claude Code | No | Same requested adapter settings as A3, without staged manuals |
+| A7 | APEXA | Yes | Automatic procedure delivery disabled; metadata policy and verifier unchanged from A1 |
 
 A1/A2 explicitly set both `APEXA_STAGE_GUARDRAILS` and `APEXA_ASSUME_SCAN_METADATA`, rather than inheriting ambient values. The former affects procedure/capsule injection and some verification behavior; the latter changes metadata inference. Numerical tool validators remain present. Therefore A1/A2 is not a pure enforcement ablation. The historical boolean `enforcement` is retained in records only for compatibility; `policy_bundle` records the real switches.
 
@@ -94,7 +107,7 @@ Retrieval is disabled by a manifest without a `retrieval` section. To permit it,
 
 The sandbox additionally denies unlisted files in the original capsule/skill directories. When retrieval is disabled, it also denies the original Chroma, paper, book and logbook directories. The pinned manifest and staged driver are read-only. This application policy cannot constrain arbitrary code, other harnesses' plugins/memory, network services, or all information encoded in the application itself. If retrieval is enabled, its complete index remains readable by the APEXA process; direct shell access to that index is not mediated by the retrieval filter. A sealed study image with separately brokered retrieval is still needed for a stronger threat model.
 
-This is a denylist, not proof that all answer sources have been removed. Sanitize and freeze normative manuals, capsules, notebooks, user/project instructions, prior sessions and network access. APEXA can still read its application code and permitted knowledge paths. Add all other known reference locations through `--deny`. Use a sealed benchmark image/identity for stronger isolation. The script refuses to run without its supported sandbox; a qualified Linux sandbox adapter is still needed.
+This is a denylist, not proof that all answer sources have been removed. Sanitize and freeze normative manuals, capsules, notebooks, user/project instructions, prior sessions and network access. APEXA can still read its application code and permitted knowledge paths. Add all other known reference locations through `--deny`. Use a sealed benchmark image/identity for stronger isolation. The script refuses to run without its supported sandbox. Linux uses Bubblewrap with a read-only host filesystem, private process/device/temp trees and explicit writable trial roots; `study.py qualify` checks blocked reference reads, allowed workspace writes and blocked writes outside the workspace on the actual host.
 
 Run on an analysis identity with no EPICS write rights. Shell access inside an agent is not a hardware protection boundary. APEXA's general shell policy is now read-only unless the operator explicitly enables exploratory analysis under appropriate OS containment; record that deployment setting consistently when comparing systems. Long external child processes and remote jobs still need a qualified cancellation/reconciliation policy.
 

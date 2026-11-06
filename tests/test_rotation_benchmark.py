@@ -253,8 +253,10 @@ def test_apexa_ablation_is_explicitly_a_bundled_intervention():
     assert "bundled" in A["A2"].note
     # Shell access is a deployment setting, identical in both arms -- not part of the ablation.
     assert rb.policy_environment(A["A1"]) == {"APEXA_STAGE_GUARDRAILS": "1", "APEXA_ASSUME_SCAN_METADATA": "0",
+                                              "APEXA_AUTOMATIC_PROCEDURES": "1",
                                               "APEXA_ALLOW_UNSANDBOXED_COMMANDS": "1"}
     assert rb.policy_environment(A["A2"]) == {"APEXA_STAGE_GUARDRAILS": "0", "APEXA_ASSUME_SCAN_METADATA": "1",
+                                              "APEXA_AUTOMATIC_PROCEDURES": "1",
                                               "APEXA_ALLOW_UNSANDBOXED_COMMANDS": "1"}
     assert rb.policy_environment(A["A3"]) == {}
     assert A["A3"].harness == A["A6"].harness
@@ -262,7 +264,7 @@ def test_apexa_ablation_is_explicitly_a_bundled_intervention():
 
 
 def test_only_our_arms_claim_enforcement():
-    assert [a.id for a in rb.ARMS.values() if a.enforcement] == ["A1"]
+    assert [a.id for a in rb.ARMS.values() if a.enforcement] == ["A1", "A7"]
 
 
 # ── the model is held fixed across arms (the comparison's premise) ───────────
@@ -423,7 +425,7 @@ def test_the_apexa_arm_keeps_its_code_but_not_the_answer_material(tmp_path):
 def test_no_sandbox_means_no_run(monkeypatch):
     """Without the kernel denial the answers on this disk are readable."""
     monkeypatch.setattr(rb, "SANDBOX", None)
-    with pytest.raises(SystemExit, match="sandbox-exec not available"):
+    with pytest.raises(SystemExit, match="sandbox-exec/bwrap not available"):
         rb.sandboxed(["true"], ["/nonexistent"])
 
 

@@ -316,6 +316,17 @@ def test_stage_skill_msg_unknown_tool_is_none():
         "definitely_not_a_tool", set()) is None
 
 
+def test_automatic_delivery_off_keeps_explicit_document_access_and_verifier(monkeypatch):
+    monkeypatch.setenv("APEXA_AUTOMATIC_PROCEDURES", "0")
+    assert apexa_agents.AgentRunner._maybe_stage_skill_msg("run_ff_hedm_full_workflow", set()) is None
+    assert apexa_agents.AgentRunner._maybe_capsule_msg("run_ff_hedm_full_workflow", set()) is None
+    assert apexa_agents.load_skill_text("midas-ff-hedm")
+    with tempfile.TemporaryDirectory() as d:
+        rf = _layer(d, {"InputAll.csv": ""})
+        result = apexa_agents.AgentRunner._maybe_verifier_msg("run_ff_hedm_full_workflow", {"result_folder": rf})
+    assert result and "INDEPENDENT OUTPUT CHECK" in result["content"]
+
+
 def test_verifier_msg_fires_on_failed_ff_reconstruction():
     with tempfile.TemporaryDirectory() as d:
         rf = _layer(d, {"InputAll.csv": ""})       # degenerate → fail

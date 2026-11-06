@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "study_id": "cvpr-2026-11-ai-tune",
+  "comparison_kind": "native_systems_and_automatic_procedure_ablation",
+  "arms": [
+    "A1",
+    "A3",
+    "A4",
+    "A5",
+    "A7"
+  ],
+  "scans": [
+    261,
+    265,
+    269,
+    274,
+    278,
+    282,
+    283,
+    287,
+    291,
+    295,
+    299,
+    303
+  ],
+  "pilot_scans": [
+    262,
+    284
+  ],
+  "selection": "six equally spaced rounded ranks within each calibrant, by scan index only",
+  "repeats": 3,
+  "order_seed": 20261106,
+  "tilt_tolerance_deg": 0.1,
+  "model": "claudeopus5",
+  "model_base_url": "https://apps.inside.anl.gov/argoapi/v1",
+  "solver_python": "/home/beams12/S1IDUSER/opt/envs/midas/bin/python",
+  "solver_version": "0.26.0",
+  "production_repo": "/home/beams45/S20HEDM/opt/APEXA-APS-Beamline-Assistant",
+  "raw_root": "/gdata/dm/20ID/HT_HEDM/2026-3/startup_d_sep26/data/varexD/ai_tune/rot_series",
+  "wall_seconds": 1800,
+  "max_model_requests": 40,
+  "max_output_tokens": 16000,
+  "cpu_threads": 4
+}

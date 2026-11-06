@@ -43,6 +43,18 @@ from apexa_timing import (
     record_llm_call, current_query_id,
 )
 from skill_registry import skill_context_for_tools, skills_for_tools, load_skill_text
+
+
+def automatic_procedures_enabled() -> bool:
+    """Control automatic document delivery without disabling tools or validation.
+
+    Explicit skill/capsule reads remain available in both conditions. This is
+    separate from the legacy stage-guardrail bundle, which also runs a verifier.
+    """
+    return os.environ.get("APEXA_AUTOMATIC_PROCEDURES", "1").strip().lower() not in (
+        "0", "false", "no", "off")
+
+
 try:
     import capsule_registry as _capsule_registry
 except Exception:  # pragma: no cover - defensive; capsule injection then no-ops
@@ -2683,6 +2695,8 @@ class AgentRunner:
         enters that stage. Query-time skill matching only sees the opening
         request; this follows the ACTUAL stage. Returns None when the tool maps
         to no new skill. Mutates `injected_skills` (dedup set)."""
+        if not automatic_procedures_enabled():
+            return None
         try:
             new = [s for s in skills_for_tools([tool_name]) if s not in injected_skills]
         except Exception:
@@ -2738,7 +2752,7 @@ class AgentRunner:
         share the ``injected_techniques`` dedup set so a spine is injected at most
         once per technique per turn. Returns None when nothing resolves or the
         spine is already loaded. Fail-open."""
-        if _capsule_registry is None:
+        if not automatic_procedures_enabled() or _capsule_registry is None:
             return None
         tech = ""
         # 1) Bridge: read the technique the classifier recognized from the data.
@@ -2955,7 +2969,7 @@ class AgentRunner:
         # lint gate + RAG instead. Transient guidance: it lives only in the
         # system prompt, never in the persisted transcript buffer.
         try:
-            skill_block = skill_context_for_tools(agent.tool_names)
+            skill_block = skill_context_for_tools(agent.tool_names) if automatic_procedures_enabled() else ""
             if skill_block:
                 system_content += skill_block
         except Exception:
@@ -4680,7 +4694,7 @@ class OrchestratorAgent:
             for _dom, _sc in _scores.items():
                 if _sc > 0:
                     _matched_tools.extend(self._ROUTES[_dom].tool_names)
-            if _matched_tools:
+            if _matched_tools and automatic_procedures_enabled():
                 skill_block = skill_context_for_tools(_matched_tools)
         except Exception:
             skill_block = ""  # never let skill matching break a query
@@ -4699,7 +4713,7 @@ class OrchestratorAgent:
         _preloaded_techniques: set = set()
         _guardrails_on = os.environ.get(
             "APEXA_STAGE_GUARDRAILS", "1").strip().lower() not in ("0", "false", "no", "off")
-        if _guardrails_on and _capsule_registry is not None and _matched_tools:
+        if _guardrails_on and automatic_procedures_enabled() and _capsule_registry is not None and _matched_tools:
             try:
                 _techs: List[str] = []
                 for _t in _matched_tools:

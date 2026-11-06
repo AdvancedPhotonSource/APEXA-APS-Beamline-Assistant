@@ -37,6 +37,7 @@ from apexa_knowledge_policy import (load_manifest, approved_file_bytes, Knowledg
 @dataclass(frozen=True)
 class Arm:
     id: str; harness: str; manuals: bool; enforcement: bool; note: str
+    automatic_procedures: bool = True
 
 ARMS: Dict[str, Arm] = {
     "A1": Arm("A1", "apexa",       True,  True,  "APEXA native analysis tools; stage guidance on, inferred metadata confirmation required"),
@@ -45,6 +46,8 @@ ARMS: Dict[str, Arm] = {
     "A4": Arm("A4", "opencode",    True,  False, "general-purpose + manuals"),
     "A5": Arm("A5", "pi",          True,  False, "Pi + manuals; native MCP supported, no common MCP tools configured by this rig"),
     "A6": Arm("A6", "claude-code", False, False, "general-purpose, NO manuals"),
+    "A7": Arm("A7", "apexa", True, True,
+              "APEXA with automatic procedure delivery off; manual access, metadata policy and verifier unchanged", False),
 }
 
 
@@ -288,8 +291,7 @@ def stage(exposure: Path, manuals: Optional[Path], dest: Path, *, knowledge_poli
         # Navigation only -- where the docs are, no technical content -- so it adds
         # nothing APEXA lacks. AGENTS.md is what OpenCode and Pi read; CLAUDE.md is
         # what Claude Code reads. Identical text for every documented arm.
-        pointer = ("Documentation for this task is in ./manuals: the technique manual under\n"
-                   "./manuals/calibrate-integrate/ and skills under ./manuals/skills/.\n")
+        pointer = "Documentation for this task is in ./manuals. Read its procedure and any listed skills.\n"
         for name in ("AGENTS.md", "CLAUDE.md"):
             (dest / name).write_text(pointer)
             staged.append(name)
@@ -512,6 +514,7 @@ class Run:
     schedule_index: Optional[int] = None
     schedule_block: Optional[int] = None
     schedule_position: Optional[int] = None
+    model_audit: Dict = field(default_factory=dict)
 
 
 def score(r: Run, tol: float) -> str:
@@ -572,7 +575,7 @@ MANUAL_NOTE = ("Technique documentation is available under ./manuals -- read wha
 # with a shell from running `find ~ -name 'refined_MIDAS_params*'` -- and a
 # leaked answer is exactly what voided the previous comparison. So every arm
 # runs under sandbox-exec with reads of those locations denied by the kernel.
-SANDBOX = shutil.which("sandbox-exec")
+SANDBOX = shutil.which("sandbox-exec") if sys.platform == "darwin" else shutil.which("bwrap")
 
 
 def _real(p) -> str:
@@ -624,10 +627,33 @@ def deny_paths(arm: "Arm", ground_truth: Path, extra=(), knowledge_policy: dict 
     return sorted(d for d in deny if os.path.exists(d))
 
 
-def sandboxed(argv: List[str], deny: List[str], *, read_only=()) -> List[str]:
+def sandboxed(argv: List[str], deny: List[str], *, read_only=(), writable=()) -> List[str]:
     if not SANDBOX:
-        raise SystemExit("REFUSING TO RUN: sandbox-exec not available; the answers on "
+        raise SystemExit("REFUSING TO RUN: sandbox-exec/bwrap not available; the answers on "
                          "this disk would be readable by the agents under test.")
+    if sys.platform.startswith("linux"):
+        # Read-only host view, private process/device/temp trees, narrowly writable
+        # trial roots. Denied directories/files are hidden by mounts, not chmod.
+        # Network remains available for the configured model endpoint.
+        command = [SANDBOX, "--die-with-parent", "--new-session", "--unshare-user",
+                   "--unshare-pid", "--ro-bind", "/", "/", "--proc", "/proc",
+                   "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/var/tmp"]
+        for path in writable:
+            command += ["--bind", _real(path), _real(path)]
+        # Drop nested denied paths: mounting their parent already hides them.
+        roots = []
+        for path in sorted({_real(p) for p in deny}, key=lambda s: (len(s), s)):
+            if not any(path == p or path.startswith(p + os.sep) for p in roots):
+                roots.append(path)
+        for path in roots:
+            if os.path.isdir(path):
+                command += ["--tmpfs", path]
+            elif os.path.exists(path):
+                command += ["--ro-bind", "/dev/null", path]
+        for path in (sys.prefix, *read_only):
+            if os.path.exists(path):
+                command += ["--ro-bind", _real(path), _real(path)]
+        return command + ["--", *argv]
     rules = " ".join(f'(subpath {json.dumps(d, ensure_ascii=False)})' for d in deny)
     protected = " ".join(f'(subpath {json.dumps(_real(p), ensure_ascii=False)})' for p in (REPO, *read_only))
     profile = f"(version 1)(allow default)(deny file-read* file-write* {rules})(deny file-write* {protected})"
@@ -748,7 +774,8 @@ def stage_apexa_driver(runtime_dir: Path) -> Path:
 
 def preflight_apexa_driver(driver: Path, env: Dict[str, str], deny: List[str]) -> Tuple[bool, str]:
     """No model or MCP process is started; verify sandbox and analysis-only config."""
-    result = subprocess.run(sandboxed([sys.executable, str(driver), "--preflight"], deny),
+    result = subprocess.run(sandboxed([sys.executable, str(driver), "--preflight"], deny,
+                                     writable=[driver.parent.parent]),
                             env=env, capture_output=True, text=True, timeout=20)
     if result.returncode:
         return False, (result.stderr or result.stdout or "driver startup failed")[-1000:]
@@ -771,30 +798,65 @@ def policy_environment(arm: Arm) -> Dict[str, str]:
     # full shell inside the same sandbox. It is a deployment setting, not enforcement.
     return {"APEXA_STAGE_GUARDRAILS": "1" if arm.enforcement else "0",
             "APEXA_ASSUME_SCAN_METADATA": "0" if arm.enforcement else "1",
+            "APEXA_AUTOMATIC_PROCEDURES": "1" if arm.automatic_procedures else "0",
             "APEXA_ALLOW_UNSANDBOXED_COMMANDS": "1"}
+
+
+def final_answer(stdout: str, harness: str) -> str:
+    """Extract assistant text, never tool output or prompts, from native JSON logs."""
+    if harness == "apexa":
+        return stdout
+    answer = ""
+    for line in stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        if harness == "claude-code" and event.get("type") == "result":
+            if isinstance(event.get("result"), str):
+                answer = event["result"]
+        elif harness == "opencode" and event.get("type") == "text":
+            part = event.get("part", {})
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                answer = part["text"]
+        elif harness == "pi" and event.get("type") == "message_end":
+            message = event.get("message", {})
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                content = message.get("content", [])
+                if isinstance(content, list):
+                    answer = "\n".join(p["text"] for p in content if isinstance(p, dict)
+                        and p.get("type") == "text" and isinstance(p.get("text"), str))
+    return answer
 
 
 def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             manuals: Optional[Path], base_url: str, api_key: str, model: str,
             tol: float, timeout: int, outdir: Path, dry: bool,
             ground_truth: Path = Path("."), extra_deny=(), knowledge_manifest: Optional[Path] = None,
-            knowledge_manifest_sha256: Optional[str] = None) -> Run:
+            knowledge_manifest_sha256: Optional[str] = None, prompt_override: Optional[str] = None,
+            structured_logs: bool = False, scratch_root: Optional[Path] = None) -> Run:
     h = HARNESSES[arm.harness]
     r = Run(arm=arm.id, harness=arm.harness, scan=scan, trial=trial, model=model,
             manuals=arm.manuals, enforcement=arm.enforcement,
             policy_bundle=policy_environment(arm),
             predicted_tz=truth.get(scan, {}).get("predicted_tz"))
-    trial_root = Path(tempfile.mkdtemp(prefix=f"rb_{arm.id}_{scan}_"))
+    if scratch_root is not None:
+        scratch_root.mkdir(parents=True, exist_ok=True)
+    trial_root = Path(tempfile.mkdtemp(prefix=f"rb_{arm.id}_{scan}_", dir=scratch_root))
     ws = trial_root / "workspace"
     profile = trial_root / "profile"
     profile.mkdir()
+    stdout, stderr = "", ""
     try:
         policy = load_manifest(knowledge_manifest, knowledge_manifest_sha256) if knowledge_manifest else None
         if arm.harness == "apexa" and policy is None:
             raise KnowledgePolicyError("APEXA comparison requires an explicit reviewed knowledge manifest")
         r.staged = stage(exposure, manuals if arm.manuals else None, ws, knowledge_policy=policy)
         before = workspace_snapshot(ws)
-        prompt = PROMPT.format(fname=exposure.name, manual_note=MANUAL_NOTE if arm.manuals else "")
+        prompt = prompt_override if prompt_override is not None else PROMPT.format(
+            fname=exposure.name, manual_note=MANUAL_NOTE if arm.manuals else "")
         env = dict(os.environ)
         # A trial must never inherit an unrelated study policy from the caller.
         env.pop(MANIFEST_ENV, None)
@@ -803,6 +865,19 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         env["PYTHONNOUSERSITE"] = "1"
         env.pop("PYTHONSTARTUP", None)
         env.pop("PYTHONPATH", None)
+        for variable in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY",
+                         "CLAUDE_CODE_OAUTH_TOKEN", "ANL_USERNAME"):
+            env.pop(variable, None)
+        for variable, relative in (("APEXA_SESSION_DIR", "sessions"), ("APEXA_RUN_DIR", "runs"),
+                ("APEXA_WORKFLOW_DIR", "workflows"), ("APEXA_TRACE_DB", "traces.sqlite3"),
+                ("APEXA_TIMING_LOG", "timing.jsonl"), ("XDG_CACHE_HOME", "cache"),
+                ("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"), ("XDG_STATE_HOME", "state")):
+            env[variable] = str(profile / relative)
+        (profile / "tmp").mkdir()
+        env["TMPDIR"] = str(profile / "tmp")
+        env["npm_config_cache"] = str(profile / "npm-cache")
+        env["APEXA_AGENT_MODE"] = "single"
+        env["APEXA_NATIVE_TOOLS"] = "1"
         # PWD is inherited, not updated by cwd=: it still names this repo, which is
         # denied to external arms, and OpenCode lstat()s it at start-up -> EPERM ->
         # every A4 run exited in 3 s and was recorded as a harness error.
@@ -863,14 +938,28 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             argv = [sys.executable, str(driver), "--timeout", str(max(1, timeout - 30)), prompt]
         else:
             argv = [argument.format(**ph) for argument in h.argv]
-        argv = sandboxed(argv, deny, read_only=[profile / "knowledge-manifest.json", trial_root / "runtime"])
+            if structured_logs:
+                if arm.harness == "claude-code":
+                    argv[1:1] = ["--output-format", "stream-json", "--verbose", "--no-session-persistence"]
+                elif arm.harness == "opencode":
+                    argv[2:2] = ["--format", "json"]
+                elif arm.harness == "pi":
+                    argv[1:1] = ["--mode", "json", "--no-session", "--no-extensions", "--no-mcp"]
+        argv = sandboxed(argv, deny, read_only=[profile / "knowledge-manifest.json", trial_root / "runtime"],
+                         writable=[trial_root])
         if dry:
             r.outcome, r.detail = "dry-run", f"sandboxed, {len(deny)} denied paths; no model calls"
             return r
         t0 = time.time()
         try:
             process = run_bounded(argv, cwd=ws, env=env, timeout=timeout)
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
+            stdout = exc.stdout or ""
+            stderr = exc.stderr or ""
+            if isinstance(stdout, bytes):
+                stdout = stdout.decode(errors="replace")
+            if isinstance(stderr, bytes):
+                stderr = stderr.decode(errors="replace")
             r.outcome, r.elapsed_s, r.detail = "timeout", time.time() - t0, f">{timeout}s; external child reconciliation may be required"
             return r
         except FileNotFoundError:
@@ -886,14 +975,15 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
                 r.outcome = "infra_error"
                 r.detail = "model endpoint unreachable; an infrastructure failure, not a harness result"
             return r
-        evidence = extract_result(ws, stdout, t0, before)
+        prose = final_answer(stdout, arm.harness) if structured_logs else stdout
+        evidence = extract_result(ws, prose, t0, before)
         r.reported_tz, r.tz_source = evidence.tz, evidence.source
         r.scientific_status = evidence.scientific_status
         r.artifact_path, r.artifact_sha256 = evidence.artifact_path, evidence.artifact_sha256
-        r.claimed, r.claim_rule = claimed_success(stdout, r.reported_tz, evidence.scientific_status)
+        r.claimed, r.claim_rule = claimed_success(prose, r.reported_tz, evidence.scientific_status)
         if evidence.error:
             r.detail = evidence.error
-            if evidence.source == "unverified_transcript" and not prose_claims_success(stdout):
+            if evidence.source == "unverified_transcript" and not prose_claims_success(prose):
                 # Numbers in an abstention are not a claim: no artifact and no claim is an
                 # honest failure, not an error.
                 r.outcome = "honest_failure"
@@ -906,6 +996,10 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         r.outcome = score(r, tol)
         return r
     finally:
+        traces = outdir / "traces"
+        traces.mkdir(parents=True, exist_ok=True)
+        (traces / f"{arm.id}_{scan}_{trial}.stdout.txt").write_text(stdout)
+        (traces / f"{arm.id}_{scan}_{trial}.stderr.txt").write_text(stderr)
         keep = outdir / "workspaces" / f"{arm.id}_{scan}_{trial}"
         keep.parent.mkdir(parents=True, exist_ok=True)
         try:

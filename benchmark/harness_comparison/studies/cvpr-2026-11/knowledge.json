@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "study_id": "cvpr-2026-11-ai-tune",
+  "reviewed_by": "Codex assisted review, 2026-11-06",
+  "review_note": "Read both documents for this study. The generic procedure has no fitted values or scan-specific repairs. The existing APEXA invocation skill contains unrelated historical examples, supplied to every arm; no study trajectory, case outcomes, LAB_NOTEBOOK or RUNBOOK is approved. This is an assisted content review, not independent human certification. Retrieval disabled.",
+  "files": {
+    "knowledge_base/study_manuals/rotation/procedure.md": "53ccba21c1f4beed794d65778363ca47a4242ca3e0c175a55467d603216191c2",
+    ".agents/skills/midas-calibrate/SKILL.md": "1c4e2ba923582e2e0cf5a9c89b77762cb555676992747d5a138ebb2b4d57c3cb"
+  }
+}
