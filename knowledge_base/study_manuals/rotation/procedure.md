@@ -3,6 +3,16 @@
 This document specifies a general analysis procedure. It contains no fitted
 geometry, scan-specific repair, reference trajectory or expected outcome.
 
+## Where to find instructions
+
+Use the procedure and skills staged in this `manuals` directory. Repository
+capsule paths mentioned inside the invocation skill describe an upstream
+deployment; those external manuals are not supplied for this study. Do not
+search the host filesystem for them or for other acquisitions. Inspect the
+installed `midas_calibrate_v2` Python package, its module docstrings, signatures
+and CLI help when more API detail is needed. The configured `python` on PATH
+is the shared scientific environment. Keep all trial outputs in the workspace.
+
 ## Inputs and units
 
 Inspect the HDF5 groups, frame dimensions, dtype and correction arrays before

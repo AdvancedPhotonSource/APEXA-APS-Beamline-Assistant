@@ -86,6 +86,13 @@ def configured_environment(root, spec):
         env[name] = str(spec["cpu_threads"])
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["APEXA_MAX_ITERATIONS"] = str(spec["max_model_requests"])
+    if spec.get("filesystem_scope") == "software_and_trial_only":
+        env["RB_SOFTWARE_READ_ROOTS"] = json.dumps([
+            str(root / "source"), str(root / "runtime/harnesses"), str(root / "runtime/node"),
+            str(Path(spec["solver_python"]).parent.parent), sys.prefix, sys.base_prefix,
+            *spec.get("additional_software_roots", [])])
+    else:
+        env.pop("RB_SOFTWARE_READ_ROOTS", None)
     return env
 
 
@@ -200,11 +207,22 @@ def sandbox_check(root):
     outside = subprocess.run(rb.sandboxed([sys.executable, "-c",
         "from pathlib import Path; import sys; Path(sys.argv[1]).write_text('bad')", str(forbidden)],
         [str(secret)], writable=[work]), capture_output=True, text=True, timeout=20)
+    scope_code = """import json,sys
+from pathlib import Path
+roots=json.loads(sys.argv[1])
+visible=[str(p) for root in roots if Path(root).exists() for p in Path(root).iterdir()]
+print(json.dumps(visible))"""
+    scope = subprocess.run(rb.sandboxed([sys.executable, "-c", scope_code,
+        json.dumps(["/gdata", "/gpfs", "/net", "/APSshare"])], [str(secret)], writable=[work]),
+        capture_output=True, text=True, timeout=20)
     result = {"backend": rb.SANDBOX, "reference_not_visible": not leaked,
               "read_return_code": read.returncode, "workspace_writable": write.returncode == 0 and (work / "ok").read_text() == "ok"}
     # An unusable sandbox cannot pass merely by failing to launch its interpreter.
     result["outside_write_blocked"] = outside.returncode != 0 and not forbidden.exists()
+    if os.environ.get("RB_SOFTWARE_READ_ROOTS"):
+        result["unrelated_data_roots_hidden"] = scope.returncode == 0 and json.loads(scope.stdout) == []
     result["passed"] = result["reference_not_visible"] and result["workspace_writable"] and result["outside_write_blocked"]
+    result["passed"] = result["passed"] and result.get("unrelated_data_roots_hidden", True)
     if not result["passed"]:
         result["diagnostic"] = (write.stderr or read.stderr)[-2000:]
     write_new(root / "setup/sandbox.json", result)

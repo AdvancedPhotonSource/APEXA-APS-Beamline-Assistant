@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "study_id": "cvpr-2026-11-ai-tune",
+  "study_id": "cvpr-2026-11-ai-tune-r2c",
   "comparison_kind": "native_systems_and_automatic_procedure_ablation",
   "arms": [
     "A1",
@@ -40,5 +40,10 @@
   "wall_seconds": 1800,
   "max_model_requests": 40,
   "max_output_tokens": 16000,
-  "cpu_threads": 4
+  "cpu_threads": 4,
+  "filesystem_scope": "software_and_trial_only",
+  "additional_software_roots": [
+    "/home/beams12/S1IDUSER/opt/MIDAS_canonical/packages/midas_ckernel",
+    "/home/beams/S20HEDM/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu"
+  ]
 }

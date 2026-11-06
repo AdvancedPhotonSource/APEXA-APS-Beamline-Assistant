@@ -66,3 +66,28 @@ those checks performed no numerical fits. Live baseline status is in
 `setup/baseline-launch-r1.json`; output goes to `results/baseline-pilot-r1/`
 once it acquires the lock. Main scoring remains blocked pending review of these
 scientific pilot results.
+
+## Revision 2 and completed fixed baseline
+
+The first native pilot was stopped after Pi timed out searching the host for
+unprovided manuals; OpenCode was interrupted for setup repair. Preserve that
+attempt as diagnostic evidence, separate from scientific comparisons. The
+[revised protocol](REVISION_2.md), study ID `cvpr-2026-11-ai-tune-r2c`, passed
+fresh qualification for all five conditions and restarted the full pilot under
+`revisions/r2/`. Its live progress is in `revisions/r2/setup/pilot-launch.json`.
+It uses the same inputs, solver, reference and condition schedule as the first
+attempt, with corrected document scope, filesystem exposure and private state.
+
+The separately frozen B0 baseline completed both pilot cases:
+
+| Scan | Scientific decision | Deviation from relative tilt reference | Wall time |
+| --- | --- | --- | --- |
+| 262 (CeO2) | Accepted; ring-position gate PASS | 0.005700 degrees | 90.91 s |
+| 284 (LaB6) | Accepted; ring-position gate PASS | 0.010683 degrees | 816.88 s |
+
+These are fixed MIDAS results with no LLM, not evidence of APEXA superiority or
+independent absolute geometry accuracy. Original records, masks, effective
+inputs and adopted artifacts remain in `results/baseline-pilot-r1/`. Source,
+input and reference fingerprints were checked for agreement with revision 2
+before the native pilot restart. Main scoring is still pending scientific
+review of the revised pilot.

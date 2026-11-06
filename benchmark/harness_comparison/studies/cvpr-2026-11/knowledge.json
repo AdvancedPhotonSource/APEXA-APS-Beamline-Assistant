@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "study_id": "cvpr-2026-11-ai-tune",
+  "study_id": "cvpr-2026-11-ai-tune-r2c",
   "reviewed_by": "Codex assisted review, 2026-11-06",
-  "review_note": "Read both documents for this study. The generic procedure has no fitted values or scan-specific repairs. The existing APEXA invocation skill contains unrelated historical examples, supplied to every arm; no study trajectory, case outcomes, LAB_NOTEBOOK or RUNBOOK is approved. This is an assisted content review, not independent human certification. Retrieval disabled.",
+  "review_note": "Read both documents for this study. The generic procedure has no fitted values or scan-specific repairs. The existing APEXA invocation skill contains unrelated historical examples, supplied to every arm; no study trajectory, case outcomes, LAB_NOTEBOOK or RUNBOOK is approved. This is an assisted content review, not independent human certification. Retrieval disabled. Revision 2 makes unavailable capsule references explicit and limits document discovery to staged material and installed APIs; no numerical solution or case outcome was added.",
   "files": {
-    "knowledge_base/study_manuals/rotation/procedure.md": "53ccba21c1f4beed794d65778363ca47a4242ca3e0c175a55467d603216191c2",
+    "knowledge_base/study_manuals/rotation/procedure.md": "ea7751ecf6794bba6f45af5b06a9210613c81ea28e3884f0969d0670f3a60a94",
     ".agents/skills/midas-calibrate/SKILL.md": "1c4e2ba923582e2e0cf5a9c89b77762cb555676992747d5a138ebb2b4d57c3cb"
   }
 }

@@ -627,7 +627,7 @@ def deny_paths(arm: "Arm", ground_truth: Path, extra=(), knowledge_policy: dict 
     return sorted(d for d in deny if os.path.exists(d))
 
 
-def sandboxed(argv: List[str], deny: List[str], *, read_only=(), writable=()) -> List[str]:
+def sandboxed(argv: List[str], deny: List[str], *, read_only=(), writable=(), private_apexa_home=None) -> List[str]:
     if not SANDBOX:
         raise SystemExit("REFUSING TO RUN: sandbox-exec/bwrap not available; the answers on "
                          "this disk would be readable by the agents under test.")
@@ -638,6 +638,34 @@ def sandboxed(argv: List[str], deny: List[str], *, read_only=(), writable=()) ->
         command = [SANDBOX, "--die-with-parent", "--new-session", "--unshare-user",
                    "--unshare-pid", "--ro-bind", "/", "/", "--proc", "/proc",
                    "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/var/tmp"]
+        scoped = os.environ.get("RB_SOFTWARE_READ_ROOTS")
+        hidden_roots = []
+        if scoped:
+            software = json.loads(scoped)
+            if not isinstance(software, list) or not software:
+                raise ValueError("A study filesystem requires explicit software roots")
+            # Hide every non-system top-level tree, including site-specific
+            # network mounts. A root search must not traverse unrelated data.
+            system = {"bin", "sbin", "usr", "lib", "lib64", "etc", "dev", "proc", "sys", "run", "tmp", "var", "boot"}
+            for path in sorted(Path("/").iterdir()):
+                # Site aliases such as /APSshare point into /net. Hide their
+                # real top-level tree; trying to mount on the alias after its
+                # target was hidden can fail on a dangling path.
+                if path.is_dir() and not path.is_symlink() and path.name not in system:
+                    command += ["--tmpfs", str(path)]
+                    hidden_roots.append(str(path))
+            for path in ("/var/log", "/var/cache", "/var/spool", "/var/lib/docker", "/run/user"):
+                if os.path.isdir(path) and not os.path.islink(path):
+                    command += ["--tmpfs", path]
+                    hidden_roots.append(path)
+            for path in software:
+                if not isinstance(path, str) or not os.path.isabs(path) or path in ("/", "/home", "/gdata"):
+                    raise ValueError("Invalid study software root")
+                if not os.path.isdir(path):
+                    raise ValueError(f"Missing study software root: {path}")
+                # Retain the lexical destination: node and shared runtime paths
+                # may be symlinks whose parents have just been hidden.
+                command += ["--ro-bind", _real(path), os.path.abspath(path)]
         for path in writable:
             command += ["--bind", _real(path), _real(path)]
         # Drop nested denied paths: mounting their parent already hides them.
@@ -653,6 +681,16 @@ def sandboxed(argv: List[str], deny: List[str], *, read_only=(), writable=()) ->
         for path in (sys.prefix, *read_only):
             if os.path.exists(path):
                 command += ["--ro-bind", _real(path), _real(path)]
+        if scoped and private_apexa_home is not None:
+            private = Path(_real(private_apexa_home))
+            if not private.is_dir() or not any(private.is_relative_to(Path(_real(p))) for p in writable):
+                raise ValueError("Private APEXA state must be inside a writable trial root")
+            # Older client caches still use ~/.apexa directly. Map that virtual
+            # path to this trial's state without exposing or modifying the real
+            # user's home. Keep HOME itself unchanged.
+            command += ["--bind", str(private), str(Path.home() / ".apexa")]
+        for path in hidden_roots:
+            command += ["--remount-ro", path]
         return command + ["--", *argv]
     rules = " ".join(f'(subpath {json.dumps(d, ensure_ascii=False)})' for d in deny)
     protected = " ".join(f'(subpath {json.dumps(_real(p), ensure_ascii=False)})' for p in (REPO, *read_only))
@@ -868,12 +906,13 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         for variable in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY",
                          "CLAUDE_CODE_OAUTH_TOKEN", "ANL_USERNAME"):
             env.pop(variable, None)
-        for variable, relative in (("APEXA_SESSION_DIR", "sessions"), ("APEXA_RUN_DIR", "runs"),
+        for variable, relative in (("APEXA_HOME", "apexa"), ("APEXA_SESSION_DIR", "sessions"), ("APEXA_RUN_DIR", "runs"),
                 ("APEXA_WORKFLOW_DIR", "workflows"), ("APEXA_TRACE_DB", "traces.sqlite3"),
                 ("APEXA_TIMING_LOG", "timing.jsonl"), ("XDG_CACHE_HOME", "cache"),
                 ("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"), ("XDG_STATE_HOME", "state")):
             env[variable] = str(profile / relative)
         (profile / "tmp").mkdir()
+        (profile / "apexa").mkdir()
         env["TMPDIR"] = str(profile / "tmp")
         env["npm_config_cache"] = str(profile / "npm-cache")
         env["APEXA_AGENT_MODE"] = "single"
@@ -946,7 +985,8 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
                 elif arm.harness == "pi":
                     argv[1:1] = ["--mode", "json", "--no-session", "--no-extensions", "--no-mcp"]
         argv = sandboxed(argv, deny, read_only=[profile / "knowledge-manifest.json", trial_root / "runtime"],
-                         writable=[trial_root])
+                         writable=[trial_root],
+                         private_apexa_home=profile / "apexa" if arm.harness == "apexa" else None)
         if dry:
             r.outcome, r.detail = "dry-run", f"sandboxed, {len(deny)} denied paths; no model calls"
             return r

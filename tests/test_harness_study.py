@@ -138,6 +138,49 @@ def test_linux_sandbox_mounts_interpreter_after_hidden_production_tree(tmp_path,
     assert argv[-3:] == ["--", "python", "-V"]
 
 
+def test_scoped_sandbox_hides_site_data_mounts_and_keeps_software_aliases(tmp_path, monkeypatch):
+    monkeypatch.setattr(rb.sys, "platform", "linux")
+    monkeypatch.setattr(rb, "SANDBOX", "/usr/bin/bwrap")
+    actual = tmp_path / "node-release"
+    actual.mkdir()
+    alias = tmp_path / "node"
+    alias.symlink_to(actual, target_is_directory=True)
+    monkeypatch.setenv("RB_SOFTWARE_READ_ROOTS", json.dumps([str(alias)]))
+    original_iterdir, original_is_dir = Path.iterdir, Path.is_dir
+    top = [Path("/gdata"), Path("/gpfs"), Path("/usr")]
+    monkeypatch.setattr(Path, "iterdir", lambda p: iter(top) if str(p) == "/" else original_iterdir(p))
+    monkeypatch.setattr(Path, "is_dir", lambda p: True if p in top else original_is_dir(p))
+    argv = rb.sandboxed(["true"], [])
+    assert argv[argv.index("/gdata") - 1] == "--tmpfs"
+    assert argv[argv.index("/gpfs") - 1] == "--tmpfs"
+    index = argv.index(str(actual))
+    assert argv[index - 1:index + 2] == ["--ro-bind", str(actual), str(alias)]
+    assert argv.index("/gpfs") < index
+
+
+def test_scoped_sandbox_rejects_broad_software_allowances(monkeypatch):
+    monkeypatch.setattr(rb.sys, "platform", "linux")
+    monkeypatch.setattr(rb, "SANDBOX", "/usr/bin/bwrap")
+    monkeypatch.setenv("RB_SOFTWARE_READ_ROOTS", '["/"]')
+    with pytest.raises(ValueError, match="Invalid study software root"):
+        rb.sandboxed(["true"], [])
+
+
+def test_legacy_apexa_home_is_backed_only_by_the_trial_profile(tmp_path, monkeypatch):
+    monkeypatch.setattr(rb.sys, "platform", "linux")
+    monkeypatch.setattr(rb, "SANDBOX", "/usr/bin/bwrap")
+    software = tmp_path / "software"
+    software.mkdir()
+    monkeypatch.setenv("RB_SOFTWARE_READ_ROOTS", json.dumps([str(software)]))
+    state = tmp_path / "trial/profile/apexa"
+    state.mkdir(parents=True)
+    argv = rb.sandboxed(["true"], [], writable=[tmp_path / "trial"], private_apexa_home=state)
+    index = argv.index(str(Path.home() / ".apexa"))
+    assert argv[index - 2:index + 1] == ["--bind", str(state.resolve()), str(Path.home() / ".apexa")]
+    with pytest.raises(ValueError, match="inside a writable trial root"):
+        rb.sandboxed(["true"], [], writable=[software], private_apexa_home=state)
+
+
 def test_frozen_setup_detects_changed_input(tmp_path, monkeypatch):
     spec = {"scans": [1], "pilot_scans": [2], "arms": ["A1"], "repeats": 1, "order_seed": 4, "solver_python": "/python"}
     raw = tmp_path / "raw"
