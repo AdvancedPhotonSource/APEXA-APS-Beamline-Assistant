@@ -56,3 +56,11 @@ R4 records live under `revisions/r4/`. `setup/native-context.json` freezes both
 resource inventories. `setup/frozen.json` binds the sources, cases and schedule.
 Startup qualification must pass before admission. Generated status, rather than
 this design document, determines whether the 180 main trials have begun.
+
+## Startup outcome, November 7
+
+All five conditions passed (17 model requests), automatic delivery was verified
+in A1 and absent in A7, and admission passed. The supervisor is running B0 first,
+then the 180 agent trials. Native semantic retrieval is exposed but unavailable
+because the deployed embedding revision/cache is not configured; the native
+capsule and skill mechanisms work. Keep that limitation in any feature claim.

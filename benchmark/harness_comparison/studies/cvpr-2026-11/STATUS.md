@@ -5,11 +5,37 @@ The revision-2 pilot is complete. Revision 3 passed all five startup checks
 before any main scientific trial because the operator requested native APEXA
 context and upstream MIDAS resources for the other harnesses.
 
-[Revision 4](REVISION_4.md) implements that design. Its new qualification and
-launch receipts are pending. The original 180-trial schedule and budgets remain.
-See [the pilot interpretation](PILOT_INTERPRETATION.md) for what previous
-failures actually demonstrate. Historical records below describe their own
-revisions and must not be read as current launch status.
+[Revision 4](REVISION_4.md) passed fresh startup qualification for all five
+conditions (17 model requests: A1=3, Claude Code=3, OpenCode=5, Pi=3, A7=3).
+Automatic procedure delivery was observed in A1 and absent in A7. Local
+comparison/context regression checks: **179 passed**. Main admission passed;
+inputs, solver fingerprints, schedule and the fixed numerical worker match R3.
+
+The detached supervisor (PID 67333) is **running the 12-input fixed MIDAS
+baseline**, then the unchanged 180-trial agent cohort. At the first status
+snapshot, one baseline trial was terminal and no main agent trial had started.
+The first baseline result was provisional/off-trend and is retained. This is
+not enough data for a comparative conclusion.
+
+Native capsule/skill access works. The native semantic-retrieval probe returned
+`Knowledge base not available`: the deployed embedding revision/cache is not
+configured. This is recorded in `setup/native-feature-probe.json`; no alternative
+retriever or application patch was introduced. The unedited MIDAS resources
+include historical discussion of this development dataset.
+
+Current Copland records under `revisions/r4/`:
+
+- `setup/main-launch.json`: current supervisor phase and worker.
+- `setup/native-context.json`: 205 native APEXA context files and 229 upstream MIDAS resources.
+- `setup/qualification.json`, `setup/main_admission.json`: passed setup/admission.
+- `results/baseline-main/runs.jsonl`: retained fixed-recipe outcomes.
+- `results/main/progress.json`, `results/main/runs.jsonl`: agent progress/outcomes once started.
+
+The fresh gold FF numerical workflow and candidate audit have completed. Its
+physical grain count remains unresolved. Reports and figures are in the
+manuscript repository at `author_notes/FF_CASE_STUDY.md` and `author_notes/ff_case_study/`.
+See [the pilot interpretation](PILOT_INTERPRETATION.md) for the observed failure
+mechanisms. Historical records below describe their own revisions.
 
 # Copland setup status — 2026-11-06
 
