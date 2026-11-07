@@ -1,5 +1,11 @@
 # Copland setup status — 2026-11-06
 
+Current continuation: revision 2 is complete and retained. [Revision 3](REVISION_3.md)
+implements strict decisions, budget accounting, request-level procedure evidence
+and resumability for the unchanged 180-trial main cohort. Local comparison checks:
+173 passed. New remote qualification and main admission are pending; the historical
+setup and pilot records below describe their own revisions.
+
 Installed and qualified under `/home/beams/S20HEDM/apexa_eval/harness-comparison/`
 (canonical `/home/beams45/S20HEDM/apexa_eval/harness-comparison/`).
 

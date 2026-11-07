@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmark/harness_
 import model_audit as ma
 import rotation_benchmark as rb
 import study
+import procedure_audit
 
 
 @pytest.fixture
@@ -209,3 +210,82 @@ def test_main_cohort_cannot_launch_before_baseline_review(tmp_path, monkeypatch)
     with pytest.raises(RuntimeError, match="deterministic baseline"):
         study.run(tmp_path, {}, "main")
     assert not (tmp_path / "results").exists()
+
+
+def test_publication_scoring_requires_explicit_adoption(tmp_path):
+    (tmp_path / "geometry.json").write_text('{"tz": 1.0}')
+    evidence = rb.extract_result(tmp_path, "Calibration succeeded", 0, {}, require_manifest=True)
+    assert evidence.source == "missing_manifest" and evidence.tz is None
+
+
+def test_budget_exhaustion_remains_evaluable_and_is_not_an_infrastructure_exclusion(tmp_path, upstream):
+    _, url = upstream
+    with ma.ModelAudit(url, "secret", "claudeopus5", tmp_path / "audit.jsonl", max_requests=1) as audit:
+        for _ in range(2):
+            httpx.post(audit.base_url + "/messages", headers={"x-api-key": audit.token},
+                       json={"model": "claudeopus5", "max_tokens": 10})
+    summary = audit.summary()
+    assert summary["budget_exhausted"] and summary["scientific_evaluable"]
+    assert not summary["qualified"]  # startup qualification remains stricter
+    result = rb.Run("A3", "claude-code", 1, 0, "m", True, False, outcome="missing_manifest", model_audit=summary)
+    study.apply_model_audit(result)
+    assert result.outcome == "budget_exhausted"
+    assert rb.summarise([result])["A3"]["n_scored"] == 1
+    result.outcome = "timeout"
+    study.apply_model_audit(result)
+    assert result.outcome == "timeout"
+
+
+def test_relay_records_actual_procedure_delivery_not_just_environment(tmp_path, upstream):
+    _, url = upstream
+    candidates = tmp_path / "candidates.jsonl"
+    candidates.write_text(json.dumps({"content": "Exact automatic procedure", "kind": "automatic_skill_context"}) + "\n")
+    with ma.ModelAudit(url, "secret", "claudeopus5", tmp_path / "audit.jsonl", procedure_candidates=candidates) as audit:
+        for context in ("No procedure here", "Prefix Exact automatic procedure suffix"):
+            httpx.post(audit.base_url + "/messages", headers={"x-api-key": audit.token},
+                       json={"model": "claudeopus5", "system": [{"type": "text", "text": context}]})
+    assert audit.records[0]["automatic_procedures_delivered"] == []
+    assert audit.records[1]["automatic_procedures_delivered"][0]["roles"] == ["system"]
+    assert len(audit.summary()["automatic_procedure_hashes_delivered"]) == 1
+    assert "Prefix Exact" not in (tmp_path / "audit.jsonl").read_text()
+
+
+def test_resumption_skips_completed_and_preserves_interrupted_trials(tmp_path, monkeypatch):
+    spec = {"arms": ["A3"], "scans": [1, 2, 3], "pilot_scans": [1, 2, 3], "repeats": 1,
+            "order_seed": 1, "model": "m", "model_base_url": "unused"}
+    schedule = rb.make_schedule(["A3"], [1, 2, 3], 1, 1)
+    study.write_new(tmp_path / "setup/pilot_schedule.json", schedule)
+    study.write_new(tmp_path / "setup/qualification.json", {"passed": True, "source_hashes": {}})
+    output = tmp_path / "results/pilot"
+    study.write_new(output / "schedule.json", schedule)
+    first, second, third = schedule["entries"]
+    def result(entry):
+        return rb.Run("A3", "claude-code", entry["scan"], entry["trial"], "m", True, False,
+                      outcome="missing_manifest", schedule_index=entry["schedule_index"],
+                      schedule_block=entry["schedule_block"], schedule_position=entry["schedule_position"])
+    study.append_record(output / "runs.jsonl", study.asdict(result(first)))
+    study.write_new(output / "started" / f"{second['schedule_index']:04d}.json", second)
+    frozen = {"inputs": [{"path": f"/raw_{scan:06d}.h5", "sha256": "hash"} for scan in [1, 2, 3]]}
+    monkeypatch.setattr(study, "verify", lambda *args, **kwargs: frozen)
+    monkeypatch.setattr(study, "source_hashes", lambda: {})
+    monkeypatch.setattr(study, "sha", lambda p: "hash")
+    monkeypatch.setattr(rb, "load_truth", lambda *args, **kwargs: {})
+    monkeypatch.setattr(rb, "wait_for_host", lambda *args: {})
+    calls = []
+    def trial(root, spec, output, entry, *args):
+        calls.append(entry["schedule_index"])
+        return result(entry)
+    monkeypatch.setattr(study, "run_trial", trial)
+    study.run_locked(tmp_path, spec, "pilot")
+    study.run_locked(tmp_path, spec, "pilot")
+    rows = study.prior_results(output, schedule)
+    assert calls == [third["schedule_index"]]
+    assert len(rows) == 3 and rows[1].outcome == "interrupted"
+    assert json.loads((output / "progress.json").read_text())["completed"] == 3
+
+
+def test_calibration_provenance_does_not_relabel_template_phase(tmp_path):
+    from _calibrate_runner import phase_provenance
+    param = tmp_path / "params.txt"
+    param.write_text("# LaB6\nSpaceGroup 221\nLatticeConstant 4.15689 4.15689 4.15689 90 90 90 # template\ntz 1\n")
+    assert phase_provenance(param) == ["SpaceGroup 221", "LatticeConstant 4.15689 4.15689 4.15689 90 90 90"]

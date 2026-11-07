@@ -78,6 +78,10 @@ def inherit_server_environment() -> None:
 async def _go(prompt: str, timeout: int) -> str:
     knowledge_preflight()
     solver_environment()
+    if os.environ.get("APEXA_PROCEDURE_AUDIT"):
+        import apexa_agents
+        from procedure_audit import install
+        install(apexa_agents, os.environ["APEXA_PROCEDURE_AUDIT"])
     from argo_mcp_client import APEXAClient
     inherit_server_environment()
     client = APEXAClient()

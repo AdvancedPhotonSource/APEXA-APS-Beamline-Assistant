@@ -655,7 +655,8 @@ def test_nonzero_harness_exit_is_not_graded_as_scientific_success(tmp_path, monk
     result = rb.run_one(rb.ARMS["A3"], source, 250, 0, {250: {"predicted_tz": -3.5}},
                         None, "https://example.invalid/v1", "key", "m", .1, 60,
                         tmp_path / "out", False, ground_truth=tmp_path / "truth" / "summary.csv")
-    assert result.outcome == "error" and result.return_code == 2 and result.claimed is None
+    assert result.outcome == "error" and result.return_code == 2
+    assert result.claimed is True and result.scientific_outcome == "correct"
 
 
 # ── every documented arm gets the skills; Claude Code can log in when isolated ─

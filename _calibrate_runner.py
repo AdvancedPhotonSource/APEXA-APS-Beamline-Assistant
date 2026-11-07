@@ -60,6 +60,14 @@ def _accepts(fn, name):
         return False
 
 
+def phase_provenance(path):
+    """Preserve phase-defining export lines independently of a seeder's name."""
+    with open(path) as stream:
+        lines = [line.split("#", 1)[0].strip() for line in stream]
+    return [line for line in lines if line and line.split()[0] in {
+        "SpaceGroup", "LatticeConstant", "PhaseNr", "NumPhases", "Phase"}]
+
+
 def _parse_codes(raw):
     """'2', '1 3', '1,3' -> (2,) / (1, 3). Drops 0 (the no-op code)."""
     if not raw:
@@ -762,6 +770,12 @@ def main(argv=None):
         "im_trans_applied": list(im_trans),
         "n_panels": n_panels,
         "calibrants": calibrants or [seed_calibrant],
+        "phase_provenance": {
+            "seed_calibrant": seed_calibrant,
+            "fit_phase_source": "declared multiple calibrants" if len(calibrants) > 1 else "template",
+            "template_phase_lines": phase_provenance(args.template),
+            "effective_export_phase_lines": phase_provenance(paramstest),
+            "note": "A single --calibrant chooses the ring-pattern seeder; the template supplies the fitted phase."},
         "seed": seed_info,
         "lsd": lsd_info,
         "at_bounds": at_bounds,

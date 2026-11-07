@@ -83,25 +83,42 @@ def grade_workspace(workspace, scan, truth, elapsed, returncode, spec):
 
 
 def run(root, spec, cohort):
-    if cohort != "pilot":
-        raise RuntimeError("Main baseline awaits scientific pilot review")
+    if cohort == "main":
+        study.check_admission(root)
     print("Waiting for the shared scientific-run lock; no concurrent numerical trials.", flush=True)
-    with (root / "setup/scientific-run.lock").open("a") as lock:
+    with Path(spec.get("scientific_lock", root / "setup/scientific-run.lock")).open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         plan = verify_plan(root, spec)
-        output = root / "results/baseline-pilot-r1"
-        output.mkdir()
-        scans = plan["pilot_scans"]
-        study.write_new(output / "schedule.json", {"baseline": plan["baseline"], "scans": scans, "run_count": len(scans)})
+        output = root / f"results/baseline-{cohort}"
+        output.mkdir(exist_ok=True)
+        scans = plan[f"{cohort}_scans"]
+        schedule = {"baseline": plan["baseline"], "scans": scans, "run_count": len(scans)}
+        if (output / "schedule.json").exists():
+            if json.loads((output / "schedule.json").read_text()) != schedule:
+                raise RuntimeError("Saved baseline schedule changed")
+        else:
+            study.write_new(output / "schedule.json", schedule)
         truth = rb.load_truth(root / "setup/reference.csv", value_col="tz_deg")
         inputs = {int(Path(p["path"]).name.split("_")[-1].split(".")[0]): p for p in plan["cases"]}
-        results = []
+        rows = [json.loads(line) for line in (output / "runs.jsonl").read_text().splitlines()] if (output / "runs.jsonl").exists() else []
+        if len({r["scan"] for r in rows}) != len(rows) or any(r["scan"] not in scans for r in rows):
+            raise RuntimeError("Baseline terminal records duplicate or disagree with schedule")
+        results = [rb.Run(**r) for r in rows]
         for index, scan in enumerate(scans, 1):
+            if any(r.scan == scan for r in results):
+                continue
             source = inputs[scan]
             if study.sha(source["path"]) != source["sha256"]:
                 raise RuntimeError("Raw input changed; remaining baseline trials stay not run")
             case = output / f"B0_{scan}_0"
             workspace = case / "workspace"
+            if case.exists():
+                result = grade_workspace(workspace, scan, truth, 0, -1, spec)
+                result.outcome, result.detail = "interrupted", "Preserved interrupted baseline; no automatic rerun"
+                result.schedule_index = index
+                results.append(result)
+                study.append_record(output / "runs.jsonl", asdict(result))
+                continue
             workspace.mkdir(parents=True)
             env = study.configured_environment(root, spec)
             cache = case / "cache"
@@ -110,7 +127,7 @@ def run(root, spec, cohort):
                 env[key] = str(cache)
             command = rb.sandboxed([spec["solver_python"], str(WORKER), "--image", source["path"],
                                    "--output", str(workspace)], study.denied_locations(root, spec),
-                                   read_only=[WORKER], writable=[case])
+                                   read_only=[WORKER, Path(source["path"])], writable=[case])
             # The whole results tree is hidden, then only this empty case is
             # rebound writable. No previous baseline result is readable.
             if sys.platform.startswith("linux"):
@@ -130,11 +147,12 @@ def run(root, spec, cohort):
                 (case / name).write_text(text.decode(errors="replace") if isinstance(text, bytes) else text)
             result.schedule_index = index
             results.append(result)
-            with (output / "runs.jsonl").open("a") as f:
-                f.write(json.dumps(asdict(result)) + "\n")
+            study.append_record(output / "runs.jsonl", asdict(result))
+            study.atomic_json(output / "progress.json", {"completed": len(results), "scheduled": len(scans),
+                              "updated_unix": time.time()})
             print(f"B0 {scan}: {result.outcome}", flush=True)
             verify_plan(root, spec)
-        study.write_new(output / "summary.json", rb.summarise(results))
+        study.atomic_json(output / "summary.json", rb.summarise(results))
 
 
 def main():

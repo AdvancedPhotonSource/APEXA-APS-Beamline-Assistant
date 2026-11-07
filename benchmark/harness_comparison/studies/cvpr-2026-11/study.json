@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "study_id": "cvpr-2026-11-ai-tune-r2c",
+  "study_id": "cvpr-2026-11-ai-tune-r3",
   "comparison_kind": "native_systems_and_automatic_procedure_ablation",
   "arms": [
     "A1",
@@ -41,6 +41,7 @@
   "max_model_requests": 40,
   "max_output_tokens": 16000,
   "cpu_threads": 4,
+  "scientific_lock": "/home/beams/S20HEDM/apexa_eval/harness-comparison/setup/scientific-run.lock",
   "filesystem_scope": "software_and_trial_only",
   "additional_software_roots": [
     "/home/beams12/S1IDUSER/opt/MIDAS_canonical/packages/midas_ckernel",

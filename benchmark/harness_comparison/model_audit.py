@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
+from procedure_audit import delivered_blocks
 
 
 def model_key(value):
@@ -41,7 +42,7 @@ def response_evidence(payload, record):
 
 class ModelAudit:
     def __init__(self, upstream, api_key, model, output, *, max_requests=40,
-                 max_output_tokens=16000, timeout=1800):
+                 max_output_tokens=16000, timeout=1800, procedure_candidates=None):
         parsed = urlsplit(upstream)
         if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("Use a model API URL without embedded credentials or query")
@@ -56,6 +57,7 @@ class ModelAudit:
         self.records = []
         self.violations = []
         self.closed = False
+        self.procedure_candidates = procedure_candidates
 
     def record(self, entry):
         with self.lock:
@@ -131,11 +133,13 @@ class ModelAudit:
                         return self.error(400, "Invalid output-token ceiling")
                     with owner.lock:
                         exhausted = owner.requests >= owner.max_requests or time.monotonic() >= owner.deadline
+                        reason = ("Study request budget exhausted" if owner.requests >= owner.max_requests
+                                  else "Study wall-time budget exhausted")
                         if not exhausted:
                             owner.requests += 1
                             record["request_index"] = owner.requests
                     if exhausted:
-                        return self.error(429, "Study request or wall-time budget exhausted")
+                        return self.error(429, reason)
                     record["requested_model"] = payload["model"]
                     record["request_sha256"] = hashlib.sha256(body).hexdigest()
                     record["settings"] = {k: payload[k] for k in (
@@ -145,6 +149,7 @@ class ModelAudit:
                     record["effective_output_ceiling"] = payload[token_key]
                     body = json.dumps(payload).encode()
                     record["forwarded_sha256"] = hashlib.sha256(body).hexdigest()
+                    record["automatic_procedures_delivered"] = delivered_blocks(payload, owner.procedure_candidates)
                 headers = {"Authorization": "Bearer " + owner.api_key, "x-api-key": owner.api_key,
                            "Content-Type": "application/json", "Accept-Encoding": "identity"}
                 for key in ("anthropic-version", "anthropic-beta", "Accept"):
@@ -208,11 +213,22 @@ class ModelAudit:
     def summary(self):
         records = [r for r in self.records if r.get("event") == "generation"]
         success = [r for r in records if r.get("http_status") == 200 and not r.get("transport_error")]
+        budget = [v for v in self.violations if v["status"] == 429 and "budget exhausted" in v["reason"]]
+        protocol = [v for v in self.violations if v not in budget]
+        evaluable = (bool(success) and not protocol and len(success) == self.requests
+                     and all(r["model_matches"] and r["usage"] for r in success))
         return {"requests": self.requests, "recorded_requests": len(self.records),
                 "completed_generations": len(records), "violations": list(self.violations),
                 "qualified": bool(success) and not self.violations and len(success) == self.requests
                              and all(r["model_matches"] and r["usage"] for r in success),
                 "successful_responses": len(success),
+                "scientific_evaluable": evaluable,
+                "budget_exhausted": bool(budget), "budget_events": budget,
+                "protocol_violations": protocol,
+                "transport_errors": [r.get("transport_error") or f"HTTP {r.get('http_status')}"
+                                     for r in records if r not in success],
+                "automatic_procedure_hashes_delivered": sorted({p["sha256"] for r in records
+                        for p in r.get("automatic_procedures_delivered", [])}),
                 "all_response_models_match": bool(success) and all(r["model_matches"] for r in success),
                 "all_successes_have_usage": bool(success) and all(bool(r["usage"]) for r in success),
                 "response_models": sorted({m for r in success for m in r["response_models"]}),

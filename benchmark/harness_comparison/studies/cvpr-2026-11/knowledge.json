@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "study_id": "cvpr-2026-11-ai-tune-r2c",
+  "study_id": "cvpr-2026-11-ai-tune-r3",
   "reviewed_by": "Codex assisted review, 2026-11-06",
   "review_note": "Read both documents for this study. The generic procedure has no fitted values or scan-specific repairs. The existing APEXA invocation skill contains unrelated historical examples, supplied to every arm; no study trajectory, case outcomes, LAB_NOTEBOOK or RUNBOOK is approved. This is an assisted content review, not independent human certification. Retrieval disabled. Revision 2 makes unavailable capsule references explicit and limits document discovery to staged material and installed APIs; no numerical solution or case outcome was added.",
   "files": {

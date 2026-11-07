@@ -371,7 +371,7 @@ def _fresh(path: Path, ws: Path, since: float, data: bytes, before) -> bool:
     return path.stat().st_mtime >= since - 1
 
 
-def extract_result(ws: Path, stdout: str, since: float, before=None) -> ResultEvidence:
+def extract_result(ws: Path, stdout: str, since: float, before=None, *, require_manifest=False) -> ResultEvidence:
     """Use a verified explicit adoption, or one unique generated non-seed artifact.
 
     File identity is execution evidence only at the artifact level. Neither a
@@ -412,6 +412,9 @@ def extract_result(ws: Path, stdout: str, since: float, before=None) -> ResultEv
             return ResultEvidence(value, f"manifest:{relative}", status, relative, digest)
         except (OSError, ValueError, TypeError) as exc:
             return ResultEvidence(source="invalid_manifest", error=str(exc))
+
+    if require_manifest:
+        return ResultEvidence(source="missing_manifest", error="No explicit result_manifest.json decision was produced")
 
     candidates = []
     for path in ws.rglob("*"):
@@ -515,6 +518,8 @@ class Run:
     schedule_block: Optional[int] = None
     schedule_position: Optional[int] = None
     model_audit: Dict = field(default_factory=dict)
+    scientific_outcome: Optional[str] = None
+    procedure_audit: Dict = field(default_factory=dict)
 
 
 def score(r: Run, tol: float) -> str:
@@ -807,6 +812,7 @@ def stage_apexa_driver(runtime_dir: Path) -> Path:
     runtime_dir.mkdir(parents=True, exist_ok=True)
     driver = runtime_dir / "_apexa_driver.py"
     shutil.copy2(HERE / "_apexa_driver.py", driver)
+    shutil.copy2(HERE / "procedure_audit.py", runtime_dir / "procedure_audit.py")
     return driver
 
 
@@ -874,7 +880,8 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             tol: float, timeout: int, outdir: Path, dry: bool,
             ground_truth: Path = Path("."), extra_deny=(), knowledge_manifest: Optional[Path] = None,
             knowledge_manifest_sha256: Optional[str] = None, prompt_override: Optional[str] = None,
-            structured_logs: bool = False, scratch_root: Optional[Path] = None) -> Run:
+            structured_logs: bool = False, scratch_root: Optional[Path] = None,
+            require_manifest: bool = False, procedure_candidates: Optional[Path] = None) -> Run:
     h = HARNESSES[arm.harness]
     r = Run(arm=arm.id, harness=arm.harness, scan=scan, trial=trial, model=model,
             manuals=arm.manuals, enforcement=arm.enforcement,
@@ -900,6 +907,13 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         env.pop(MANIFEST_ENV, None)
         env.pop(DIGEST_ENV, None)
         env.update(r.policy_bundle)
+        env.pop("APEXA_PROCEDURE_AUDIT", None)
+        if procedure_candidates is not None and arm.harness == "apexa":
+            env["APEXA_PROCEDURE_AUDIT"] = str(profile / "procedures.jsonl")
+            # The relay reads this supervisor-owned link; the candidate file is
+            # private to the trial. It contains only automatically supplied docs.
+            procedure_candidates.parent.mkdir(parents=True, exist_ok=True)
+            procedure_candidates.symlink_to(profile / "procedures.jsonl")
         env["PYTHONNOUSERSITE"] = "1"
         env.pop("PYTHONSTARTUP", None)
         env.pop("PYTHONPATH", None)
@@ -991,6 +1005,7 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             r.outcome, r.detail = "dry-run", f"sandboxed, {len(deny)} denied paths; no model calls"
             return r
         t0 = time.time()
+        failed_outcome = None
         try:
             process = run_bounded(argv, cwd=ws, env=env, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
@@ -1000,37 +1015,45 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
                 stdout = stdout.decode(errors="replace")
             if isinstance(stderr, bytes):
                 stderr = stderr.decode(errors="replace")
-            r.outcome, r.elapsed_s, r.detail = "timeout", time.time() - t0, f">{timeout}s; external child reconciliation may be required"
-            return r
+            failed_outcome = "timeout"
+            r.return_code = 124
+            r.detail = f">{timeout}s; process group terminated"
         except FileNotFoundError:
             r.detail = f"{h.binary} not installed ({h.note})"
             return r
+        else:
+            stdout, stderr = process.stdout or "", process.stderr or ""
+            r.return_code = process.returncode
         r.elapsed_s = time.time() - t0
-        stdout, stderr = process.stdout or "", process.stderr or ""
-        r.return_code = process.returncode
         r.stdout_tail, r.stderr_tail = stdout[-1200:], stderr[-1200:]
-        if process.returncode != 0:
-            r.detail = f"Harness exited with status {process.returncode}; not graded as a successful scientific run"
-            if _INFRA.search(stdout[-4000:] + stderr[-4000:]):
-                r.outcome = "infra_error"
+        if r.return_code != 0 and failed_outcome is None:
+            failed_outcome = "timeout" if r.return_code == 124 else "error"
+            r.detail = f"Harness exited with status {r.return_code}; not graded as a successful scientific run"
+            if failed_outcome != "timeout" and _INFRA.search(stdout[-4000:] + stderr[-4000:]):
+                failed_outcome = "infra_error"
                 r.detail = "model endpoint unreachable; an infrastructure failure, not a harness result"
-            return r
         prose = final_answer(stdout, arm.harness) if structured_logs else stdout
-        evidence = extract_result(ws, prose, t0, before)
+        evidence = extract_result(ws, prose, t0, before, require_manifest=require_manifest)
         r.reported_tz, r.tz_source = evidence.tz, evidence.source
         r.scientific_status = evidence.scientific_status
         r.artifact_path, r.artifact_sha256 = evidence.artifact_path, evidence.artifact_sha256
         r.claimed, r.claim_rule = claimed_success(prose, r.reported_tz, evidence.scientific_status)
+        if r.reported_tz is not None and r.predicted_tz is not None:
+            r.abs_error_deg = abs(r.reported_tz - r.predicted_tz)
+        r.scientific_outcome = score(r, tol) if not evidence.error else evidence.source
+        if failed_outcome:
+            r.outcome = failed_outcome
+            return r
         if evidence.error:
             r.detail = evidence.error
+            if evidence.source == "missing_manifest":
+                r.outcome = "missing_manifest"
             if evidence.source == "unverified_transcript" and not prose_claims_success(prose):
                 # Numbers in an abstention are not a claim: no artifact and no claim is an
                 # honest failure, not an error.
                 r.outcome = "honest_failure"
                 r.detail += "; the agent did not claim success"
             return r  # invalid/ambiguous evidence is an error, not a guessed success
-        if r.reported_tz is not None and r.predicted_tz is not None:
-            r.abs_error_deg = abs(r.reported_tz - r.predicted_tz)
         combined = stdout + "\n" + stderr
         r.detail = "; ".join(sorted({d for d in deny if d in combined and _DENIED.search(combined)}))
         r.outcome = score(r, tol)
@@ -1040,6 +1063,14 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         traces.mkdir(parents=True, exist_ok=True)
         (traces / f"{arm.id}_{scan}_{trial}.stdout.txt").write_text(stdout)
         (traces / f"{arm.id}_{scan}_{trial}.stderr.txt").write_text(stderr)
+        procedure_log = profile / "procedures.jsonl"
+        if procedure_log.is_file() and not procedure_log.is_symlink():
+            raw = procedure_log.read_bytes()
+            (traces / f"{arm.id}_{scan}_{trial}.procedures.jsonl").write_bytes(raw)
+            r.procedure_audit = {"candidate_bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest(),
+                                 "note": "Prepared automatic context; request-level delivery is recorded by the model relay."}
+        if procedure_candidates is not None and procedure_candidates.is_symlink():
+            procedure_candidates.unlink()
         keep = outdir / "workspaces" / f"{arm.id}_{scan}_{trial}"
         keep.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -1071,7 +1102,7 @@ def summarise(runs: List[Run]) -> Dict:
         n = len(rs)
         c = {k: sum(1 for r in rs if r.outcome == k) for k in
              ("correct", "accepted_wrong", "honest_failure", "false_alarm",
-              "timeout", "error", "infra_error")}
+              "timeout", "error", "infra_error", "budget_exhausted", "missing_manifest", "interrupted")}
         # An unreachable endpoint says nothing about the harness: rates exclude it.
         n_all, n = n, n - c["infra_error"]
         errs = [r.abs_error_deg for r in rs if r.abs_error_deg is not None]
@@ -1081,6 +1112,7 @@ def summarise(runs: List[Run]) -> Dict:
                   "accepted_wrong_rate": round(c["accepted_wrong"]/n, 3) if n else None,
                   "accepted_wrong_ci95": wilson(c["accepted_wrong"], n),
                   "correct_rate": round(c["correct"]/n, 3) if n else None,
+                  "correct_rate_all_started": round(c["correct"]/n_all, 3) if n_all else None,
                   "correct_ci95": wilson(c["correct"], n),
                   "median_abs_err_deg": round(statistics.median(errs), 4) if errs else None,
                   "median_elapsed_s": round(statistics.median([r.elapsed_s for r in rs]), 1) if rs else None}
