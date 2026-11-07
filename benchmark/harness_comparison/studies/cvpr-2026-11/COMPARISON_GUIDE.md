@@ -2,7 +2,7 @@
 
 Start here; the exact design is in [PROTOCOL.md](PROTOCOL.md), the completed
 development pilot in [PILOT_REVIEW.md](PILOT_REVIEW.md), the pilot interpretation in [PILOT_INTERPRETATION.md](PILOT_INTERPRETATION.md),
-and the current system setup in [REVISION_4.md](REVISION_4.md). Reader copies
+and the current system setup in [REVISION_5.md](REVISION_5.md). Reader copies
 also live in the manuscript repository under `author_notes/comparison/`.
 
 ## What is being tested?
@@ -36,8 +36,8 @@ MIDAS release and requested model (Claude Opus 5 through ARGO). Provider-reporte
 model names and usage are logged; a gateway nickname does not prove identical
 backend routing or inference settings. Tools and native inference settings may
 differ and must be reported. APEXA keeps its native context; the other systems
-receive MIDAS resources directly, without APEXA-specific copies. See revision 4
-for the known-dataset documentation overlap. Trials run sequentially in a balanced saved order.
+receive MIDAS resources directly, without APEXA-specific copies. See revisions 4 and 5
+for the known-dataset documentation overlap and native retrieval deployment. Trials run sequentially in a balanced saved order.
 
 The per-trial ceilings are **30 minutes, 40 model requests, and 16,000 output
 tokens per request**. B0 runs once per main acquisition with no model calls.
@@ -67,7 +67,9 @@ and two transport-error cases overlap. B0 passed both pilot cases.
 
 **This does not establish a ranking or an APEXA advantage.** Revision 3 repairs
 the evaluator and records actual procedure delivery. Revision 3 was held before any main trial; revision 4 implements the clarified
-context design. The 180-trial main cohort is separate from the pilot; consult [STATUS.md](STATUS.md) for its latest status.
+context design. Revision 5 restores and verifies native semantic retrieval before
+agent trials; all 12 R4 fixed-MIDAS baseline outcomes are retained (ten accepted
+with relative consistency, one provisional/off-trend, one timeout). The 180-trial main cohort is separate from the pilot; consult [STATUS.md](STATUS.md) for its latest status.
 
 ## Where are the files?
 
@@ -75,9 +77,12 @@ context design. The 180-trial main cohort is separate from the pilot; consult [S
 - GitHub: `AdvancedPhotonSource/APEXA-APS-Beamline-Assistant`, same directory.
 - Copland study: `/home/beams/S20HEDM/apexa_eval/harness-comparison/`
 - Completed pilot: `revisions/r2/results/pilot-20261106-123856/`
-- Current main revision: `revisions/r4/`; frozen inputs/schedule under `setup/`.
-- Once started, main records: `revisions/r4/results/main/runs.jsonl`,
+- Current main revision: `revisions/r5/`; frozen inputs/schedule under `setup/`.
+- Once started, main records: `revisions/r5/results/main/runs.jsonl`,
   with per-trial `traces/`, `model_calls/`, `workspaces/`, and `progress.json`.
+- Retained fixed baseline: `revisions/r4/results/baseline-main/runs.jsonl`.
+- Statistical analysis and trace-selection rules: [ANALYSIS_PLAN.md](ANALYSIS_PLAN.md).
+- Native retrieval deployment/health: [REVISION_5.md](REVISION_5.md).
 - Gold FF case study: `/home/beams/S20HEDM/apexa_eval/ff-case-study/`.
   It is a separate workflow demonstration and is not included in the 180 trials.
 

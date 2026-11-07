@@ -1,50 +1,78 @@
-# Latest update — native retrieval repair before agent trials
+# Current status — November 7, 2026, 21:06 UTC
 
-The user requested repair and maintenance of native semantic retrieval. The R4
-supervisor was stopped while running B0, before any main agent trial started.
-The existing B0 worker (PID 67617) continues; do not repeat its completed inputs.
-`revisions/r4/setup/retrieval-hold.json` records this hold. A new frozen agent
-configuration will follow successful native retrieval setup and qualification.
-The source documents, budgets and all earlier outcomes are preserved.
+**Native semantic retrieval is repaired and has passed its deployment checks.**
+All five R5 startup qualifications and main admission passed. The 180-trial
+main cohort is now running: its first saved-order trial is OpenCode on scan 261,
+repeat 2. At this launch snapshot no main agent trial is terminal.
 
-# Current continuation — November 7, 2026
+## Completed work
 
-The revision-2 pilot is complete. Revision 3 passed all five startup checks
-(19 model requests) and main admission, but its waiting launcher was stopped
-before any main scientific trial because the operator requested native APEXA
-context and upstream MIDAS resources for the other harnesses.
+- Calibration audit and its numerical controls are complete.
+- R2 development pilot: all ten trials are terminal and retained. See
+  [PILOT_INTERPRETATION.md](PILOT_INTERPRETATION.md); no ranking is established.
+- R4 fixed MIDAS baseline: all 12 main acquisitions are terminal. Ten were
+  accepted with relative tilt agreement, scan 261 was provisional/off-trend,
+  and scan 283 timed out. R5 validates compatibility and reuses these records.
+- Fresh gold FF reconstruction and candidate audit are complete. Initial and
+  geometry-updated runs produced 13 and 19 candidates. The physical grain count
+  remains unresolved; these are scripted typed-tool runs, not autonomous trials.
+- R5 native retrieval: a new 1,208-chunk generation passed real powder, FF-HEDM
+  and NF-HEDM queries with matching technique labels, excerpt hashes, generation
+  identity, pinned embeddings and source fingerprints. This establishes deployment
+  health, not scientific answer quality or an observed retrieval benefit.
 
-[Revision 4](REVISION_4.md) passed fresh startup qualification for all five
-conditions (17 model requests: A1=3, Claude Code=3, OpenCode=5, Pi=3, A7=3).
-Automatic procedure delivery was observed in A1 and absent in A7. Local
-comparison/context regression checks: **179 passed**. Main admission passed;
-inputs, solver fingerprints, schedule and the fixed numerical worker match R3.
+## Running work and locations
 
-The detached supervisor (PID 67333) is **running the 12-input fixed MIDAS
-baseline**, then the unchanged 180-trial agent cohort. At the first status
-snapshot, one baseline trial was terminal and no main agent trial had started.
-The first baseline result was provisional/off-trend and is retained. This is
-not enough data for a comparative conclusion.
+Copland root: `/home/beams/S20HEDM/apexa_eval/harness-comparison/`.
 
-Native capsule/skill access works. The native semantic-retrieval probe returned
-`Knowledge base not available`: the deployed embedding revision/cache is not
-configured. This is recorded in `setup/native-feature-probe.json`; no alternative
-retriever or application patch was introduced. The unedited MIDAS resources
-include historical discussion of this development dataset.
+- R5 continuation PID 338771; main supervisor PID 347845; main worker PID 348176.
+  Live receipts: `revisions/r5/setup/continuation.json` and `setup/main-launch.json`.
+- Retrieval evidence: `revisions/r5/setup/retrieval-health.json` and
+  `retrieval-build.json`. The index worker has finished; do not restart it.
+- Fresh startup checks: `revisions/r5/results/qualification/checks.jsonl`. All pass,
+  with 22 model requests (A1=3, Claude Code=7, OpenCode=5, Pi=3, A7=4).
+  Automatic procedure delivery is observed for A1 and absent for A7.
+- Main execution: `revisions/r5/setup/main-launch.json` and
+  `revisions/r5/results/main/progress.json`.
+- Main outcomes: `revisions/r5/results/main/runs.jsonl` once the first trial ends.
+- Retained baseline: `revisions/r4/results/baseline-main/runs.jsonl`.
+- Reporting watcher PID 352202: `reports/r5-analysis-status.json`. It will export
+  `reports/r5-main-terminal/` when the existing main supervisor ends. A failed
+  cohort gets incomplete accounting only; the watcher never starts trials.
+- FF report/figures: manuscript `author_notes/FF_CASE_STUDY.md` and
+  `author_notes/ff_case_study/`; remote `/home/beams/S20HEDM/apexa_eval/ff-case-study/`.
 
-Current Copland records under `revisions/r4/`:
+The continuation froze retrieval/assets, qualified all five conditions, checked
+unchanged baseline inputs/solver and admitted main. Its baseline resume emitted
+no numerical-trial launch lines, and the retained outcomes still match admission
+SHA-256 `57a92ebaf325335e6ebe6ce611ee7ed184387116e5f9198e8df9062b8476a242`.
+Check its live receipt before restarting anything. Old R3/R4 supervisors are
+stopped; neither collected a main scientific agent trial.
 
-- `setup/main-launch.json`: current supervisor phase and worker.
-- `setup/native-context.json`: 205 native APEXA context files and 229 upstream MIDAS resources.
-- `setup/qualification.json`, `setup/main_admission.json`: passed setup/admission.
-- `results/baseline-main/runs.jsonl`: retained fixed-recipe outcomes.
-- `results/main/progress.json`, `results/main/runs.jsonl`: agent progress/outcomes once started.
+## Reading and analysis
 
-The fresh gold FF numerical workflow and candidate audit have completed. Its
-physical grain count remains unresolved. Reports and figures are in the
-manuscript repository at `author_notes/FF_CASE_STUDY.md` and `author_notes/ff_case_study/`.
-See [the pilot interpretation](PILOT_INTERPRETATION.md) for the observed failure
-mechanisms. Historical records below describe their own revisions.
+Start with [COMPARISON_GUIDE.md](COMPARISON_GUIDE.md), the exact
+[PROTOCOL.md](PROTOCOL.md), and [REVISION_5.md](REVISION_5.md).
+[ANALYSIS_PLAN.md](ANALYSIS_PLAN.md) was copied to R5 with a timestamp/hash receipt
+before any main agent outcomes. It preserves the scheduled denominator and uses
+paired acquisition-level comparisons with a stratified bootstrap.
+`analyze_main.py` exports accounting, a 12-row acquisition table, all trial rows,
+and—only for a completed cohort—paired estimates, figures and prespecified trace pairs.
+It writes outside the frozen studies. Eighteen reporting/adoption checks pass;
+the deployed comparison/retrieval regression suite previously passed 192 checks.
+
+APEXA retains its native integration; other harnesses receive unedited upstream
+MIDAS resources, without APEXA-specific integration. Those documents discuss the
+development acquisitions, so these are not unseen-data trials. See
+[retrieval maintenance](../../../../docs/RETRIEVAL_MAINTENANCE.md) for deployment
+pins, rebuild conditions and health checks. Production sessions remain untouched.
+
+The main comparison is running; its completed outcomes and independent artifact review are pending. There is
+no measured APEXA superiority or reduction in expert intervention to report.
+
+---
+
+The records below describe historical revisions and are not current launch status.
 
 # Copland setup status — 2026-11-06
 

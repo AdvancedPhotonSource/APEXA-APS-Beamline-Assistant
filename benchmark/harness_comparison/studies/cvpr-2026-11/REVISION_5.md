@@ -41,3 +41,32 @@ uses its existing terminal records and does not launch duplicate numerical trial
 The known-dataset limitation remains: native and upstream documents discuss the
 development acquisitions. Fresh numerical execution and raw-image checks remain
 necessary; no unseen-data or blind-recovery claim is supported by these runs.
+
+## Recorded deployment result
+
+The native rebuild completed on November 7, publishing generation
+`hedm_knowledge-c4e158d714be418c863c18c518e12270` with 1,208 chunks. The older
+1,436-row collection remains preserved. All three real queries passed the health
+check with verified identities, fresh source fingerprints and valid excerpt
+hashes. Retrieved excerpts concern detector conventions/scale, FF parameter
+construction and NF metadata/workflow scope. Availability is established;
+scientific answer quality and benefit during agent trials remain unmeasured.
+
+The analysis plan was recorded before the first main agent outcome in
+`setup/analysis-plan-receipt.json` (SHA-256
+`db0996784f7164c249d0e77bf7fc779034d9e038db95e18186566757e2cf8efe`).
+The read-only report command is:
+
+```sh
+python benchmark/harness_comparison/analyze_main.py \
+  --root /path/to/revisions/r5 \
+  --baseline-root /path/to/revisions/r4 \
+  --output /path/outside/studies/new-report-directory
+```
+
+It exports all scheduled rows, baseline records and acquisition means. An
+incomplete cohort gets progress counts without comparative rates, intervals or
+illustrative trace selections. For a completed cohort it applies the paired,
+calibrant-stratified bootstrap and trace-selection rule in the analysis plan.
+This is automated record/adoption review; inspect execution and raw-image
+evidence before describing the results as scientifically verified.
