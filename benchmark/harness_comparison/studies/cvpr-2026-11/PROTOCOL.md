@@ -4,20 +4,22 @@ Working manuscript title: **APEXA: An Agent Harness for Verifiable Scientific Wo
 
 ## Question and scope
 
-Does APEXA increase useful, artifact-supported completion of scientific image
-analysis, and does automatic procedure delivery contribute? The first experiment
+Does APEXA's integrated natural-language environment increase useful,
+artifact-supported completion for beamline scientists, and does automatic
+procedure delivery contribute? The first experiment
 uses the existing ai_tune broad rotation sweep. This is a development case study:
 these acquisitions and prior outcomes have already been inspected. Neither a
 fresh harness session nor withholding one fit makes the dataset a new held-out
-experiment. The gold FF acquisition is a planned transfer study, not an included
-or completed result. Its exact inputs and evaluator must be frozen separately.
+experiment. The separate gold FF case study uses 20-ID `nfdev_jul26` scan 001181.
+Its fresh reconstruction is a scripted typed-tool demonstration; its physical
+grain count remains unresolved and it is not part of these agent trials.
 
 ## Conditions
 
-- A1: APEXA with native core/MIDAS tools and automatic procedures.
-- A3: Claude Code with native coding tools and the same available documents.
-- A4: OpenCode with native coding tools and the same available documents.
-- A5: Pi with native coding tools and the same available documents.
+- A1: APEXA with native core/MIDAS tools, shipped context and automatic procedures.
+- A3: Claude Code with native coding tools and upstream MIDAS capsules and skills.
+- A4: OpenCode with native coding tools and upstream MIDAS capsules and skills.
+- A5: Pi with native coding tools and upstream MIDAS capsules and skills.
 - A7: APEXA as A1, changing only `APEXA_AUTOMATIC_PROCEDURES` from 1 to 0.
 
 A1/A7 retain the same metadata policy, validators, explicit document-reading
@@ -30,6 +32,24 @@ The four-harness comparison measures deployed systems: APEXA's typed scientific
 interface differs from the coding tools in the other harnesses. It does not
 isolate planner implementation. A common-interface experiment is still required
 for that claim. Numerical engines shared by the arms are not APEXA inventions.
+
+## Revision 4 context policy
+
+Following the operator's November 7 instruction, leave APEXA's application
+integration and document contents intact. Do not export APEXA-specific skills,
+typed-tool wrappers or custom recipes into the other systems. Supply those
+systems with unedited MIDAS manuals and skills taken directly from a recorded
+MIDAS git commit, installed in their project skill directories. APEXA keeps its
+own shipped context snapshot, including its native capsule and retrieval paths.
+Record actual feature availability; an exposed retrieval tool is not proof that
+its embedding/index configuration works. See [REVISION_4.md](REVISION_4.md).
+
+Native documents include historical measurements, and current MIDAS manuals
+explicitly discuss the ai_tune series. This is a development workflow comparison
+with known task context. Existing answer files, evaluator tables, previous trial
+workspaces and user sessions remain outside the trial. Independently check fresh
+numerical execution and raw-image support before calling an artifact verified.
+Do not interpret familiar-dataset consistency as unseen-data generalization.
 
 ## Cohort and budgets
 

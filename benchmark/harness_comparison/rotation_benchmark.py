@@ -632,7 +632,8 @@ def deny_paths(arm: "Arm", ground_truth: Path, extra=(), knowledge_policy: dict 
     return sorted(d for d in deny if os.path.exists(d))
 
 
-def sandboxed(argv: List[str], deny: List[str], *, read_only=(), writable=(), private_apexa_home=None) -> List[str]:
+def sandboxed(argv: List[str], deny: List[str], *, read_only=(), writable=(), private_apexa_home=None,
+              private_knowledge_db=None) -> List[str]:
     if not SANDBOX:
         raise SystemExit("REFUSING TO RUN: sandbox-exec/bwrap not available; the answers on "
                          "this disk would be readable by the agents under test.")
@@ -686,6 +687,11 @@ def sandboxed(argv: List[str], deny: List[str], *, read_only=(), writable=(), pr
         for path in (sys.prefix, *read_only):
             if os.path.exists(path):
                 command += ["--ro-bind", _real(path), _real(path)]
+        if private_knowledge_db is not None:
+            private = Path(_real(private_knowledge_db))
+            if not private.is_dir() or not any(private.is_relative_to(Path(_real(p))) for p in writable):
+                raise ValueError("Private native database must be inside a writable trial root")
+            command += ["--bind", str(private), str(REPO / "knowledge_base/chroma_db")]
         if scoped and private_apexa_home is not None:
             private = Path(_real(private_apexa_home))
             if not private.is_dir() or not any(private.is_relative_to(Path(_real(p))) for p in writable):
@@ -813,6 +819,7 @@ def stage_apexa_driver(runtime_dir: Path) -> Path:
     driver = runtime_dir / "_apexa_driver.py"
     shutil.copy2(HERE / "_apexa_driver.py", driver)
     shutil.copy2(HERE / "procedure_audit.py", runtime_dir / "procedure_audit.py")
+    shutil.copy2(HERE / "native_context.py", runtime_dir / "native_context.py")
     return driver
 
 
@@ -881,7 +888,8 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             ground_truth: Path = Path("."), extra_deny=(), knowledge_manifest: Optional[Path] = None,
             knowledge_manifest_sha256: Optional[str] = None, prompt_override: Optional[str] = None,
             structured_logs: bool = False, scratch_root: Optional[Path] = None,
-            require_manifest: bool = False, procedure_candidates: Optional[Path] = None) -> Run:
+            require_manifest: bool = False, procedure_candidates: Optional[Path] = None,
+            native_context_manifest: Optional[Path] = None) -> Run:
     h = HARNESSES[arm.harness]
     r = Run(arm=arm.id, harness=arm.harness, scan=scan, trial=trial, model=model,
             manuals=arm.manuals, enforcement=arm.enforcement,
@@ -896,16 +904,32 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
     stdout, stderr = "", ""
     try:
         policy = load_manifest(knowledge_manifest, knowledge_manifest_sha256) if knowledge_manifest else None
-        if arm.harness == "apexa" and policy is None:
+        native = None
+        if native_context_manifest is not None:
+            if policy is not None:
+                raise KnowledgePolicyError("Native context and a restricted knowledge policy are mutually exclusive")
+            import native_context
+            native = native_context.load(native_context_manifest, native_repo=REPO)
+        if arm.harness == "apexa" and policy is None and native is None:
             raise KnowledgePolicyError("APEXA comparison requires an explicit reviewed knowledge manifest")
-        r.staged = stage(exposure, manuals if arm.manuals else None, ws, knowledge_policy=policy)
+        if native is not None:
+            r.staged = stage(exposure, None, ws)
+            if arm.harness != "apexa" and arm.manuals:
+                r.staged += native_context.stage_midas(native, ws)
+            r.policy_bundle["context_mode"] = native_context.MODE
+            r.policy_bundle["context_sha256"] = native_context.sha(native_context_manifest)
+        else:
+            r.staged = stage(exposure, manuals if arm.manuals else None, ws, knowledge_policy=policy)
         before = workspace_snapshot(ws)
         prompt = prompt_override if prompt_override is not None else PROMPT.format(
-            fname=exposure.name, manual_note=MANUAL_NOTE if arm.manuals else "")
+            fname=exposure.name, manual_note=("Use your native scientific tools and context.\n\n"
+                if native is not None and arm.harness == "apexa" else MANUAL_NOTE if arm.manuals else ""))
         env = dict(os.environ)
         # A trial must never inherit an unrelated study policy from the caller.
         env.pop(MANIFEST_ENV, None)
         env.pop(DIGEST_ENV, None)
+        env.pop("APEXA_BENCH_CONTEXT", None)
+        env.pop("APEXA_BENCH_CONTEXT_SHA256", None)
         env.update(r.policy_bundle)
         env.pop("APEXA_PROCEDURE_AUDIT", None)
         if procedure_candidates is not None and arm.harness == "apexa":
@@ -968,6 +992,7 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             # failed at login and been scored as a harness failure.
             env.pop("ANTHROPIC_API_KEY", None)
         deny = deny_paths(arm, ground_truth, (*extra_deny, outdir), knowledge_policy=policy)
+        native_db = None
         if h.argv is None:
             driver = stage_apexa_driver(trial_root / "runtime")
             env["APEXA_BENCH_REPO"] = str(REPO)
@@ -976,14 +1001,21 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             env["APEXA_LLM_BASE_URL"] = base_url
             env["ANL_USERNAME"] = api_key
             env["ARGO_MODEL"] = model
-            frozen = profile / "knowledge-manifest.json"
-            # Preserve exact reviewed bytes and pin them for all child servers.
-            frozen.write_bytes(Path(knowledge_manifest).read_bytes())
-            load_manifest(frozen, policy["manifest_sha256"])
+            if native is not None:
+                frozen = profile / "native-context.json"
+                frozen.write_bytes(Path(native_context_manifest).read_bytes())
+                env["APEXA_BENCH_CONTEXT"] = str(frozen)
+                env["APEXA_BENCH_CONTEXT_SHA256"] = native_context.sha(frozen)
+                native_db = native_context.private_database(REPO, profile)
+            else:
+                frozen = profile / "knowledge-manifest.json"
+                # Preserve exact reviewed bytes and pin them for all child servers.
+                frozen.write_bytes(Path(knowledge_manifest).read_bytes())
+                load_manifest(frozen, policy["manifest_sha256"])
+                env[MANIFEST_ENV] = str(frozen)
+                env[DIGEST_ENV] = policy["manifest_sha256"]
+                r.policy_bundle[DIGEST_ENV] = policy["manifest_sha256"]
             frozen.chmod(0o400)
-            env[MANIFEST_ENV] = str(frozen)
-            env[DIGEST_ENV] = policy["manifest_sha256"]
-            r.policy_bundle[DIGEST_ENV] = policy["manifest_sha256"]
             ok, detail = preflight_apexa_driver(driver, env, deny)
             if not ok:
                 r.detail = f"Driver preflight failed: {detail}"
@@ -998,9 +1030,10 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
                     argv[2:2] = ["--format", "json"]
                 elif arm.harness == "pi":
                     argv[1:1] = ["--mode", "json", "--no-session", "--no-extensions", "--no-mcp"]
-        argv = sandboxed(argv, deny, read_only=[profile / "knowledge-manifest.json", trial_root / "runtime"],
+        argv = sandboxed(argv, deny, read_only=[profile / "knowledge-manifest.json", profile / "native-context.json", trial_root / "runtime"],
                          writable=[trial_root],
-                         private_apexa_home=profile / "apexa" if arm.harness == "apexa" else None)
+                         private_apexa_home=profile / "apexa" if arm.harness == "apexa" else None,
+                         private_knowledge_db=native_db)
         if dry:
             r.outcome, r.detail = "dry-run", f"sandboxed, {len(deny)} denied paths; no model calls"
             return r

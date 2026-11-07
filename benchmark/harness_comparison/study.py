@@ -51,12 +51,21 @@ def write_new(path, data):
 
 def source_hashes():
     paths = [HERE / n for n in ("study.py", "rotation_benchmark.py", "run_comparison.py",
-                                "_apexa_driver.py", "model_audit.py", "procedure_audit.py")]
+                                "_apexa_driver.py", "model_audit.py", "procedure_audit.py", "native_context.py")]
     paths += [REPO / n for n in ("apexa_agents.py", "midas_comprehensive_server.py",
                                 "_calibrate_runner.py", "skill_registry.py", "apexa_knowledge_policy.py")]
     paths += list(REPO.glob("*.py"))
     paths += [REPO / n for n in ("servers.config", "pyproject.toml", "uv.lock") if (REPO / n).exists()]
     paths += [SPEC, MANIFEST]
+    spec = json.loads(SPEC.read_text())
+    if spec.get("context_mode") == "native_apexa_upstream_midas":
+        import native_context
+        receipt = Path(spec["context_manifest"])
+        context = native_context.load(receipt, native_repo=REPO)
+        result = {str(p.relative_to(REPO)): sha(p) for p in paths}
+        result["native_context_receipt"] = sha(receipt)
+        result.update({p: sha(REPO / p) for p in context["apexa"]["files"]})
+        return result
     policy = rb.load_manifest(MANIFEST)
     paths += [REPO / p for p in policy["files"]]
     return {str(p.relative_to(REPO)): sha(p) for p in paths}
@@ -246,7 +255,9 @@ def run_trial(root, spec, output, entry, exposure, truth, *, smoke=False):
             audit.base_url, audit.token, spec["model"], spec["tilt_tolerance_deg"],
             240 if smoke else spec["wall_seconds"], output, False,
             ground_truth=root / "setup/reference.csv", extra_deny=denied_locations(root, spec),
-            knowledge_manifest=MANIFEST, structured_logs=True,
+            knowledge_manifest=None if spec.get("context_mode") == "native_apexa_upstream_midas" else MANIFEST,
+            native_context_manifest=Path(spec["context_manifest"]) if spec.get("context_mode") == "native_apexa_upstream_midas" else None,
+            structured_logs=True,
             scratch_root=root / "work",
             prompt_override=SMOKE_PROMPT.format(name=exposure.name) if smoke else None,
             require_manifest=not smoke, procedure_candidates=candidates)

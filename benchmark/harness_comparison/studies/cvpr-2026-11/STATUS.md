@@ -1,3 +1,16 @@
+# Current continuation — November 7, 2026
+
+The revision-2 pilot is complete. Revision 3 passed all five startup checks
+(19 model requests) and main admission, but its waiting launcher was stopped
+before any main scientific trial because the operator requested native APEXA
+context and upstream MIDAS resources for the other harnesses.
+
+[Revision 4](REVISION_4.md) implements that design. Its new qualification and
+launch receipts are pending. The original 180-trial schedule and budgets remain.
+See [the pilot interpretation](PILOT_INTERPRETATION.md) for what previous
+failures actually demonstrate. Historical records below describe their own
+revisions and must not be read as current launch status.
+
 # Copland setup status — 2026-11-06
 
 Current continuation: revision 2 is complete and retained. [Revision 3](REVISION_3.md)

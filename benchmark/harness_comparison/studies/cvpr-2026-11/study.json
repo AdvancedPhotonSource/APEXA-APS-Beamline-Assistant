@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
-  "study_id": "cvpr-2026-11-ai-tune-r3",
+  "study_id": "cvpr-2026-11-ai-tune-r4",
+  "context_mode": "native_apexa_upstream_midas",
+  "context_manifest": "/home/beams/S20HEDM/apexa_eval/harness-comparison/revisions/r4/setup/native-context.json",
   "comparison_kind": "native_systems_and_automatic_procedure_ablation",
   "arms": [
     "A1",

@@ -109,6 +109,19 @@ async def _go(prompt: str, timeout: int) -> str:
 def knowledge_preflight() -> dict:
     from apexa_knowledge_policy import current_policy, approved_file_bytes, KnowledgePolicyError
     policy = current_policy()
+    context = os.environ.get("APEXA_BENCH_CONTEXT")
+    if context:
+        if policy is not None:
+            raise KnowledgePolicyError("Native context cannot inherit a restricted study policy")
+        from native_context import load
+        digest = os.environ.get("APEXA_BENCH_CONTEXT_SHA256")
+        if not digest:
+            raise KnowledgePolicyError("Native context requires a frozen receipt hash")
+        record = load(context, expected_sha256=digest, native_repo=REPO, check_midas=False)
+        return {"mode": record["mode"], "context_sha256": digest,
+                "native_context_files": len(record["apexa"]["files"]),
+                "retrieval_policy": "native; availability is checked separately",
+                "held_out_knowledge": False}
     if policy is None:
         raise KnowledgePolicyError("Benchmark driver requires a hash-pinned reviewed knowledge manifest")
     for relative in policy["files"]:
