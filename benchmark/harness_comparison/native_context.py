@@ -48,6 +48,9 @@ def load(path, *, expected_sha256=None, native_repo=None, check_midas=True):
         checked_files(native_repo, record["apexa"]["files"])
     if check_midas:
         checked_files(record["midas"]["root"], record["midas"]["files"])
+    if record.get("embedding_assets"):
+        assets = record["embedding_assets"]
+        checked_files(assets["root"], assets["files"])
     return record
 
 

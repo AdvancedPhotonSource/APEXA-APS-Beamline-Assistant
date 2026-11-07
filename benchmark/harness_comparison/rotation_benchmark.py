@@ -952,6 +952,7 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         (profile / "tmp").mkdir()
         (profile / "apexa").mkdir()
         env["TMPDIR"] = str(profile / "tmp")
+        env["HF_MODULES_CACHE"] = str(profile / "hf-modules")
         env["npm_config_cache"] = str(profile / "npm-cache")
         env["APEXA_AGENT_MODE"] = "single"
         env["APEXA_NATIVE_TOOLS"] = "1"

@@ -24,6 +24,8 @@ def main():
     ap.add_argument("--apexa-commit", required=True)
     ap.add_argument("--midas-commit", required=True)
     ap.add_argument("--output", type=Path, required=True)
+    ap.add_argument("--embedding-assets-root", type=Path)
+    ap.add_argument("--embedding-assets-manifest", type=Path)
     args = ap.parse_args()
     record = {"schema_version": 1, "mode": MODE,
         "apexa": {"commit": args.apexa_commit, "files": inventory(args.source,
@@ -33,6 +35,12 @@ def main():
         "native_documents_edited": False, "apexa_resources_exported_to_external_arms": False,
         "held_out_knowledge": False,
         "qualification": "Development acquisitions have been discussed in upstream manuals; inspect fresh execution and raw-image evidence, not hidden-answer recovery."}
+    if bool(args.embedding_assets_root) != bool(args.embedding_assets_manifest):
+        ap.error("Both embedding asset root and manifest are required")
+    if args.embedding_assets_root:
+        assets = json.loads(args.embedding_assets_manifest.read_text())
+        checked_files(args.embedding_assets_root, assets["files"])
+        record["embedding_assets"] = {**assets, "root": str(args.embedding_assets_root.resolve())}
     with args.output.open("x") as stream:
         json.dump(record, stream, indent=2)
         stream.write("\n")

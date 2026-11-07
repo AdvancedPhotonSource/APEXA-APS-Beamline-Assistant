@@ -15,31 +15,29 @@ Citation-aware retrieval that backs the `KnowledgeAgent` and the
 | `logbooks/*.md` (the 15 open MIDAS docs) | ✅ | FF/NF handbooks + lab notebooks, `Reconstruction_Reports`, and the analysis/calibration docs — un-ignored explicitly in `.gitignore` |
 | `logbooks/*.txt`, other `logbooks/*.md` | ❌ | drop-zone for **private** beamtime notes — gitignored by default |
 | `papers/*.pdf`, `books/*.pdf` | ❌ | copyrighted / large |
-| `chroma_db/` | ✅ | the **prebuilt index (~15 MB) ships in git** — ready to query on checkout, no re-index needed. Only the active segment + `chroma.sqlite3` are tracked. |
+| `chroma_db/` | ✅ | a historical prebuilt index ships in git; verify its model identity and generation before use. A database alone is insufficient. |
 
-## Deploy step (after `git pull`)
+## Deploy and maintain retrieval
 
-The prebuilt index now ships in git, so **online machines need no deploy step** —
-the RAG works on checkout (first query downloads + caches the ~523 MB Nomic model).
+Stage pinned embedding assets and use the same model/code revisions for indexing
+and querying. The deployed native loader requires explicit immutable revisions
+or a staged snapshot. It does not silently download and execute an unpinned
+model on the first query. Legacy indexes without verified embedding provenance
+must be rebuilt under the selected configuration.
 
-**Re-index only when you change a source document:**
+Follow [the retrieval maintenance guide](../docs/RETRIEVAL_MAINTENANCE.md), then run:
 
-```bash
-uv run python knowledge_base/index_knowledge.py   # then commit the updated chroma_db/
+```sh
+python knowledge_base/index_knowledge.py
+python scripts/check_knowledge.py --output /path/to/new-health-receipt.json
 ```
 
-On success it prints `Indexing complete` and writes `data/index_stats.json`.
-
-**Air-gapped / no-internet machine:** the embedding model must be pre-staged and
-`APEXA_OFFLINE=1` set (both index- and query-time load only from the local cache).
-See [`../docs/OFFLINE_DEPLOYMENT.md`](../docs/OFFLINE_DEPLOYMENT.md).
-
-To use a different embedding model, set `APEXA_EMBED_MODEL` before indexing **and**
-at query time (both must match, or retrieval returns garbage):
-
-```bash
-export APEXA_EMBED_MODEL=nvidia/llama-embed-nemotron-8b
-```
+The indexer publishes a new immutable generation through
+`data/hedm_knowledge-active.json`; a failed build preserves the previous generation.
+The health command exercises native powder, FF-HEDM and NF-HEDM retrieval and
+checks source freshness, model/index identity and excerpt hashes. Run it after
+changes and before beamtime. A changed embedding model or source corpus requires
+a new index, not just a configuration edit.
 
 ## Adding open MIDAS docs
 

@@ -1,3 +1,12 @@
+# Latest update — native retrieval repair before agent trials
+
+The user requested repair and maintenance of native semantic retrieval. The R4
+supervisor was stopped while running B0, before any main agent trial started.
+The existing B0 worker (PID 67617) continues; do not repeat its completed inputs.
+`revisions/r4/setup/retrieval-hold.json` records this hold. A new frozen agent
+configuration will follow successful native retrieval setup and qualification.
+The source documents, budgets and all earlier outcomes are preserved.
+
 # Current continuation — November 7, 2026
 
 The revision-2 pilot is complete. Revision 3 passed all five startup checks

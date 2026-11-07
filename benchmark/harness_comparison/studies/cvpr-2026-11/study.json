@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "study_id": "cvpr-2026-11-ai-tune-r4",
+  "study_id": "cvpr-2026-11-ai-tune-r5",
   "context_mode": "native_apexa_upstream_midas",
-  "context_manifest": "/home/beams/S20HEDM/apexa_eval/harness-comparison/revisions/r4/setup/native-context.json",
+  "context_manifest": "/home/beams/S20HEDM/apexa_eval/harness-comparison/revisions/r5/setup/native-context.json",
   "comparison_kind": "native_systems_and_automatic_procedure_ablation",
   "arms": [
     "A1",
@@ -48,5 +48,18 @@
   "additional_software_roots": [
     "/home/beams12/S1IDUSER/opt/MIDAS_canonical/packages/midas_ckernel",
     "/home/beams/S20HEDM/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu"
+  ],
+  "native_environment": {
+    "APEXA_EMBED_MODEL": "nomic-ai/nomic-embed-text-v1.5",
+    "APEXA_EMBED_REVISION": "e9b6763023c676ca8431644204f50c2b100d9aab",
+    "APEXA_EMBED_TRUST_REMOTE_CODE": "1",
+    "APEXA_EMBED_CODE_REVISION": "7710840340a098cfb869c4f65e87cf2b1b70caca",
+    "HF_HUB_CACHE": "/home/beams45/S20HEDM/apexa_eval/knowledge-maintenance/20261107/assets/hub",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "CUDA_VISIBLE_DEVICES": ""
+  },
+  "native_software_roots": [
+    "/home/beams45/S20HEDM/apexa_eval/knowledge-maintenance/20261107/assets"
   ]
 }

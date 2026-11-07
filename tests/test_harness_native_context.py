@@ -8,6 +8,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "benchmark/harness_comparison"))
 import native_context as nc
 import rotation_benchmark as rb
+import main_supervisor
+import study
 
 
 def test_external_harness_gets_upstream_bytes_and_native_skill_paths(tmp_path):
@@ -68,3 +70,38 @@ def test_private_database_mount_is_confined_to_trial(tmp_path, monkeypatch):
     assert argv[index - 2:index + 1] == ["--bind", str(db), target]
     with pytest.raises(ValueError, match="inside a writable trial"):
         rb.sandboxed(["true"], [], writable=[tmp_path / "elsewhere"], private_knowledge_db=db)
+
+
+@pytest.mark.parametrize('change', ['inputs', 'solver', 'budget', 'worker'])
+def test_reusing_baseline_rejects_incompatible_revision(tmp_path, change):
+    current, prior = tmp_path/'new', tmp_path/'old'
+    data = {'inputs': [{'sha256': 'same'}], 'solver': {'version': 'same'},
+            'spec': {'scans': [1], 'wall_seconds': 1800, 'cpu_threads': 4, 'tilt_tolerance_deg': .1}}
+    for root in [current, prior]:
+        (root/'setup').mkdir(parents=True)
+        (root/'setup/frozen.json').write_text(json.dumps(data))
+        worker = root/'source/benchmark/harness_comparison/baseline_worker.py'
+        worker.parent.mkdir(parents=True)
+        worker.write_text('unchanged numerical recipe')
+    main_supervisor.validate_retained_baseline(current, prior)
+    if change == 'inputs':
+        data['inputs'] = [{'sha256': 'different'}]
+    elif change == 'solver':
+        data['solver']['version'] = 'different'
+    elif change == 'budget':
+        data['spec']['wall_seconds'] = 3600
+    else:
+        (current/'source/benchmark/harness_comparison/baseline_worker.py').write_text('changed recipe')
+    (current/'setup/frozen.json').write_text(json.dumps(data))
+    with pytest.raises(RuntimeError):
+        main_supervisor.validate_retained_baseline(current, prior)
+
+
+def test_native_environment_is_limited_to_embedding_setup(tmp_path):
+    spec = {'solver_python': '/bin/python', 'cpu_threads': 4, 'max_model_requests': 40,
+            'native_environment': {'HF_HUB_OFFLINE': '1', 'APEXA_EMBED_REVISION': 'a'*40}}
+    env = study.configured_environment(tmp_path, spec)
+    assert env['HF_HUB_OFFLINE'] == '1'
+    spec['native_environment']['ANL_USERNAME'] = 'must-not-be-a-study-setting'
+    with pytest.raises(ValueError, match='Unsupported'):
+        study.configured_environment(tmp_path, spec)

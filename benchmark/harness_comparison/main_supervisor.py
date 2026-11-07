@@ -14,15 +14,31 @@ import subprocess
 import time
 
 
+def validate_retained_baseline(root, baseline_root):
+    current = json.loads((root / 'setup/frozen.json').read_text())
+    prior = json.loads((baseline_root / 'setup/frozen.json').read_text())
+    if current['inputs'] != prior['inputs'] or current['solver'] != prior['solver']:
+        raise RuntimeError('Cannot retain a baseline with different inputs or solver')
+    for name in ('scans', 'wall_seconds', 'cpu_threads', 'tilt_tolerance_deg'):
+        if current['spec'][name] != prior['spec'][name]:
+            raise RuntimeError(f'Retained baseline differs in {name}')
+    worker = 'source/benchmark/harness_comparison/baseline_worker.py'
+    if (root / worker).read_bytes() != (baseline_root / worker).read_bytes():
+        raise RuntimeError('Retained numerical baseline worker differs')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', required=True, type=Path)
     parser.add_argument('--wait-for', required=True, type=Path)
+    parser.add_argument('--baseline-root', type=Path,
+                        help='Resume/retain an unchanged baseline from a preceding revision')
     args = parser.parse_args()
     root = args.root.resolve()
+    baseline_root = (args.baseline_root or root).resolve()
     state = {'supervisor_pid': os.getpid(), 'started_unix': time.time(),
              'supervisor_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-             'wait_for': str(args.wait_for)}
+             'wait_for': str(args.wait_for), 'baseline_root': str(baseline_root)}
     receipt = root / 'setup/main-launch.json'
 
     def update(**changes):
@@ -52,7 +68,11 @@ def main():
     run('verify', [python, str(root / 'setup/run-study.py'), 'verify'])
     if not (root / 'setup/main_admission.json').is_file():
         raise RuntimeError('Main admission is missing')
-    if not (root / 'setup/baseline/plan.json').is_file():
+    if baseline_root != root:
+        validate_retained_baseline(root, baseline_root)
+    if not (baseline_root / 'setup/baseline/plan.json').is_file():
+        if baseline_root != root:
+            raise RuntimeError('Retained baseline has no frozen plan')
         run('baseline-prepare', [python, str(code / 'baseline.py'), 'prepare', '--root', str(root)])
     update(status='queued', phase='waiting_for_ff_numerical_work', worker_pid=None)
     while True:
@@ -62,7 +82,8 @@ def main():
                 break
         time.sleep(30)
         update()
-    run('baseline-main', [python, str(code / 'baseline.py'), 'run', '--root', str(root), '--cohort', 'main'])
+    run('baseline-main', [python, str(baseline_root / 'source/benchmark/harness_comparison/baseline.py'),
+                          'run', '--root', str(baseline_root), '--cohort', 'main'])
     run('comparison-main', [python, str(root / 'setup/run-study.py'), 'run', '--cohort', 'main'])
     update(status='completed', phase='completed', exit_code=0, worker_pid=None, finished_unix=time.time())
 

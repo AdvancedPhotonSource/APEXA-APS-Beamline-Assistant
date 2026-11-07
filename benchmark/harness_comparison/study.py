@@ -51,7 +51,8 @@ def write_new(path, data):
 
 def source_hashes():
     paths = [HERE / n for n in ("study.py", "rotation_benchmark.py", "run_comparison.py",
-                                "_apexa_driver.py", "model_audit.py", "procedure_audit.py", "native_context.py")]
+                                "_apexa_driver.py", "model_audit.py", "procedure_audit.py", "native_context.py",
+                                "freeze_native_context.py", "main_supervisor.py")]
     paths += [REPO / n for n in ("apexa_agents.py", "midas_comprehensive_server.py",
                                 "_calibrate_runner.py", "skill_registry.py", "apexa_knowledge_policy.py")]
     paths += list(REPO.glob("*.py"))
@@ -64,6 +65,9 @@ def source_hashes():
         context = native_context.load(receipt, native_repo=REPO)
         result = {str(p.relative_to(REPO)): sha(p) for p in paths}
         result["native_context_receipt"] = sha(receipt)
+        health = REPO / "scripts/check_knowledge.py"
+        if health.is_file():
+            result["scripts/check_knowledge.py"] = sha(health)
         result.update({p: sha(REPO / p) for p in context["apexa"]["files"]})
         return result
     policy = rb.load_manifest(MANIFEST)
@@ -96,11 +100,19 @@ def configured_environment(root, spec):
         env[name] = str(spec["cpu_threads"])
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["APEXA_MAX_ITERATIONS"] = str(spec["max_model_requests"])
+    native_environment = spec.get("native_environment", {})
+    allowed = {"APEXA_EMBED_MODEL", "APEXA_EMBED_REVISION", "APEXA_EMBED_TRUST_REMOTE_CODE",
+               "APEXA_EMBED_CODE_REVISION", "HF_HUB_CACHE", "HF_HUB_OFFLINE",
+               "TRANSFORMERS_OFFLINE", "CUDA_VISIBLE_DEVICES"}
+    if (not isinstance(native_environment, dict) or set(native_environment) - allowed
+            or any(not isinstance(v, str) for v in native_environment.values())):
+        raise ValueError("Unsupported native embedding environment setting")
+    env.update(native_environment)
     if spec.get("filesystem_scope") == "software_and_trial_only":
         env["RB_SOFTWARE_READ_ROOTS"] = json.dumps([
             str(root / "source"), str(root / "runtime/harnesses"), str(root / "runtime/node"),
             str(Path(spec["solver_python"]).parent.parent), sys.prefix, sys.base_prefix,
-            *spec.get("additional_software_roots", [])])
+            *spec.get("additional_software_roots", []), *spec.get("native_software_roots", [])])
     else:
         env.pop("RB_SOFTWARE_READ_ROOTS", None)
     return env

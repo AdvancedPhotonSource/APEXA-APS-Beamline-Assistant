@@ -103,76 +103,30 @@ wizard. See the CLAUDE.md "Network tiers" section for the full model.
 
 ---
 
-## 1. Knowledge base (FF/NF handbooks + notebooks)
+## 1. Knowledge base: pinned assets plus a matching index
 
-### What ships in git ✅
-| Artifact | In git | Notes |
-|---|---|---|
-| Source docs (15) | ✅ | all FF/NF handbooks + lab notebooks + analysis/calibration docs, under `knowledge_base/logbooks/*.md` |
-| **Prebuilt index** (`knowledge_base/chroma_db/`, ~15 MB) | ✅ | 522 chunks, ready to query on checkout — **no re-index step needed** |
-| Indexer + helpers | ✅ | `index_knowledge.py`, index stats |
+Source documents and a historical Chroma database ship in the repository.
+Embedding weights do not. A copied database is insufficient: the current native
+loader requires an immutable embedding-model revision, separately pinned model
+code when needed, and a compatible index. The older “ready on checkout” claim
+was incomplete; Copland's November 7 check found no staged model and an index
+without verified embedding/generation provenance.
 
-### The one thing NOT in git ❌ — the embedding model
-Retrieval embeds **every query** at runtime with Nomic
-(`nomic-ai/nomic-embed-text-v1.5`, ~523 MB). The prebuilt index removes the
-*re-index* step, but the model is still needed **at query time** — there is no way
-around having it present locally. It is not in git (too large, and it's an upstream
-artifact). On an air-gapped machine you must **pre-stage** it.
+Use [the retrieval maintenance procedure](RETRIEVAL_MAINTENANCE.md) to stage the
+exact model/code snapshots, configure their paths, build a verified generation
+and run real native retrieval checks. Both index and query processes must use
+the same environment. With `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`, assets
+must already exist locally; model loading does not contact Hugging Face.
 
-### Pre-stage the model (do this once, from an internet-connected machine)
-
-The model lives in the HuggingFace cache. Copy the whole cache tree to the beamline
-machine's home directory:
-
-```bash
-# On a machine that HAS internet (e.g. your laptop), ensure the model is cached:
-uv run python -c "from sentence_transformers import SentenceTransformer as S; S('nomic-ai/nomic-embed-text-v1.5', trust_remote_code=True)"
-
-# Copy these three cache entries to the beamline machine's ~/.cache/huggingface/:
-#   hub/models--nomic-ai--nomic-embed-text-v1.5     (~523 MB)
-#   hub/models--nomic-ai--nomic-bert-2048           (~112 KB — the config/tokenizer repo)
-#   modules/transformers_modules                    (~236 KB — trust_remote_code code)
-rsync -a --info=progress2 \
-  ~/.cache/huggingface/hub/models--nomic-ai--nomic-embed-text-v1.5 \
-  ~/.cache/huggingface/hub/models--nomic-ai--nomic-bert-2048 \
-  <beamline-host>:~/.cache/huggingface/hub/
-
-rsync -a ~/.cache/huggingface/modules/transformers_modules \
-  <beamline-host>:~/.cache/huggingface/modules/
+```sh
+python scripts/check_knowledge.py --output /path/to/new-health-receipt.json
 ```
 
-(No ssh between the two? Copy to a USB drive / mounted share instead — the target
-layout is all that matters: `~/.cache/huggingface/hub/models--nomic-ai--...`.)
-
-### Turn on offline mode
-
-Add to `.env` (or export before launching APEXA):
-
-```bash
-APEXA_OFFLINE=1
-```
-
-This makes APEXA set `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1` and load the
-model with `local_files_only=True`, so it reads the pre-staged cache and **never
-touches the network** — no hang, no failed HEAD request. Applies to both query time
-(`midas_comprehensive_server.py`) and re-index (`index_knowledge.py`).
-
-### Verify
-
-```bash
-APEXA_OFFLINE=1 uv run python knowledge_base/index_knowledge.py   # if re-indexing
-# or just run APEXA and ask a MIDAS question:
-#   "How do I set RingThresh for an FF-HEDM run?"
-# → should cite FF_HEDM_Handbook.md
-```
-
-If you see a network/HEAD error, the model isn't fully staged — re-check the three
-cache paths above.
-
-### Using a different embed model
-Set `APEXA_EMBED_MODEL` **at both index and query time** (they must match, or
-retrieval returns garbage), pre-stage that model's cache the same way, and re-index:
-`APEXA_OFFLINE=1 APEXA_EMBED_MODEL=<model> uv run python knowledge_base/index_knowledge.py`.
+A passing check requires nonempty technique-matched excerpts, verified provenance,
+valid content hashes and unchanged source fingerprints. Missing model assets,
+stale sources and an incompatible index are reported as failures. Rebuild through
+the existing atomic-generation indexer; preserve the old generation until its
+live sessions and frozen studies no longer need it.
 
 ---
 
