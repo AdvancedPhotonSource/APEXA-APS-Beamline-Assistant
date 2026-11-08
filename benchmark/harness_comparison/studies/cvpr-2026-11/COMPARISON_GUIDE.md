@@ -78,8 +78,9 @@ with relative consistency, one provisional/off-trend, one timeout). The 180-tria
 - Copland study: `/home/beams/S20HEDM/apexa_eval/harness-comparison/`
 - Completed pilot: `revisions/r2/results/pilot-20261106-123856/`
 - Current main revision: `revisions/r5/`; frozen inputs/schedule under `setup/`.
-- Once started, main records: `revisions/r5/results/main/runs.jsonl`,
+- Current main records: `revisions/r5/results/main/runs.jsonl`,
   with per-trial `traces/`, `model_calls/`, `workspaces/`, and `progress.json`.
+- Host-stop/resume accounting: [RESUMPTION_20261108.md](RESUMPTION_20261108.md).
 - Retained fixed baseline: `revisions/r4/results/baseline-main/runs.jsonl`.
 - Statistical analysis and trace-selection rules: [ANALYSIS_PLAN.md](ANALYSIS_PLAN.md).
 - Native retrieval deployment/health: [REVISION_5.md](REVISION_5.md).

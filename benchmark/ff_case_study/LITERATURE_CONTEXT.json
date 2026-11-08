@@ -1,0 +1,24 @@
+{
+  "checked_date": "2026-11-08",
+  "doi": "10.1107/S2053273326004018",
+  "title": "MIDAS: a quantitative framework for high-energy diffraction microscopy. Part II: accuracy, robustness and best practices",
+  "full_text_url": "https://www.osti.gov/servlets/purl/17427253",
+  "full_text_verified": true,
+  "section": "3.2",
+  "printed_page": 314,
+  "pdf_page": 10,
+  "quote": "An initial guess of the experimental setup was obtained using an Au-cube sample with 3–4 grains centered around the rotation axis.",
+  "pdf_sha256": "0d3bb3c9aa2d2e9b1078f3ab05c1e5a6672d29f62ad03dab15cee8abc870ee58",
+  "extracted_text_sha256": "9556200a68c120812db225e20e7ee39c0297d0d9bcbba170da0a527eb749f814",
+  "supports": "Published use of an Au-cube sample for initial NF-HEDM geometry",
+  "selected_acquisition_identified": false,
+  "supports_two_grain_ground_truth": false,
+  "upstream_workflow": {
+    "commit": "13b091e2353e16b3f478db1e6fbaca368af6dd5e",
+    "path": "manuals/nf-hedm/phase-3-geometry.md",
+    "section": "7",
+    "line": 492,
+    "sha256": "754b9672a0b519dadc3b4bdcf880f6ce8f59cbe6dc045a11203b4c1154ffc283"
+  },
+  "interpretation": "Calibration/validation specimen with unresolved FF reconstruction; excess candidates do not establish extra physical grains or domains."
+}

@@ -1,8 +1,10 @@
 # What “two grains” refers to in MIDAS
 
-Checked November 7, 2026, after the fresh FF runs and candidate audit. The user
-clarified: “i think i saw it in midas repo.” This is a recalled documentation
-claim, not an independent observation supplied for the current FF scan.
+Checked November 7–8, 2026, after the fresh FF runs and candidate audit. The
+operator recalled the count from MIDAS and clarified that gold cubes are a
+familiar calibration example. The [literature check](LITERATURE_CONTEXT.md)
+confirms that role. The exact count for this acquisition still requires
+acquisition-specific evidence.
 
 Sources were read from the unchanged upstream MIDAS commit
 `13b091e2353e16b3f478db1e6fbaca368af6dd5e`, also used for the comparison's upstream
@@ -20,8 +22,10 @@ same notebook also retracts a cherry-picked FF/NF radius match (§9h): a candida
 cluster spanned 472–539 µm. Do not pick a convenient fresh candidate to recreate
 the published NF coordinate or call that an independent cross-check.
 
-The revised interpretation is **documented support for two spatial objects,
-unresolved number of crystallographic domains or valid FF candidates**. The
-fresh 13/19-candidate outputs and all 152 raw-patch checks remain unchanged.
-This source audit explains the prior expectation; it does not independently
-verify the old reconstructions or force a two-grain conclusion.
+The interpretation is **a gold calibration/validation specimen with documented
+support for two spatial objects and an unresolved FF reconstruction**. Treat
+the excess candidates as a calibration/reconstruction issue to investigate;
+the output does not establish additional physical grains or domains. The fresh
+13/19-candidate outputs and all 152 raw-patch checks remain unchanged. The source
+audit explains the expectation but does not independently validate the old
+reconstructions or justify filtering to two candidates.

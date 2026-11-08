@@ -1,74 +1,79 @@
-# Current status — November 7, 2026, 21:06 UTC
+# Current status — November 8, 2026, 15:46 UTC
 
-**Native semantic retrieval is repaired and has passed its deployment checks.**
-All five R5 startup qualifications and main admission passed. The 180-trial
-main cohort is now running: its first saved-order trial is OpenCode on scan 261,
-repeat 2. At this launch snapshot no main agent trial is terminal.
+**R5 is running again with 17 terminal trials retained; trial 18 is active.**
+Native semantic retrieval and all five startup qualifications passed before main.
+The overnight supervisor stopped between trials after 900 seconds of excessive
+host load. Host load recovered; the unchanged saved schedule was resumed.
+See [the resumption record](RESUMPTION_20261108.md) and
+[checked process/outcome receipt](MAIN_PROGRESS_20261108.json).
 
 ## Completed work
 
-- Calibration audit and its numerical controls are complete.
+- Calibration audit and numerical controls are complete.
 - R2 development pilot: all ten trials are terminal and retained. See
   [PILOT_INTERPRETATION.md](PILOT_INTERPRETATION.md); no ranking is established.
 - R4 fixed MIDAS baseline: all 12 main acquisitions are terminal. Ten were
   accepted with relative tilt agreement, scan 261 was provisional/off-trend,
-  and scan 283 timed out. R5 validates compatibility and reuses these records.
-- Fresh gold FF reconstruction and candidate audit are complete. Initial and
-  geometry-updated runs produced 13 and 19 candidates. The physical grain count
-  remains unresolved; these are scripted typed-tool runs, not autonomous trials.
-- R5 native retrieval: a new 1,208-chunk generation passed real powder, FF-HEDM
-  and NF-HEDM queries with matching technique labels, excerpt hashes, generation
-  identity, pinned embeddings and source fingerprints. This establishes deployment
-  health, not scientific answer quality or an observed retrieval benefit.
+  and scan 283 timed out. R5 reuses these records unchanged.
+- R5 main: three automated accepted/relatively consistent results, eight
+  request-budget failures and six timeouts among the first 17 trials. This is
+  incomplete accounting, not a comparative estimate or independent physics review.
+- Gold FF: fresh calibration, two reconstructions and the complete candidate/raw
+  audit are saved. Initial/updated outputs contain 13/19 candidates. Published
+  gold-cube calibration practice now informs the framing: unresolved calibration/
+  reconstruction behavior, not evidence of extra physical grains. It is a scripted
+  typed-tool case, separate from the 180 autonomous comparison trials.
+- R5 retrieval: the 1,208-chunk generation passed real powder, FF and NF queries
+  with verified source/excerpt/model hashes. This establishes deployment health,
+  not a measured retrieval benefit. All startup checks passed in 22 model calls;
+  automatic procedure delivery was observed in A1 and absent in A7.
 
 ## Running work and locations
 
 Copland root: `/home/beams/S20HEDM/apexa_eval/harness-comparison/`.
 
-- R5 continuation PID 338771; main supervisor PID 347845; main worker PID 348176.
-  Live receipts: `revisions/r5/setup/continuation.json` and `setup/main-launch.json`.
+- Main supervisor 2403160; worker 2403496. Active entry: A3/Claude Code,
+  scan 278, repeat 2. Check `revisions/r5/setup/main-launch.json` and
+  `revisions/r5/results/main/progress.json` for live progress.
+- Main outcomes: `revisions/r5/results/main/runs.jsonl`. First-17 SHA-256:
+  `5b62828d0c8bed5076ee04db268e07f54caeaf0de2db1f8bc440fb40fd9852a2`.
+- Retained baseline: `revisions/r4/results/baseline-main/runs.jsonl`, SHA-256
+  `57a92ebaf325335e6ebe6ce611ee7ed184387116e5f9198e8df9062b8476a242`.
+- Reporting watcher 2403170: `reports/r5-analysis-resume1-status.json`, output
+  `reports/r5-main-terminal-resume1/`. The earlier watcher exported incomplete
+  accounting to `reports/r5-main-terminal/` after the overnight stop.
+- Recovery guardian 2415359: `reports/r5-recovery-20261108/status.json`. It resumes
+  only a verified between-trial host-preflight stop, preserving outcomes and
+  frozen settings. Each recovery creates a new reporting watcher and receipts.
+- Old `revisions/r5/setup/continuation.json` describes the failed original outer
+  supervisor. Use the current main-launch/resume/guardian receipts above.
 - Retrieval evidence: `revisions/r5/setup/retrieval-health.json` and
-  `retrieval-build.json`. The index worker has finished; do not restart it.
-- Fresh startup checks: `revisions/r5/results/qualification/checks.jsonl`. All pass,
-  with 22 model requests (A1=3, Claude Code=7, OpenCode=5, Pi=3, A7=4).
-  Automatic procedure delivery is observed for A1 and absent for A7.
-- Main execution: `revisions/r5/setup/main-launch.json` and
-  `revisions/r5/results/main/progress.json`.
-- Main outcomes: `revisions/r5/results/main/runs.jsonl` once the first trial ends.
-- Retained baseline: `revisions/r4/results/baseline-main/runs.jsonl`.
-- Reporting watcher PID 352202: `reports/r5-analysis-status.json`. It will export
-  `reports/r5-main-terminal/` when the existing main supervisor ends. A failed
-  cohort gets incomplete accounting only; the watcher never starts trials.
+  `retrieval-build.json`; startup evidence: `revisions/r5/results/qualification/checks.jsonl`.
 - FF report/figures: manuscript `author_notes/FF_CASE_STUDY.md` and
   `author_notes/ff_case_study/`; remote `/home/beams/S20HEDM/apexa_eval/ff-case-study/`.
 
-The continuation froze retrieval/assets, qualified all five conditions, checked
-unchanged baseline inputs/solver and admitted main. Its baseline resume emitted
-no numerical-trial launch lines, and the retained outcomes still match admission
-SHA-256 `57a92ebaf325335e6ebe6ce611ee7ed184387116e5f9198e8df9062b8476a242`.
-Check its live receipt before restarting anything. Old R3/R4 supervisors are
-stopped; neither collected a main scientific agent trial.
+Do not rerun the completed pilot, baseline, retrieval build, FF reconstructions or
+terminal main trials. The R5 experiment source remains `5a87b4c` with its recorded
+overlay. Reporting and recovery code live outside the frozen experiment.
 
 ## Reading and analysis
 
 Start with [COMPARISON_GUIDE.md](COMPARISON_GUIDE.md), the exact
 [PROTOCOL.md](PROTOCOL.md), and [REVISION_5.md](REVISION_5.md).
-[ANALYSIS_PLAN.md](ANALYSIS_PLAN.md) was copied to R5 with a timestamp/hash receipt
-before any main agent outcomes. It preserves the scheduled denominator and uses
-paired acquisition-level comparisons with a stratified bootstrap.
-`analyze_main.py` exports accounting, a 12-row acquisition table, all trial rows,
-and—only for a completed cohort—paired estimates, figures and prespecified trace pairs.
-It writes outside the frozen studies. Eighteen reporting/adoption checks pass;
-the deployed comparison/retrieval regression suite previously passed 192 checks.
+[ANALYSIS_PLAN.md](ANALYSIS_PLAN.md) was recorded before any main agent outcome.
+It retains every scheduled trial, averages repeats within acquisition, and uses
+paired acquisition-level comparisons with a stratified bootstrap. Incomplete
+cohorts receive accounting only, without rankings or comparative figures.
+Independent scientific review and quoted interaction-trace classification remain
+pending. Twenty-three targeted recovery/reporting checks pass; the previously
+deployed comparison/retrieval suite passed 192 checks.
 
 APEXA retains its native integration; other harnesses receive unedited upstream
-MIDAS resources, without APEXA-specific integration. Those documents discuss the
-development acquisitions, so these are not unseen-data trials. See
-[retrieval maintenance](../../../../docs/RETRIEVAL_MAINTENANCE.md) for deployment
-pins, rebuild conditions and health checks. Production sessions remain untouched.
-
-The main comparison is running; its completed outcomes and independent artifact review are pending. There is
-no measured APEXA superiority or reduction in expert intervention to report.
+MIDAS resources. The manuals discuss these development acquisitions, so this is
+not unseen-data evaluation. See [retrieval maintenance](../../../../docs/RETRIEVAL_MAINTENANCE.md)
+for deployment pins, rebuild conditions and health checks. Production sessions
+remain untouched. No measured APEXA superiority or reduction in expert intervention
+is established by this incomplete cohort.
 
 ---
 

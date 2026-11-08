@@ -1,0 +1,97 @@
+{
+  "checked_utc": "2026-11-08T15:46:44.950674+00:00",
+  "completed": 17,
+  "scheduled": 180,
+  "outcomes": {
+    "timeout": 6,
+    "budget_exhausted": 8,
+    "correct": 3
+  },
+  "terminal_sha256": "5b62828d0c8bed5076ee04db268e07f54caeaf0de2db1f8bc440fb40fd9852a2",
+  "first_17_sha256": "5b62828d0c8bed5076ee04db268e07f54caeaf0de2db1f8bc440fb40fd9852a2",
+  "baseline_sha256": "57a92ebaf325335e6ebe6ce611ee7ed184387116e5f9198e8df9062b8476a242",
+  "progress": {
+    "completed": 17,
+    "scheduled": 180,
+    "active": {
+      "schedule_index": 18,
+      "schedule_block": 4,
+      "schedule_position": 3,
+      "arm": "A3",
+      "scan": 278,
+      "trial": 2
+    },
+    "updated_unix": 1794151985.8530245
+  },
+  "launch": {
+    "supervisor_pid": 2403160,
+    "started_unix": 1794151947.9993708,
+    "supervisor_sha256": "1f6311ebebaf61e25626da85b8f87ef214cfb0646cbd3c8595b69cdeb6347666",
+    "wait_for": "/home/beams/S20HEDM/apexa_eval/harness-comparison/revisions/r5/setup/scientific-ready.json",
+    "baseline_root": "/home/beams45/S20HEDM/apexa_eval/harness-comparison/revisions/r4",
+    "status": "running",
+    "phase": "comparison-main",
+    "command": [
+      "/home/beams45/S20HEDM/opt/APEXA-APS-Beamline-Assistant/.venv/bin/python",
+      "/home/beams45/S20HEDM/apexa_eval/harness-comparison/revisions/r5/setup/run-study.py",
+      "run",
+      "--cohort",
+      "main"
+    ],
+    "updated_unix": 1794152777.3633096,
+    "worker_pid": 2403496,
+    "log": "/home/beams45/S20HEDM/apexa_eval/harness-comparison/revisions/r5/setup/comparison-main-1794151967288460621.log"
+  },
+  "reporting": {
+    "status": "waiting_for_main",
+    "completed": 17,
+    "scheduled": 180,
+    "main_supervisor_pid": 2403160,
+    "pid": 2403170,
+    "updated_unix": 1794152788.2649236
+  },
+  "recovery": {
+    "pid": 2415359,
+    "started_unix": 1794152767.4532654,
+    "recoveries": [],
+    "code_sha256": "9884a5d4b10c6c50ccabcf7cef67f9ad6b9627537428e140c0028fa710819662",
+    "root": "/home/beams45/S20HEDM/apexa_eval/harness-comparison/revisions/r5",
+    "status": "watching",
+    "supervisor_pid": 2403160,
+    "progress": {
+      "completed": 17,
+      "scheduled": 180,
+      "active": {
+        "schedule_index": 18,
+        "schedule_block": 4,
+        "schedule_position": 3,
+        "arm": "A3",
+        "scan": 278,
+        "trial": 2
+      },
+      "updated_unix": 1794151985.8530245
+    },
+    "updated_unix": 1794152797.4729862
+  },
+  "deployment": {
+    "pid": 2415359,
+    "source_sha256": "9884a5d4b10c6c50ccabcf7cef67f9ad6b9627537428e140c0028fa710819662",
+    "state_dir": "/home/beams/S20HEDM/apexa_eval/harness-comparison/reports/r5-recovery-20261108",
+    "observed_existing_supervisor": 2403160,
+    "retained_trials": 17,
+    "command": [
+      "/home/beams45/S20HEDM/opt/APEXA-APS-Beamline-Assistant/.venv/bin/python",
+      "/home/beams/S20HEDM/apexa_eval/harness-comparison/reporting/20261108-recovery/recover_main.py",
+      "--root",
+      "/home/beams/S20HEDM/apexa_eval/harness-comparison/revisions/r5",
+      "--baseline-root",
+      "/home/beams/S20HEDM/apexa_eval/harness-comparison/revisions/r4",
+      "--baseline-sha256",
+      "57a92ebaf325335e6ebe6ce611ee7ed184387116e5f9198e8df9062b8476a242",
+      "--state-dir",
+      "/home/beams/S20HEDM/apexa_eval/harness-comparison/reports/r5-recovery-20261108",
+      "--reporting-dir",
+      "/home/beams/S20HEDM/apexa_eval/harness-comparison/reporting/20261107-2112"
+    ]
+  }
+}
