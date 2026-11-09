@@ -56,7 +56,8 @@ Copland root: `/home/beams/S20HEDM/apexa_eval/harness-comparison/`.
 
 Separate local workflow repairs now expose native frame controls, the MIDAS
 tilted pipeline and timely finalization. Two direct raw-image development checks
-passed; autonomous qualification is in progress. No repair is deployed into R5.
+passed; both autonomous development checks saved final manifests, with
+recorded prose qualifications. See the separate review receipts. No repair is deployed into R5.
 See [repair evidence](WORKFLOW_REPAIR_20261109.md).
 
 Do not rerun the completed pilot, baseline, retrieval build, FF reconstructions or

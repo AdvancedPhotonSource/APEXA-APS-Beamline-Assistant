@@ -68,11 +68,21 @@ Worker provenance fields were extended during that development attempt, so it is
 diagnostic evidence, not a fixed-source comparative trial. No semantic retrieval
 call was observed; local retrieval health is not established by this run.
 
-A separate LaB6 autonomous check is running from a fixed source/corpus snapshot
-with the final repairs. Its receipt is `autonomous-r2/receipt.json`. Do not infer
-completion from a passing intermediate fit. All traces and unsuccessful attempts
-are retained. Further repaired-system comparisons require a separate frozen
-revision and must not replace R5.
+The separate LaB6 autonomous check completed from the fixed source/corpus snapshot
+in 821.71 seconds, with five completed model calls and two native calibrations.
+It saved an accepted final manifest, independently re-hashed the artifact through
+typed file inspection, and used no shell calls or follow-up questions. The source
+matches pushed repair `0b11e66`; its adopted geometry and frame hashes match the
+independently checked direct run (relative tilt error 0.021609 degrees).
+
+The artifact checks pass, but the final explanation still has qualifications:
+there was an all-zero embedded dark, so “no dark frame existed” was too broad;
+the applied transform is hash-verifiable, while its physical correctness remains
+unverified; and the scope gate predicts ring reach rather than observing rings.
+These issues remain in the review receipt. The seed-only check used a distinct
+initialization and returned a nearby geometry with a worse ring residual.
+All traces and unsuccessful attempts are retained. Further repaired-system
+comparisons require a separate frozen revision and must not replace R5.
 
 ## Checks and locations
 

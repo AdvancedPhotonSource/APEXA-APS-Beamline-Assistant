@@ -33,12 +33,41 @@
     {
       "run": "autonomous-r2",
       "scan": 284,
-      "status": "running",
-      "elapsed_s": null,
+      "status": "returned",
+      "elapsed_s": 821.7086157798767,
       "tool_counts": {
-        "midas_auto_calibrate": 1
+        "midas_auto_calibrate": 2,
+        "read_file": 2,
+        "get_file_info": 1,
+        "write_file": 1
       },
-      "completed_llm_calls": 2
+      "completed_llm_calls": 5,
+      "scientific_status": "accepted",
+      "artifact_hash_matches": true,
+      "adopted_tz_deg": -9.543186,
+      "relative_error_deg": 0.021609477349565864,
+      "artifact_sha256": "7b7905ed37386a1aabdae05ba641c1354a3e7031f358dea44ca74bda94216be7",
+      "manifest_sha256": "7f0adba19c54ee23cbcc686dffb1cab5d888bad45c3572fc344fce5be47f8c09",
+      "source_matches_pushed_repair": true,
+      "raw_unchanged": true,
+      "frames_and_artifact_match_direct_check": true,
+      "embedded_dark": [
+        {
+          "path": "exchange/data_dark",
+          "shape": [
+            1,
+            2880,
+            2880
+          ],
+          "all_zero": true
+        }
+      ],
+      "review_issues": [
+        "The final statement that no dark frame existed is too broad: the source contains an all-zero embedded dark, while no separate dark was subtracted.",
+        "Transform application can be verified from the frame hash; what remains unverified is the physical correctness of the supplied convention.",
+        "The scope gate estimates geometric ring reach; it does not independently observe the claimed count of rings.",
+        "No semantic retrieval call was observed; this local check does not qualify retrieval health."
+      ]
     }
   ]
 }
