@@ -72,6 +72,7 @@ from apexa_toolsurface import (
     disclosure_enabled,
     handle_meta_tool,
     initial_surface,
+    workflow_tools,
 )
 
 # ── Compact directory listing ───────────────────────────────────────────────
@@ -1724,16 +1725,18 @@ memory. Reason over it, then act.
   MIDAS exclusively (calibration output is refined_MIDAS_params*.txt).
 
 ## Calibration
-Find the calibrant image (list_directory once), then call midas_auto_calibrate
-with the ORIGINAL image path (pass output_dir only if the user gave a location —
-otherwise ask per the plan-and-confirm rule; the tool symlinks the image into
-output_dir and auto-resolves the dark, so do NOT copy/move images by hand with
-run_command). parameters_file is optional — AutoCalibrateZarr auto-detects
-calibrant (CeO2/LaB6), energy (keV in filename), and pixel size. If energy is in
-keV, use xray_calculate to get wavelength. Report refined BC, Lsd, tilts,
-convergence quality, and the APEXA_calibration.json manifest path. (Attenuated
-calibrants: att0 may saturate; if a mid-att like att3 fits no rings, try a lower
-att such as att1/att2.)
+Use midas_auto_calibrate on the original calibrant file with the requested output
+path. Pass the operator's exact energy_kev, px_um, image_transform, data_loc,
+skip_frame, frame_count and frame_reduce. Do not write an averaging script when
+these typed controls express the request. For a single-panel powder detector with
+unknown or substantial tilt, use calibration_engine="v2",
+calibration_pipeline="tilted", device="cpu". Use the four-stage pipeline for
+panel refinement or explicit distortion/bound restrictions. The native tool
+performs its scope check, reads and orients the selected frames, runs MIDAS and
+persists its geometry and evidence. Review its effective inputs and gate rather
+than reproducing those stages in shell commands. Record the requested final
+decision and artifact hash from its returned evidence before optional diagnostics.
+A ring PASS is image-consistency evidence; distinguish it from absolute truth.
 
 ## Integration & analysis
 - 2D→1D: midas_integrate_2d_to_1d (single file), midas_integrate_series (MANY
@@ -2801,8 +2804,10 @@ class AgentRunner:
             "content": (
                 "TECHNIQUE HANDBOOK for the workflow you just entered — the verified "
                 "MIDAS procedure (scope, step order, hard rules, traps). It is the "
-                "source of truth for the remaining steps; follow it and open each "
-                "phase doc (open_phase) as you reach it." + body + halt_block
+                "scientific reference for the remaining steps. Apply explicit operator "
+                "inputs and use available native workflow tools; their verified checks "
+                "need not be reimplemented from the handbook's Python examples. Open "
+                "phase documents when additional detail or diagnosis is needed." + body + halt_block
             ),
         }
 
@@ -2889,7 +2894,7 @@ class AgentRunner:
         # A specialist with an explicit tool list already has a scoped surface.
         _disclosure = structured and not agent.tool_names and disclosure_enabled()
         if _disclosure:
-            tools = initial_surface(all_tools)
+            tools = initial_surface(all_tools, extra=workflow_tools(query))
 
         # Execution ledger: the integrity primitive. Records what actually ran so
         # the final answer can be checked against execution facts instead of
@@ -2982,6 +2987,18 @@ class AgentRunner:
         # in here. Same "learning layer, before the model acts" intent.
         if extra_system_context:
             system_content += extra_system_context
+
+        system_content += (
+            "\nSCIENTIFIC WORKFLOW EXECUTION: Apply explicit operator inputs before "
+            "defaults or handbook examples. Handbooks explain scientific constraints; "
+            "their Python recipes do not require you to reimplement an available native "
+            "tool. Start with the native executor and read its effective inputs and "
+            "validation results. Do not repeat checks that the tool already performed. "
+            "Revisit supplied values only when observed data contradict them. Once the "
+            "requested evidence is available, record the final decision and requested "
+            "artifacts promptly. Keep provisional/rejected outcomes explicit. Optional "
+            "diagnostics must not prevent delivery of the current result.\n"
+        )
 
         messages = [{"role": "system", "content": system_content}]
         # Compacted summary of older turns (from the orchestrator). Injected as
@@ -3115,6 +3132,18 @@ class AgentRunner:
         _injected_techniques: set = set(preloaded_techniques or ())
 
         for iteration in range(max_iterations):
+            if max_iterations >= 3 and iteration == max_iterations - 3:
+                messages.append({"role": "system", "content": (
+                    "The turn is nearing its model-request limit. Finish the current "
+                    "workflow: use the recorded checks to write any requested final "
+                    "decision/artifact manifest, including an explicit provisional or "
+                    "rejected decision when warranted. Do not start optional analyses "
+                    "or a new solver run. Then report the result and remaining limits."
+                )})
+            # Reserve the last request for a grounded final answer. Previously
+            # finalization required request N+1 and failed against an N-call gateway.
+            if max_iterations >= 3 and iteration == max_iterations - 1:
+                break
             # `tools` is passed unconditionally; ArgoProvider only attaches it to
             # the payload when APEXA_NATIVE_TOOLS is set, so the OFF path is
             # byte-for-byte identical to the text-based flow.
@@ -3876,6 +3905,9 @@ class AgentRunner:
         # have. This guarantees a user-facing answer even when the model is
         # mid-fan-out at the cap.
         print(f"  \033[33m⚠ iteration cap reached — forcing finalize\033[0m")
+        if max_iterations < 3:
+            return _persist("Analysis reached its request limit. Review the saved tool "
+                            "results; no additional finalization request was made.")
         messages.append({
             "role": "user",
             "content": (
@@ -3900,16 +3932,17 @@ class AgentRunner:
             # Strip any TOOL_CALL: blocks that slipped through (the model
             # sometimes ignores the no-tools instruction on the first try).
             final_text = self._strip_tool_calls_from_text(final_text).strip()
-            if final_text:
+            if final_text and not ledger.check_final_answer(final_text):
                 return _persist(final_text)
         except Exception as e:
             print(f"  \033[31m✗ finalize call failed: {e}\033[0m")
 
         # True last resort: surface the last assistant text we have
-        last = messages[-1]
-        if isinstance(last.get("content"), str):
-            return _persist(last["content"])
-        return _persist("Analysis reached maximum steps. Check tool outputs above.")
+        # Never return the injected budget instruction as the user's answer.
+        return _persist(
+            "Analysis reached its request limit before a final answer could be generated. "
+            "No new scientific acceptance is established by this message. "
+            "Inspect the saved tool results and output manifests for completed work.")
 
 
 # ── Orchestrator ─────────────────────────────────────────────────────────────
@@ -4741,8 +4774,10 @@ class OrchestratorAgent:
                         skill_block += (
                             f"\n\nTECHNIQUE HANDBOOK ({_tech}) — the verified MIDAS "
                             "procedure (scope, step order, hard rules, traps). It is the "
-                            "source of truth for this workflow; follow it and open each "
-                            "phase doc (open_phase) as you reach it." + _spine + _halt_block)
+                            "scientific reference for this workflow. Apply explicit operator "
+                            "inputs and use available native workflow tools. Do not "
+                            "reimplement checks they already perform; open phase documents "
+                            "when additional detail or diagnosis is needed." + _spine + _halt_block)
             except Exception:
                 pass  # never let capsule preload break a query
 

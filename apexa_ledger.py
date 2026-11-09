@@ -85,7 +85,7 @@ class LedgerEntry:
 # a file extension. Deliberately narrow — a bare word like "calibration" is not a
 # claim, but "/data/scan5/Grains.csv" is.
 _PATH_RE = re.compile(r"(?:(?<=\s)|^|[`'\"(\[])((?:/|\.{1,2}/)?(?:[\w.\-+]+/)+[\w.\-+]+\.[A-Za-z0-9]{1,6})")
-_ABS_PATH_RE = re.compile(r"(/(?:[\w.\-+]+/)*[\w.\-+]+)")
+_ABS_PATH_RE = re.compile(r"(?<![\w.+/\-])(/(?:[\w.\-+]+/)*[\w.\-+]+)")
 
 # Paths that are ambient rather than claims about this turn's data.
 _PATH_ALLOWLIST_PARTS = (

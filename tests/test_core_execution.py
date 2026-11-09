@@ -1,5 +1,6 @@
 """Core command policy and cooperative scheduling; no remote/hardware commands run."""
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
@@ -71,6 +72,19 @@ def test_command_policy_failure_does_not_invoke_executor(monkeypatch):
     result = json.loads(asyncio.run(core.run_command("python3 -c 'print(1)'")))
     assert result["error_code"] == "command_policy_denied"
     assert "APEXA_ALLOW_UNSANDBOXED_COMMANDS" in result["detail"]
+
+
+def test_typed_file_hash_reads_exact_current_bytes_without_a_shell(tmp_path):
+    artifact = tmp_path / 'geometry.txt'
+    for body in (b'tz 1.234\n', b'tz -4.567\r\n'):
+        artifact.write_bytes(body)
+        result = json.loads(asyncio.run(core.get_file_info(str(artifact), include_sha256=True)))
+        assert result['sha256'] == hashlib.sha256(body).hexdigest()
+        assert artifact.read_bytes() == body
+    metadata = json.loads(asyncio.run(core.get_file_info(str(artifact))))
+    assert 'sha256' not in metadata
+    directory = json.loads(asyncio.run(core.get_file_info(str(tmp_path), include_sha256=True)))
+    assert directory['status'] == 'error' and 'sha256' not in directory
 
 
 def test_remote_execution_requires_explicit_opt_in(monkeypatch):

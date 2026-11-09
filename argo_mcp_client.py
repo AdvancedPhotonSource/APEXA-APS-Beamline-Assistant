@@ -1623,7 +1623,10 @@ class APEXAClient:
         server_params = StdioServerParameters(
             command=self._server_command(script_path),
             args=[script_path],
-            env=None,
+            # These are APEXA's configured local servers. The SDK's env=None
+            # retains only a small OS allowlist, dropping the selected solver,
+            # execution policy and isolated session/knowledge locations.
+            env=dict(os.environ),
         )
         stdio_transport = await stack.enter_async_context(stdio_client(server_params))
         stdio, write = stdio_transport

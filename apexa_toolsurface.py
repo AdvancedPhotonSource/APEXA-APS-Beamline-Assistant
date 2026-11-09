@@ -149,9 +149,10 @@ def _capsule_meta_schemas() -> List[Dict[str, Any]]:
                     "Load the handbook SPINE for a technique into your context — its "
                     "scope gate, the prescribed step ORDER, the numbered hard rules, the "
                     "halt conditions, and the traps that silently corrupt results. This "
-                    "is the source of truth for HOW to run the workflow; read it BEFORE "
-                    "editing a parameter file or firing a workflow tool. Then use "
-                    "open_phase to page in each step as you reach it."
+                    "explains the scientific method. Use it when the method is unclear "
+                    "or diagnosis needs more detail. Native workflow tools implement "
+                    "their documented checks; Python examples do not require "
+                    "reimplementing those tools. Explicit operator inputs take precedence."
                 ),
                 "parameters": {
                     "type": "object",
@@ -262,6 +263,19 @@ def initial_surface(all_tools: Sequence[Dict[str, Any]],
     present = [t for t in all_tools if tool_name(t) in wanted]
     n_hidden = max(0, len(all_tools) - len(present))
     return present + meta_tool_schemas(n_hidden)
+
+
+def workflow_tools(query: str) -> tuple[str, ...]:
+    """Expose the native executor when the request already names its workflow.
+
+    Discovery remains available for ambiguous tasks. This changes visibility,
+    not execution or authorization, and never exposes instrument-control tools.
+    """
+    q = (query or '').lower()
+    if re.search(r'\bcalibrat\w*\b', q) and re.search(
+            r'\b(detector|powder|ceria|ceo2|lab6|calibrant|diffraction)\b', q):
+        return ('midas_auto_calibrate',)
+    return ()
 
 
 def search(all_tools: Sequence[Dict[str, Any]], query: str,

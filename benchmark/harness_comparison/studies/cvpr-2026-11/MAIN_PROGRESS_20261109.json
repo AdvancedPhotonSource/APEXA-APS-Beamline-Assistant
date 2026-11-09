@@ -1,0 +1,91 @@
+{
+  "checked_at_utc": "2026-11-09T15:26:37.098117+00:00",
+  "progress": {
+    "completed": 77,
+    "scheduled": 180,
+    "active": {
+      "schedule_index": 78,
+      "schedule_block": 16,
+      "schedule_position": 3,
+      "arm": "A1",
+      "scan": 283,
+      "trial": 0
+    },
+    "updated_unix": 1794236537.004813
+  },
+  "terminal_rows": 77,
+  "outcomes": {
+    "timeout": 28,
+    "budget_exhausted": 35,
+    "correct": 13,
+    "infra_error": 1
+  },
+  "arms": {
+    "A1": {
+      "terminal": 15,
+      "outcomes": {
+        "timeout": 9,
+        "budget_exhausted": 4,
+        "correct": 2
+      }
+    },
+    "A3": {
+      "terminal": 16,
+      "outcomes": {
+        "timeout": 5,
+        "budget_exhausted": 10,
+        "infra_error": 1
+      }
+    },
+    "A4": {
+      "terminal": 15,
+      "outcomes": {
+        "timeout": 4,
+        "budget_exhausted": 11
+      }
+    },
+    "A5": {
+      "terminal": 16,
+      "outcomes": {
+        "budget_exhausted": 8,
+        "timeout": 6,
+        "correct": 2
+      }
+    },
+    "A7": {
+      "terminal": 15,
+      "outcomes": {
+        "timeout": 4,
+        "correct": 9,
+        "budget_exhausted": 2
+      }
+    }
+  },
+  "first17_sha256": "5b62828d0c8bed5076ee04db268e07f54caeaf0de2db1f8bc440fb40fd9852a2",
+  "baseline_sha256": "57a92ebaf325335e6ebe6ce611ee7ed184387116e5f9198e8df9062b8476a242",
+  "guardian": {
+    "pid": 2415359,
+    "started_unix": 1794152767.4532654,
+    "recoveries": [],
+    "code_sha256": "9884a5d4b10c6c50ccabcf7cef67f9ad6b9627537428e140c0028fa710819662",
+    "root": "/home/beams45/S20HEDM/apexa_eval/harness-comparison/revisions/r5",
+    "status": "watching",
+    "supervisor_pid": 2403160,
+    "progress": {
+      "completed": 77,
+      "scheduled": 180,
+      "active": {
+        "schedule_index": 78,
+        "schedule_block": 16,
+        "schedule_position": 3,
+        "arm": "A1",
+        "scan": 283,
+        "trial": 0
+      },
+      "updated_unix": 1794236537.004813
+    },
+    "updated_unix": 1794237986.1506703
+  },
+  "processes": "2403160       1    23:54:10 Ss   python\n2403170       1    23:54:09 Ss   python\n2403496 2403160    23:53:50 Sl   python\n2415359       1    23:40:30 Ss   python\n",
+  "interpretation": "interim automated accounting; not independent scientific review or final comparative estimates"
+}

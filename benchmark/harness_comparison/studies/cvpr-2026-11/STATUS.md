@@ -1,11 +1,11 @@
-# Current status — November 8, 2026, 15:46 UTC
+# Current status — November 9, 2026, 15:26 UTC
 
-**R5 is running again with 17 terminal trials retained; trial 18 is active.**
+**R5 is running: 77/180 trials terminal; trial 78 (A1, scan 283, repeat 0) is active.**
 Native semantic retrieval and all five startup qualifications passed before main.
 The overnight supervisor stopped between trials after 900 seconds of excessive
 host load. Host load recovered; the unchanged saved schedule was resumed.
 See [the resumption record](RESUMPTION_20261108.md) and
-[checked process/outcome receipt](MAIN_PROGRESS_20261108.json).
+[checked process/outcome receipt](MAIN_PROGRESS_20261109.json).
 
 ## Completed work
 
@@ -15,9 +15,11 @@ See [the resumption record](RESUMPTION_20261108.md) and
 - R4 fixed MIDAS baseline: all 12 main acquisitions are terminal. Ten were
   accepted with relative tilt agreement, scan 261 was provisional/off-trend,
   and scan 283 timed out. R5 reuses these records unchanged.
-- R5 main: three automated accepted/relatively consistent results, eight
-  request-budget failures and six timeouts among the first 17 trials. This is
-  incomplete accounting, not a comparative estimate or independent physics review.
+- R5 main: 13 automated `correct` outcomes, 35 request-budget failures, 28
+  timeouts and one infrastructure error among 77 terminal trials. Automated
+  accepted/terminal counts: A1 2/15; A3 0/16; A4 0/15; A5 2/16; A7 9/15.
+  These are interim automated checks, not independently reviewed scientific
+  successes or comparative estimates. Full APEXA superiority is not established.
 - Gold FF: fresh calibration, two reconstructions and the complete candidate/raw
   audit are saved. Initial/updated outputs contain 13/19 candidates. Published
   gold-cube calibration practice now informs the framing: unresolved calibration/
@@ -32,8 +34,8 @@ See [the resumption record](RESUMPTION_20261108.md) and
 
 Copland root: `/home/beams/S20HEDM/apexa_eval/harness-comparison/`.
 
-- Main supervisor 2403160; worker 2403496. Active entry: A3/Claude Code,
-  scan 278, repeat 2. Check `revisions/r5/setup/main-launch.json` and
+- Main supervisor 2403160; worker 2403496. Active entry: A1/APEXA,
+  scan 283, repeat 0. Check `revisions/r5/setup/main-launch.json` and
   `revisions/r5/results/main/progress.json` for live progress.
 - Main outcomes: `revisions/r5/results/main/runs.jsonl`. First-17 SHA-256:
   `5b62828d0c8bed5076ee04db268e07f54caeaf0de2db1f8bc440fb40fd9852a2`.
@@ -51,6 +53,11 @@ Copland root: `/home/beams/S20HEDM/apexa_eval/harness-comparison/`.
   `retrieval-build.json`; startup evidence: `revisions/r5/results/qualification/checks.jsonl`.
 - FF report/figures: manuscript `author_notes/FF_CASE_STUDY.md` and
   `author_notes/ff_case_study/`; remote `/home/beams/S20HEDM/apexa_eval/ff-case-study/`.
+
+Separate local workflow repairs now expose native frame controls, the MIDAS
+tilted pipeline and timely finalization. Two direct raw-image development checks
+passed; autonomous qualification is in progress. No repair is deployed into R5.
+See [repair evidence](WORKFLOW_REPAIR_20261109.md).
 
 Do not rerun the completed pilot, baseline, retrieval build, FF reconstructions or
 terminal main trials. The R5 experiment source remains `5a87b4c` with its recorded

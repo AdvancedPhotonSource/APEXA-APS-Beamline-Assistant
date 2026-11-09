@@ -1,0 +1,44 @@
+{
+  "purpose": "development-only review; retain all attempts; never merge into R5",
+  "runs": [
+    {
+      "run": "autonomous-r1",
+      "scan": 262,
+      "status": "returned",
+      "elapsed_s": 501.14913296699524,
+      "tool_counts": {
+        "midas_auto_calibrate": 4,
+        "read_file": 6,
+        "run_command": 2,
+        "get_file_info": 3,
+        "write_file": 1,
+        "list_directory": 2
+      },
+      "completed_llm_calls": 14,
+      "scientific_status": "accepted",
+      "artifact_hash_matches": true,
+      "adopted_tz_deg": -10.518776,
+      "relative_error_deg": 0.005760423590684738,
+      "artifact_sha256": "131e9555b6dbe7521d9d30b1cbf81a454c2274c171f7f293ebd637da60d0280b",
+      "manifest_sha256": "cbfa8e33cc275de02757924637d422dc75733ec3c3cd8160d3ff4693fd54397a",
+      "review_issues": [
+        "Four native calibration calls included a duplicate hint test and two identical effective data-seed tests.",
+        "Final prose overstates the seed robustness test: trust_seed_lsd explicitly ignored 860/940 mm hints, so those were not distinct tested initializations. Actual effective initializations were 900 mm and the approximately 907.3 mm data seed.",
+        "Two shell checks were policy denied; the final response acknowledged using the native artifact hash.",
+        "The ledger misclassified slash-separated scientific prose as an absolute path, causing extra tool calls. A lexical-boundary fix is separately tested.",
+        "Native worker provenance fields were extended during development before the later calls; this is diagnostic evidence, not a fixed-source comparative trial.",
+        "No semantic retrieval call was observed; this local check does not qualify retrieval health."
+      ]
+    },
+    {
+      "run": "autonomous-r2",
+      "scan": 284,
+      "status": "running",
+      "elapsed_s": null,
+      "tool_counts": {
+        "midas_auto_calibrate": 1
+      },
+      "completed_llm_calls": 2
+    }
+  ]
+}

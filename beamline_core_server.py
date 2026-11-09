@@ -1034,11 +1034,13 @@ async def write_file(file_path: str, content: str, encoding: str = "utf-8", appe
         return format_result({"error": f"Error writing file: {str(e)}"})
 
 @mcp.tool()
-async def get_file_info(file_path: str) -> str:
+async def get_file_info(file_path: str, include_sha256: bool = False) -> str:
     """Get detailed information about a file or directory.
 
     Args:
         file_path: Path to the file or directory
+        include_sha256: Hash a regular file's exact bytes for artifact verification.
+            Default false avoids reading large detector files just to list metadata.
 
     Returns:
         JSON with detailed file information
@@ -1051,6 +1053,16 @@ async def get_file_info(file_path: str) -> str:
 
         info = format_file_info(path)
         info["tool"] = "get_file_info"
+        if include_sha256:
+            if not path.is_file():
+                return format_result({"tool": "get_file_info", "status": "error",
+                                      "error": "SHA-256 requires a regular file"})
+            import hashlib
+            digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(block)
+            info["sha256"] = digest.hexdigest()
 
         return format_result(info)
 

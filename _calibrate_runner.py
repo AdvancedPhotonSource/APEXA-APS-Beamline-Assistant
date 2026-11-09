@@ -28,6 +28,7 @@ Emits a single JSON object on stdout; all diagnostics go to stderr.
 """
 
 import argparse
+import hashlib
 import inspect
 import json
 import os
@@ -104,6 +105,8 @@ def build_parser():
                    help="v1 CalibrationParams .txt — detector size, px, lattice, thresholds")
     p.add_argument("--dark", default="", help="dark frame (optional)")
     p.add_argument("--output-dir", required=True)
+    p.add_argument("--pipeline", choices=("four-stage", "tilted"), default="four-stage",
+                   help="four-stage: spline/panel recipe; tilted: single-panel ring-gated recipe")
 
     # Orientation. Applied at READ time only — see the module docstring.
     p.add_argument("--im-trans", default="",
@@ -144,6 +147,8 @@ def build_parser():
     # Image reading.
     p.add_argument("--data-loc", default="exchange/data", help="HDF5 dataset path")
     p.add_argument("--skip-frame", type=int, default=0)
+    p.add_argument("--frame-count", type=int, default=0,
+                   help="exact number of frames after skip-frame; 0 uses all remaining")
     p.add_argument("--frame-reduce", default="median", choices=("mean", "median"),
                    help="multi-frame collapse; median is right for a calibrant")
 
@@ -311,20 +316,27 @@ def main(argv=None):
                "im_trans": im_trans}
     if can_frame_reduce:
         read_kw["frame_reduce"] = args.frame_reduce
+    elif args.frame_reduce != "mean":
+        _fail("This MIDAS reader cannot honor the requested frame reduction", capabilities=caps)
 
     bad_mask = None
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            if can_return_mask:
-                img, bad_mask = read_image(args.image, return_mask=True, **read_kw)
-            else:
-                img = read_image(args.image, **read_kw)
-                rule_refs.add(3)
-                notes.append(
-                    f"midas_calibrate_v2 {v2_version} has no read_image(return_mask=); "
-                    "sentinels handled by the handbook's img[img<0]=0 fallback only — "
-                    "an unsigned high sentinel (EIGER 2**32-1) would NOT be caught.")
+            from apexa_calibration_io import selected_source
+            with selected_source(args.image, data_loc=args.data_loc,
+                                 skip_frame=args.skip_frame, frame_count=args.frame_count,
+                                 frame_reduce=args.frame_reduce) as (source, skip, frame_selection):
+                selected_kw = dict(read_kw, skip_frame=skip)
+                if can_return_mask:
+                    img, bad_mask = read_image(source, return_mask=True, **selected_kw)
+                else:
+                    img = read_image(source, **selected_kw)
+                    rule_refs.add(3)
+                    notes.append(
+                        f"midas_calibrate_v2 {v2_version} has no read_image(return_mask=); "
+                        "sentinels handled by img[img<0]=0 only; unsigned high sentinels "
+                        "are not independently masked.")
             for w in caught:
                 if "Sentinel" in type(w.message).__name__ or "sentinel" in str(w.message):
                     notes.append(f"read_image: {w.message}")
@@ -333,12 +345,23 @@ def main(argv=None):
               image=args.image, data_loc=args.data_loc, capabilities=caps)
 
     img = np.asarray(img, dtype=float)
-    img[img < 0] = 0.0   # belt and braces for a low-sentinel file (handbook §4)
+    if img.ndim != 2 or not np.isfinite(img).all():
+        _fail("The selected detector image is not a finite 2-D array", capabilities=caps)
+    frame_selection['im_trans_applied'] = list(im_trans)
+    frame_selection['oriented_frame_sha256'] = hashlib.sha256(img.tobytes(order='C')).hexdigest()
+    if bad_mask is not None:
+        frame_selection['reader_mask_sha256'] = hashlib.sha256(
+            np.asarray(bad_mask, dtype=bool).tobytes(order='C')).hexdigest()
+    if args.pipeline != 'tilted':
+        img[img < 0] = 0.0   # legacy four-stage cleaning
+    # Tilted MIDAS masks negative float pixels itself. Clipping them here would
+    # erase that evidence before its clean_frame() builds the integration mask.
 
     dark = None
     if args.dark:
         try:
-            dark = read_image(args.dark, **read_kw)
+            # A raw-image skip must not discard frames from a separate dark stack.
+            dark = read_image(args.dark, **dict(read_kw, skip_frame=0))
             dark = np.asarray(dark, dtype=float)
         except Exception as e:
             _fail(f"could not read the dark frame: {e}", dark=args.dark, capabilities=caps)
@@ -384,6 +407,23 @@ def main(argv=None):
                             "or pass --skip-scope-gate if you know better.")
         except Exception as e:
             notes.append(f"detector_scope_gate could not run: {e}")
+
+    if args.pipeline == 'tilted':
+        try:
+            from apexa_calibration_tilted import validate_request, execute
+            validate_request(args, v1)
+            from midas_calibrate_v2.pipelines.tilted import calibrate_tilted
+        except Exception as e:
+            _fail(f'The requested tilted calibration cannot run: {e}', capabilities=caps)
+        try:
+            payload = execute(args, v1, img, bad_mask, dark, caps=caps, notes=notes,
+                              scope=scope, frame_selection=frame_selection,
+                              calibrate=calibrate_tilted)
+        except Exception as e:
+            _fail(f'The tilted calibration did not complete: {e}',
+                  capabilities=caps, nothing_was_run=False)
+        _output(payload)
+        return 0 if payload['status'] == 'success' else 2
 
     # ---- seed, AFTER cleaning -------------------------------------------------------
     seed_kw = {}
@@ -768,6 +808,7 @@ def main(argv=None):
         "paramstest_file": paramstest,
         "panelshifts_file": str(sidecar) if sidecar else None,
         "im_trans_applied": list(im_trans),
+        "frame_selection": frame_selection,
         "n_panels": n_panels,
         "calibrants": calibrants or [seed_calibrant],
         "phase_provenance": {

@@ -6208,7 +6208,8 @@ def _write_integration_outcome(out_dir, payload: dict,
         "first_ring_nr", "lsd_guess", "bc_x_guess", "bc_y_guess",
         "image_transform", "data_loc", "template_param_file", "detector",
         "strain_gate_ue", "ignore_calibration_gate", "px_um",
-        "lsd_tol_um", "trust_seed_lsd", "refine_distortion", "tol_tilts_deg")},
+        "lsd_tol_um", "trust_seed_lsd", "refine_distortion", "tol_tilts_deg",
+        "calibration_pipeline", "skip_frame", "frame_count", "frame_reduce")},
 )
 async def midas_auto_calibrate(
     image_file: str,
@@ -6246,118 +6247,69 @@ async def midas_auto_calibrate(
     strain_gate_ue: float = 100.0,     # held-out strain cap, µε (handbook §4)
     ignore_calibration_gate: bool = False,  # accept a result that fails the strain gate
     threads_per_worker: int = 0,       # 0 = task profile; series supplies its admitted budget
+    calibration_pipeline: str = "four-stage",
+    skip_frame: int = 0,
+    frame_count: int = 0,
+    frame_reduce: str = "median",
 ) -> str:
-    """🔧 PRIMARY TOOL FOR FF-HEDM DETECTOR CALIBRATION (MIDAS Official)
+    """Calibrate a powder diffraction detector with MIDAS and save geometry plus validation.
 
-    calibration_engine: "v1" (default) = MIDAS autocalibrate (pip console
-    midas-autocalibrate, else legacy AutoCalibrateZarr.py) → refined MIDAS
-    param .txt. "v2" = midas-calibrate-v2 differentiable engine → writes
-    calibration.json with iso_R/harmonic distortion + in/post-residual strain
-    (µε). Use "v2" to benchmark against a colleague who calibrated with v2 (the
-    calibration.json format). v2 is PyTorch — slow on CPU-only hosts.
+    Call this native tool on the ORIGINAL image; it handles image reading, frame
+    reduction, orientation, scope checking, solver execution and output persistence.
+    Use explicit operator values for energy, pixel pitch, image transform and frames.
+    Do not pre-average the image or assemble MIDAS Python objects in shell scripts.
 
-    ⚠️ WORKFLOW GUIDANCE - WHEN TO USE THIS TOOL:
-    When user requests:
-    - "calibrate the detector"
-    - "auto-calibrate using CeO2" or any calibrant material
-    - "determine detector geometry"
-    - "calibration workflow"
-    - "refine beam center and distance"
+    calibration_engine="auto" prefers canonical MIDAS v2 when available and
+    reports fallback reasons. "v2" requires that engine; "v1" and "legacy"
+    explicitly select older routes. The default is auto, not v1.
 
-    → USE THIS TOOL (midas_auto_calibrate) - This is the ONLY tool for FF-HEDM calibration
-    → DO NOT use detect_rings_quick (that's a diagnostic tool in utilities server)
-    → This is the OFFICIAL MIDAS calibration method from AutoCalibrateZarr.py
-
-    🚨 CRITICAL: FILE PATH REQUIREMENTS
-    - image_file: Must be the EXACT, COMPLETE file path as it exists on disk
-    - DO NOT abbreviate or guess filenames (e.g., "CeO2.tif" when actual file is "CeO2_650mm_61p332keV_2DFocused_0p1s_att200_004018.tif")
-    - If user provides a directory, use filesystem_list_directory FIRST to find the actual filename
-    - Then call this tool with the FULL PATH found from the directory listing
-    - The tool will auto-search the parent directory if the exact file is not found
-
-    MIDAS Manual: https://github.com/marinerhemant/MIDAS/blob/master/manuals/FF_autocalibrate.md
-    MIDAS Component: AutoCalibrateZarr.py → CalibrantOMP → GetHKLList
-    Location: MIDAS/utils/AutoCalibrateZarr.py
-
-    DESCRIPTION:
-    Auto-calibrates detector geometry by analyzing a 2D diffraction image of a known calibrant
-    (e.g., CeO2, LaB6). Iteratively refines all geometric parameters (Lsd, beam center, tilts,
-    distortions) until convergence using MIDAS's CalibrantOMP binary for robust least-squares
-    fitting with automatic outlier rejection.
-
-    FF-HEDM WORKFLOW POSITION:
-    Step 1 - CALIBRATION (must run BEFORE analysis)
-    ├─ Input: Raw calibrant image + initial parameter file
-    ├─ Output: refined_MIDAS_params.txt (calibrated parameters)
-    └─ Next steps: integrate_2d_to_1d OR run_ff_hedm_full_workflow
+    calibration_pipeline="four-stage" retains the existing multi-stage/spline
+    recipe and supports detector panels and explicit parameter restrictions.
+    "tilted" uses MIDAS's single-panel pipeline for unknown or substantial detector
+    tilt, with its ring-position gate. It requires CPU, one phase, square pixels
+    and the built-in refinement settings. PASS is accepted, WARN provisional,
+    FAIL rejected. Ring agreement does not establish absolute geometry accuracy.
 
     Args:
-        image_file: EXACT path to calibrant diffraction image (.tif/.tiff, .ge/.ge1-.ge5, .h5/.hdf5/.nxs, .zip Zarr)
-                   If file not found, will auto-search parent directory for matching files.
-        parameters_file: OPTIONAL path to MIDAS parameter file. If omitted, AutoCalibrateZarr.py auto-detects
-                        calibrant (CeO2/LaB6 from filename), energy (from keV in filename), distance (from mm in filename),
-                        and pixel size (from detector shape). Only needed if filename lacks these hints.
-        dark_file: Optional path to dark field image for background subtraction
-        output_dir: Optional output directory for calibration results (refined_MIDAS_params*.txt,
-                   autocal.log, calibrant_screen_out.csv). Created if it does not exist.
-                   Default: "" = write results alongside the source image file (original behaviour).
-                   Use this when calibrating multiple files in a batch so results from each file
-                   land in their own directory instead of clobbering each other.
-        lsd_guess: Initial sample-to-detector distance guess in µm (default: 1000000 = auto-detect from ring ratios).
-            A value < 10000 is treated as mm and auto-converted to µm (e.g. 895 → 895000).
-        bc_x_guess: Initial beam center X coordinate in pixels. Provide with bc_y_guess or not at all —
-            a partial seed (only one coordinate) is ignored (default: 0.0 = auto-detect from ring geometry).
-        bc_y_guess: Initial beam center Y coordinate in pixels; pair with bc_x_guess (default: 0.0 = auto-detect)
-        n_iterations: Maximum number of refinement iterations (default: 40)
-        tol_shifts: Panel shift convergence tolerance in pixels (default: 3.0)
-        tol_rotation: Panel rotation convergence tolerance in degrees (default: 1.0)
-        mult_factor: Outlier rejection multiplier - rings with strain > mult_factor × median_strain are excluded (default: 2.5)
-        first_ring_nr: Index (1-based) of first prominent ring for initial Lsd estimation (default: 1)
-        eta_bin_size: Azimuthal bin size in degrees for CalibrantOMP fitting (default: 5.0)
-        threshold: Manual intensity threshold for ring segmentation (default: 0 = auto-calculate)
-        make_plots: Display matplotlib plots during refinement (0=no, 1=yes) (default: 0)
-        save_plots_hdf: Path to HDF5 file for saving all intermediate data/plots for offline analysis (default: "" = don't save)
-        image_transform: Image transformation - "0"=none, "1"=flip LR, "2"=flip UD, "3"=transpose, or space-separated combo (default: "" = none)
-        data_loc: HDF5 dataset path if not standard location (default: "" = use /entry/data/data)
+        image_file: Exact original detector file path. HDF5, TIFF and other MIDAS formats.
+        output_dir: Explicit analysis directory for results; do not use the raw-data directory.
+        calibration_engine: auto, v2, v1, or legacy.
+        calibration_pipeline: four-stage (default) or tilted. Pipeline/frame controls require v2.
+        data_loc: Exact HDF5 detector dataset path; v2 defaults to exchange/data.
+        skip_frame: Number of initial IMAGE frames to omit (default 0); not applied to a separate dark.
+        frame_count: Exact number of image frames after skipping; 0 uses all remaining. Bounded counts require HDF5.
+        frame_reduce: mean or median (default median). Follow the operator's specified reduction.
+        image_transform: MIDAS codes: 0 none, 1 flip columns, 2 flip rows, 3 transpose; applied once.
+        energy_kev: Independently supplied beam energy, in keV; takes precedence over filename labels.
+        wavelength_angstrom: Independently supplied wavelength; do not infer it by optimizing fit quality.
+        px_um: Detector pixel pitch in micrometres; an explicit value overrides shape heuristics.
+        dark_file: Optional measured dark file; separate dark frames are not skipped with image frames.
+        parameters_file: Optional template providing detector/lattice settings, not a fitted-geometry target.
+        template_param_file: Explicit template, taking precedence over parameters_file.
+        lsd_guess: Nominal distance in micrometres when known; not a ground-truth scoring reference.
+        trust_seed_lsd: True uses the data-derived seed instead of any supplied or filename distance hint.
+            This discards the hint; it does not test whether that hint is wrong.
+        detector: Optional detector-layout preset, required when appropriate for panel refinement.
+        refine_distortion: Four-stage only: full, radial, none, or an explicit p-key list.
+        tol_tilts_deg: Four-stage only: explicit tilt-bound override.
+        lsd_tol_um: Four-stage only: explicit distance-bound override.
+        device: Use cpu for tilted; four-stage also supports qualified accelerator devices.
+        threads_per_worker: Explicit thread budget, or 0 for the admitted task profile.
+        strain_gate_ue: Four-stage strain threshold; tilted uses its own ring-position gate.
+        ignore_calibration_gate: Four-stage override only; tilted retains PASS/WARN/FAIL.
 
     Returns:
-        JSON with calibrated geometric parameters and convergence metrics
-
-    Outputs:
-        - refined_MIDAS_params.txt: Final converged parameters (Lsd, BC, tx, ty, tz, p0-p3)
-        - autocal.log: Detailed execution log with iteration history
-        - calibrant_screen_out.csv: Raw CalibrantOMP output (for debugging)
-        - [optional] HDF5 file with all intermediate arrays and plots
-
-    Example Usage:
-        Standard CeO2 calibration at ~650mm:
-        {
-            "image_file": "/data/CeO2_61keV_650mm.tif",
-            "parameters_file": "/data/Params_CeO2.txt",
-            "lsd_guess": 650000,
-            "stopping_strain": 0.0001
-        }
-
-        High-precision calibration with diagnostics:
-        {
-            "image_file": "LaB6_calibrant.h5",
-            "parameters_file": "Params_LaB6.txt",
-            "dark_file": "dark.h5",
-            "lsd_guess": 200000,
-            "stopping_strain": 0.00004,
-            "mult_factor": 3.0,
-            "save_plots_hdf": "calibration_diagnostics.h5",
-            "image_transform": "2"
-        }
-
-    Required Parameter File Format:
-        SpaceGroup 225              # CeO2: 225, LaB6: 221, Si: 227
-        LatticeParameter 5.411      # CeO2 lattice constant in Angstroms
-        Wavelength 0.2021           # X-ray wavelength in Angstroms (61.332 keV)
-        px 200                      # Pixel size in microns
-        SkipFrame 0
+        JSON with effective inputs, frame selection, applied transform, gate,
+        artifact paths and hashes, scientific decision when available, and an
+        APEXA_calibration.json outcome record. Use these returned facts to write
+        any requested final decision manifest and report limitations promptly.
     """
     _CALIB_T0.set(time.monotonic())     # every terminal payload records elapsed_s
+    if (calibration_pipeline not in ("four-stage", "tilted") or skip_frame < 0
+            or frame_count < 0 or frame_reduce not in ("mean", "median")):
+        return format_result({"tool": "midas_auto_calibrate", "status": "error",
+                              "nothing_was_run": True,
+                              "error": "Invalid pipeline or frame-selection controls"})
     try:
         print(f"\n{'='*70}", file=sys.stderr)
         print(f"🔧 midas_auto_calibrate called:", file=sys.stderr)
@@ -6770,6 +6722,12 @@ async def midas_auto_calibrate(
         # in-process native engine, below) ignored calibration_engine entirely, so
         # calibration_engine="v2" could silently run the v1 native engine instead.
         _eng = await asyncio.to_thread(_choose_calibration_engine, calibration_engine, image_path, _resolved_wl)
+        if (_eng['engine'] != 'canonical-v2' and
+                (calibration_pipeline != 'four-stage' or skip_frame or frame_count or frame_reduce != 'median')):
+            return format_result({"tool": "midas_auto_calibrate", "status": "error",
+                                  "nothing_was_run": True,
+                                  "error": "Explicit pipeline/frame controls require the canonical v2 engine",
+                                  "engine_reason": _eng['reason']})
         print(f"[engine] {_eng['engine']} — {_eng['reason']}", file=sys.stderr)
         for _fb in _eng["fallbacks"]:
             print(f"[engine]   {_fb}", file=sys.stderr)
@@ -6949,7 +6907,11 @@ async def midas_auto_calibrate(
                        "--calibrant", _calib_v2,
                        "--wavelength", f"{float(_resolved_wl):.8f}",
                        "--strain-gate-ue", str(float(strain_gate_ue)),
-                       "--device", _exec_plan.child_device]
+                       "--device", _exec_plan.child_device,
+                       "--pipeline", calibration_pipeline,
+                       "--skip-frame", str(skip_frame),
+                       "--frame-count", str(frame_count),
+                       "--frame-reduce", frame_reduce]
             if _px_use > 0:
                 _cmd_v2 += ["--px-um", f"{_px_use:.4f}"]
 
@@ -7112,6 +7074,14 @@ async def midas_auto_calibrate(
                 "wavelength_source": _wl_source,
                 "energy_edge_check": _edge_warn,
                 "scope_gate": _payload.get("scope_gate"),
+                "frame_selection": _payload.get("frame_selection"),
+                "phase_provenance": _payload.get("phase_provenance"),
+                "scientific_status": _payload.get("scientific_status"),
+                "solver_result": _payload.get("solver_result"),
+                "solver_log": _payload.get("solver_log"),
+                "candidate_geometry": _payload.get("candidate_geometry"),
+                "mask_file": _payload.get("mask_file"),
+                "mask_coordinates": _payload.get("mask_coordinates"),
                 "seed": _seed,
                 "lsd": _payload.get("lsd"),
                 "at_bounds": _payload.get("at_bounds"),
@@ -7133,6 +7103,7 @@ async def midas_auto_calibrate(
             # refined_MIDAS_params*.txt is reported as the current result.
             if _out["status"] == "success" and not _fresh:
                 _out["status"] = "warning"
+                _out["scientific_status"] = "provisional"
                 _out["run_note"] = (
                     "the run reported success but no freshly-written parameter file "
                     "was found — do not cite these numbers as this run's result")
@@ -7143,6 +7114,14 @@ async def midas_auto_calibrate(
                     f"{_gate.get('stage4_strain_uE_test')} µε "
                     f"(gate {_gate.get('threshold_uE')} µε). "
                     f"Refined parameters: {_merged_path}")
+                if calibration_pipeline == 'tilted':
+                    _out['message'] = (f"MIDAS tilted calibration: {_gate.get('verdict')}; "
+                                       f"ring residual median {_gate.get('median_px')} px. "
+                                       f"Refined parameters: {_merged_path}")
+            if _fresh:
+                import hashlib as _hashlib
+                _out['artifact_path'] = _merged_path
+                _out['artifact_sha256'] = _hashlib.sha256(Path(_merged_path).read_bytes()).hexdigest()
             _out["outcome_manifest"] = _write_calibration_outcome(_v2_out, _out)
             return format_result(_out)
 

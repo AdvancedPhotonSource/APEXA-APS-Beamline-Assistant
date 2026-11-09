@@ -35,6 +35,7 @@ from apexa_toolsurface import (  # noqa: E402
     initial_surface,
     search,
     tool_name,
+    workflow_tools,
 )
 
 
@@ -259,6 +260,42 @@ def test_inspection_acknowledgment_does_not_escape_at_iteration_cap():
     provider = StubProvider([AgentResponse(content="Listing the current directory.")])
     out = _run(_runner(), _agent(), provider, query="List current directory", max_iterations=1)
     assert "No inspection ran" in out and len(provider.seen_messages) == 1
+
+
+@pytest.mark.parametrize('limit', [1, 2, 4, 6])
+def test_finalization_never_needs_a_request_beyond_the_turn_limit(limit):
+    script = [AgentResponse(content='Reading.', tool_calls=[
+        ToolCall(id=f'c{i}', name='read_file', arguments={'path': f'/data/{i}.txt'})])
+        for i in range(max(1, limit-1))]
+    script.append(AgentResponse(content='The requested analysis remains incomplete.'))
+    provider = StubProvider(script)
+    _run(_runner(), _agent(), provider, max_iterations=limit)
+    assert len(provider.seen_messages) <= limit
+    if limit >= 3:
+        assert provider.seen_tools[-1] == []
+        assert any('final decision/artifact manifest' in str(m) for m in provider.seen_messages[-1])
+
+
+def test_requested_calibration_executor_is_visible_without_discovery():
+    provider = StubProvider([AgentResponse(content='The detector calibration is ready to configure.')])
+    _run(_runner(), _agent(), provider, query='Calibrate this CeO2 detector exposure.')
+    assert 'midas_auto_calibrate' in provider.seen_tools[0]
+    assert workflow_tools('Explain crystal grains') == ()
+    assert 'move_motor_absolute' not in provider.seen_tools[0]
+
+
+def test_failed_finalization_cannot_return_internal_budget_instructions():
+    class FailedFinalProvider(StubProvider):
+        async def chat(self, messages, temperature=.7, tools=None):
+            if tools is None:
+                raise RuntimeError('endpoint unavailable')
+            return await super().chat(messages, temperature, tools)
+    provider = FailedFinalProvider([AgentResponse(content='Reading.', tool_calls=[
+        ToolCall(id=f'c{i}', name='read_file', arguments={'path': f'/data/{i}.txt'})])
+        for i in range(3)])
+    out = _run(_runner(), _agent(), provider, max_iterations=4)
+    assert 'FORBIDDEN' not in out and 'CRITICAL RULES' not in out
+    assert 'before a final answer' in out
 
 
 def test_inspection_check_excludes_questions_explanations_and_executed_turns():
@@ -805,3 +842,8 @@ def test_gpt6_is_offered_and_gets_the_payload_measured_live(model):
     assert "max_completion_tokens" in pl and "max_tokens" not in pl
     from apexa_model_policy import disallowed_reason
     assert disallowed_reason(model) is None
+def test_scientific_slash_separators_are_not_absolute_path_claims():
+    from apexa_ledger import extract_paths
+    assert not extract_paths('The wavelength/pixel-pitch/distance ambiguity remains.')
+    assert extract_paths('Saved (/data/scan/result.json).') == {'/data/scan/result.json'}
+    assert extract_paths('Saved to /data/scan/output') == {'/data/scan/output'}
