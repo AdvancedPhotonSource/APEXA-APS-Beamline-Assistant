@@ -68,7 +68,7 @@ def _initialize_knowledge_base():
             from pathlib import Path
 
             kb_path = Path(__file__).parent / "knowledge_base"
-            chroma_path = kb_path / "chroma_db"
+            chroma_path = Path(os.environ.get("APEXA_CHROMA_PATH", str(kb_path / "chroma_db")))
 
             if chroma_path.exists():
                 model_name = os.environ.get("APEXA_EMBED_MODEL",

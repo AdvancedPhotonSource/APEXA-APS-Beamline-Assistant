@@ -1089,7 +1089,7 @@ class PlottingEngine:
     """Advanced plotting for diffraction data visualization"""
 
     def __init__(self, output_dir: Path = None):
-        self.output_dir = output_dir or Path.home() / ".apexa" / "plots"
+        self.output_dir = output_dir or Path(os.environ.get("APEXA_HOME", str(Path.home() / ".apexa"))) / "plots"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def plot_2d_image(self, image_path: str, scale: str = "linear", save: bool = True, show: bool = False) -> Dict[str, Any]:
@@ -1410,7 +1410,7 @@ class SmartCache:
     """Cache expensive operations to reduce AI costs and improve speed"""
 
     def __init__(self, cache_dir: Path = None):
-        self.cache_dir = cache_dir or Path.home() / ".apexa" / "cache"
+        self.cache_dir = cache_dir or Path(os.environ.get("APEXA_HOME", str(Path.home() / ".apexa"))) / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.memory_cache = {}
 

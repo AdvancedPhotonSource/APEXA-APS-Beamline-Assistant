@@ -443,6 +443,26 @@ def test_the_sandbox_really_blocks_a_read(tmp_path):
     assert p.returncode != 0 and "-3.5178" not in p.stdout
 
 
+@pytest.mark.skipif(sys.platform != "darwin" or not rb.SANDBOX, reason="macOS sandbox-exec required")
+def test_strict_local_writes_allow_workspace_but_preserve_readonly_and_denied_paths(tmp_path):
+    import subprocess
+    trial = tmp_path / "trial"
+    trial.mkdir()
+    protected = trial / "source.txt"
+    protected.write_text("frozen")
+    hidden = trial / "hidden.txt"
+    hidden.write_text("secret")
+    outside = tmp_path / "outside.txt"
+    script = ("from pathlib import Path; import sys; "
+              "Path(sys.argv[1]).write_text('ok')")
+    for path, allowed in [(trial / "output.txt", True), (protected, False), (hidden, False), (outside, False)]:
+        result = subprocess.run(rb.sandboxed([sys.executable, "-c", script, str(path)], [str(hidden)],
+            writable=[trial], read_only=[protected], strict_writes=True), capture_output=True)
+        assert (result.returncode == 0) == allowed
+    assert protected.read_text() == "frozen" and hidden.read_text() == "secret"
+    assert not outside.exists()
+
+
 # ── explicit scientific decision and artifact adoption ────────────────────────
 @pytest.mark.parametrize("text", [
     "The initial attempt succeeded numerically, but validation failed. Do not use this geometry.",

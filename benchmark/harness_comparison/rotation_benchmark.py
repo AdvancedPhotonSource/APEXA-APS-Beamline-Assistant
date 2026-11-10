@@ -633,7 +633,7 @@ def deny_paths(arm: "Arm", ground_truth: Path, extra=(), knowledge_policy: dict 
 
 
 def sandboxed(argv: List[str], deny: List[str], *, read_only=(), writable=(), private_apexa_home=None,
-              private_knowledge_db=None) -> List[str]:
+              private_knowledge_db=None, strict_writes=False) -> List[str]:
     if not SANDBOX:
         raise SystemExit("REFUSING TO RUN: sandbox-exec/bwrap not available; the answers on "
                          "this disk would be readable by the agents under test.")
@@ -705,7 +705,11 @@ def sandboxed(argv: List[str], deny: List[str], *, read_only=(), writable=(), pr
         return command + ["--", *argv]
     rules = " ".join(f'(subpath {json.dumps(d, ensure_ascii=False)})' for d in deny)
     protected = " ".join(f'(subpath {json.dumps(_real(p), ensure_ascii=False)})' for p in (REPO, *read_only))
-    profile = f"(version 1)(allow default)(deny file-read* file-write* {rules})(deny file-write* {protected})"
+    writes = ""
+    if strict_writes:
+        allowed = " ".join(f'(subpath {json.dumps(_real(p), ensure_ascii=False)})' for p in writable)
+        writes = f'(deny file-write*)(allow file-write* {allowed} (subpath "/dev"))'
+    profile = f"(version 1)(allow default){writes}(deny file-read* file-write* {rules})(deny file-write* {protected})"
     return [SANDBOX, "-p", profile] + argv
 
 
@@ -891,7 +895,7 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             require_manifest: bool = False, procedure_candidates: Optional[Path] = None,
             native_context_manifest: Optional[Path] = None,
             guidance_text: Optional[str] = None, pi_image_input: bool = False,
-            opencode_image_input: bool = False) -> Run:
+            opencode_image_input: bool = False, strict_writes: bool = False) -> Run:
     h = HARNESSES[arm.harness]
     r = Run(arm=arm.id, harness=arm.harness, scan=scan, trial=trial, model=model,
             manuals=arm.manuals, enforcement=arm.enforcement,
@@ -964,6 +968,7 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         (profile / "tmp").mkdir()
         (profile / "apexa").mkdir()
         env["TMPDIR"] = str(profile / "tmp")
+        env["NUMBA_CACHE_DIR"] = str(profile / "tmp/numba")
         env["HF_MODULES_CACHE"] = str(profile / "hf-modules")
         env["npm_config_cache"] = str(profile / "npm-cache")
         env["APEXA_AGENT_MODE"] = "single"
@@ -996,6 +1001,9 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
                                image_input=pi_image_input)
         elif arm.harness == "claude-code":
             env["CLAUDE_CONFIG_DIR"] = str(write_claude_profile(profile / "claude", api_key))
+            # Native Bash uses this instead of TMPDIR for shell snapshots and
+            # output files. Keep both inside the trial's writable profile.
+            env["CLAUDE_CODE_TMPDIR"] = str(profile / "tmp")
         ph = placeholders(base_url=base_url, api_key=api_key, model=model,
                           prompt=prompt, opencode_config=oc)
         for key, value in h.env.items():
@@ -1022,6 +1030,8 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
                 env["APEXA_BENCH_CONTEXT"] = str(frozen)
                 env["APEXA_BENCH_CONTEXT_SHA256"] = native_context.sha(frozen)
                 native_db = native_context.private_database(REPO, profile)
+                if native_db is not None:
+                    env["APEXA_CHROMA_PATH"] = str(native_db)
             else:
                 frozen = profile / "knowledge-manifest.json"
                 # Preserve exact reviewed bytes and pin them for all child servers.
@@ -1047,6 +1057,7 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
                     argv[1:1] = ["--mode", "json", "--no-session", "--no-extensions", "--no-mcp"]
         argv = sandboxed(argv, deny, read_only=[profile / "knowledge-manifest.json", profile / "native-context.json", trial_root / "runtime"],
                          writable=[trial_root],
+                         strict_writes=strict_writes,
                          private_apexa_home=profile / "apexa" if arm.harness == "apexa" else None,
                          private_knowledge_db=native_db)
         if dry:

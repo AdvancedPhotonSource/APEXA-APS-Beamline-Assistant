@@ -12,7 +12,7 @@ warmed, which is the one thing a controlled comparison cannot allow.
 stdout is the answer; diagnostics go to stderr so the caller can parse cleanly.
 """
 from __future__ import annotations
-import argparse, asyncio, json, os, sys
+import argparse, asyncio, json, os, sys, time
 from pathlib import Path
 
 REPO = Path(os.environ.get("APEXA_BENCH_REPO", Path(__file__).resolve().parents[2])).resolve()
@@ -91,7 +91,15 @@ async def _go(prompt: str, timeout: int) -> str:
         connected = set(getattr(client, "sessions", {}) or {})
         if connected != set(ANALYSIS_SERVERS):
             raise RuntimeError(f"Benchmark requires exactly {sorted(ANALYSIS_SERVERS)}; connected {sorted(connected)}")
-        return await asyncio.wait_for(client.run_query(prompt, use_history=False),
+        kwargs = {}
+        audit_path = os.environ.get("APEXA_BENCH_TOOL_AUDIT")
+        if audit_path:
+            async def capture(tool, arguments, result):
+                with Path(audit_path).open("a") as stream:
+                    stream.write(json.dumps({"tool": tool, "arguments": arguments,
+                        "result": result, "time": time.time()}, default=str) + "\n")
+            kwargs["on_tool_result"] = capture
+        return await asyncio.wait_for(client.run_query(prompt, use_history=False, **kwargs),
                                       timeout=timeout)
     finally:
         for m in ("cleanup", "close", "shutdown"):

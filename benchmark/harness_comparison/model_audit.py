@@ -149,9 +149,10 @@ class ModelAudit:
             def do_POST(self):
                 self.forward(True)
 
-            def forward(self, generation):
+            def forward(self, post):
                 path = urlsplit(self.path).path
-                if path not in (("/v1/chat/completions", "/v1/messages") if generation else ("/v1/models",)):
+                if path not in (("/v1/chat/completions", "/v1/messages", "/v1/messages/count_tokens")
+                                if post else ("/v1/models",)):
                     return self.error(404, "Endpoint outside the study API")
                 auth = self.headers.get("Authorization", "").removeprefix("Bearer ")
                 if owner.token not in (auth, self.headers.get("x-api-key")):
@@ -165,9 +166,10 @@ class ModelAudit:
                 if not 0 <= length <= 16_000_000:
                     return self.error(413, "Request exceeds study limit")
                 body = self.rfile.read(length) if length else b""
-                record = {"event": "generation" if generation else "models", "path": path,
+                generation = post and path != "/v1/messages/count_tokens"
+                record = {"event": "generation" if generation else "token_count" if post else "models", "path": path,
                           "started_unix": time.time(), "response_models": [], "usage": {}}
-                if generation:
+                if post:
                     try:
                         payload = json.loads(body)
                         if not isinstance(payload, dict):
@@ -176,6 +178,11 @@ class ModelAudit:
                         return self.error(400, "Expected a JSON object")
                     if model_key(payload.get("model")) != model_key(owner.model):
                         return self.error(400, "Requested model differs from frozen study model")
+                    record["requested_model"] = payload["model"]
+                    record["request_sha256"] = hashlib.sha256(body).hexdigest()
+                    if time.monotonic() >= owner.deadline:
+                        return self.error(429, "Study wall-time budget exhausted")
+                if generation:
                     token_key = "max_completion_tokens" if "max_completion_tokens" in payload else "max_tokens"
                     ceiling = payload.get(token_key, owner.max_output_tokens)
                     if type(ceiling) is not int or ceiling < 1:
@@ -189,8 +196,6 @@ class ModelAudit:
                             record["request_index"] = owner.requests
                     if exhausted:
                         return self.error(429, reason)
-                    record["requested_model"] = payload["model"]
-                    record["request_sha256"] = hashlib.sha256(body).hexdigest()
                     record["settings"] = {k: payload[k] for k in (
                         "temperature", "top_p", "thinking", "reasoning_effort", "output_config",
                         "max_tokens", "max_completion_tokens", "stream") if k in payload}
@@ -200,6 +205,11 @@ class ModelAudit:
                     record["forwarded_sha256"] = hashlib.sha256(body).hexdigest()
                     record["automatic_procedures_delivered"] = delivered_blocks(payload, owner.procedure_candidates)
                     record["input_images"] = image_evidence(payload)
+                elif post:
+                    # This auxiliary API does not generate a response. Forward
+                    # exact request bytes, never invent counts or consume the
+                    # generation allowance. Wall time and model checks still apply.
+                    record["forwarded_sha256"] = hashlib.sha256(body).hexdigest()
                 headers = {"Authorization": "Bearer " + owner.api_key, "x-api-key": owner.api_key,
                            "Content-Type": "application/json", "Accept-Encoding": "identity"}
                 for key in ("anthropic-version", "anthropic-beta", "Accept"):
@@ -210,7 +220,7 @@ class ModelAudit:
                 try:
                     remaining = max(0.1, min(60, owner.deadline - time.monotonic()))
                     with httpx.Client(timeout=httpx.Timeout(remaining, connect=min(20, remaining))) as client:
-                        with client.stream("POST" if generation else "GET", url, headers=headers,
+                        with client.stream("POST" if post else "GET", url, headers=headers,
                                            content=body or None) as response:
                             record["http_status"] = response.status_code
                             self.send_response(response.status_code)
@@ -237,7 +247,13 @@ class ModelAudit:
                                 raw = response.read()
                                 digest.update(raw)
                                 try:
-                                    response_evidence(json.loads(raw), record)
+                                    data = json.loads(raw)
+                                    response_evidence(data, record)
+                                    if record["event"] == "token_count":
+                                        count = data.get("input_tokens") if isinstance(data, dict) else None
+                                        record["valid_token_count"] = type(count) is int and count >= 0
+                                        if record["valid_token_count"]:
+                                            record["input_tokens"] = count
                                 except ValueError:
                                     pass
                                 self.wfile.write(raw)
@@ -245,11 +261,12 @@ class ModelAudit:
                     record["transport_error"] = type(exc).__name__
                     self.close_connection = True
                 finally:
-                    if generation:
+                    if post:
                         record["elapsed_s"] = time.time() - record["started_unix"]
                         record["response_sha256"] = digest.hexdigest()
-                        record["model_matches"] = bool(record["response_models"]) and all(
-                            model_key(m) == model_key(owner.model) for m in record["response_models"])
+                        if generation:
+                            record["model_matches"] = bool(record["response_models"]) and all(
+                                model_key(m) == model_key(owner.model) for m in record["response_models"])
                         owner.record(record)
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -263,15 +280,21 @@ class ModelAudit:
     def summary(self):
         records = [r for r in self.records if r.get("event") == "generation"]
         success = [r for r in records if r.get("http_status") == 200 and not r.get("transport_error")]
+        auxiliary = [r for r in self.records if r.get("event") == "token_count"]
+        auxiliary_errors = [r for r in auxiliary if r.get("http_status") != 200
+                            or r.get("transport_error") or not r.get("valid_token_count")]
         budget = [v for v in self.violations if v["status"] == 429 and "budget exhausted" in v["reason"]]
         protocol = [v for v in self.violations if v not in budget]
-        evaluable = (bool(success) and not protocol and len(success) == self.requests
+        evaluable = (bool(success) and not protocol and not auxiliary_errors and len(success) == self.requests
                      and all(r["model_matches"] and r["usage"] for r in success))
         return {"requests": self.requests, "recorded_requests": len(self.records),
                 "completed_generations": len(records), "violations": list(self.violations),
-                "qualified": bool(success) and not self.violations and len(success) == self.requests
+                "qualified": bool(success) and not self.violations and not auxiliary_errors and len(success) == self.requests
                              and all(r["model_matches"] and r["usage"] for r in success),
                 "successful_responses": len(success),
+                "auxiliary_requests": len(auxiliary),
+                "successful_token_counts": len(auxiliary) - len(auxiliary_errors),
+                "auxiliary_errors": auxiliary_errors,
                 "scientific_evaluable": evaluable,
                 "budget_exhausted": bool(budget), "budget_events": budget,
                 "protocol_violations": protocol,

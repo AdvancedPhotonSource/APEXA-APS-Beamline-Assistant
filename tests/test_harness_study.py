@@ -26,8 +26,12 @@ def upstream():
         def do_POST(self):
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             self.server.requests.append(payload)
+            self.server.paths.append(self.path)
             model = self.server.model
-            if payload.get("stream"):
+            if self.path == "/v1/messages/count_tokens":
+                body = json.dumps(self.server.token_count_response).encode()
+                kind = "application/json"
+            elif payload.get("stream"):
                 events = [{"type": "message_start", "message": {"model": model, "usage": {"input_tokens": 9}}},
                           {"type": "message_delta", "usage": {"output_tokens": 2}},
                           {"type": "message_stop"}]
@@ -45,6 +49,8 @@ def upstream():
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     server.requests = []
+    server.paths = []
+    server.token_count_response = {"input_tokens": 37}
     server.model = "claude-opus-5"
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -110,17 +116,62 @@ def test_rejected_endpoint_keeps_route_but_not_query_or_opaque_identifiers(tmp_p
     _, url = upstream
     log = tmp_path / "audit.jsonl"
     with ma.ModelAudit(url, "upstream-secret", "claudeopus5", log) as audit:
-        response = httpx.post(audit.base_url + "/messages/count_tokens?key=query-secret",
+        response = httpx.post(audit.base_url + "/messages/unsupported?key=query-secret",
                               headers={"x-api-key": audit.token}, json={"private": "prompt-secret"})
         assert response.status_code == 404
         httpx.get(audit.base_url + "/accounts/1234-secret-5678")
     raw = log.read_text()
     for private in ("query-secret", "prompt-secret", "upstream-secret", "1234-secret-5678"):
         assert private not in raw
-    assert audit.summary()["protocol_violations"][0]["path"] == "/v1/messages/count_tokens"
+    assert audit.summary()["protocol_violations"][0]["path"] == "/v1/messages/unsupported"
     assert audit.summary()["protocol_violations"][0]["method"] == "POST"
     assert audit.summary()["protocol_violations"][1]["path"] == "/v1/accounts/{redacted}"
     assert not audit.summary()["scientific_evaluable"]
+
+
+def test_token_count_is_forwarded_exactly_and_does_not_consume_generation_budget(tmp_path, upstream):
+    server, url = upstream
+    log = tmp_path / "audit.jsonl"
+    payload = {"model": "claudeopus5", "messages": [{"role": "user", "content": "private-fixture"}]}
+    with ma.ModelAudit(url, "upstream-secret", "claudeopus5", log, max_requests=1) as audit:
+        headers = {"x-api-key": audit.token}
+        assert httpx.post(audit.base_url + "/messages", headers=headers, json=payload).status_code == 200
+        response = httpx.post(audit.base_url + "/messages/count_tokens?beta=true", headers=headers, json=payload)
+        assert response.json() == {"input_tokens": 37}
+    assert server.paths == ["/v1/messages", "/v1/messages/count_tokens"]
+    assert server.requests[1] == payload
+    assert audit.summary()["requests"] == 1
+    assert audit.summary()["successful_responses"] == 1
+    assert audit.summary()["successful_token_counts"] == 1
+    assert audit.summary()["qualified"]
+    assert audit.records[1]["request_sha256"] == audit.records[1]["forwarded_sha256"]
+    assert "private-fixture" not in log.read_text() and "upstream-secret" not in log.read_text()
+
+
+@pytest.mark.parametrize("condition", ["model", "credential", "deadline", "invalid_count"])
+def test_token_count_keeps_auth_model_deadline_and_response_validation(tmp_path, upstream, condition):
+    server, url = upstream
+    with ma.ModelAudit(url, "secret", "claudeopus5", tmp_path / "audit.jsonl") as audit:
+        payload = {"model": "claudeopus5", "messages": []}
+        headers = {"x-api-key": audit.token}
+        httpx.post(audit.base_url + "/messages", headers=headers, json=payload)
+        if condition == "model":
+            payload["model"] = "other"
+        elif condition == "credential":
+            headers = {}
+        elif condition == "deadline":
+            audit.deadline = 0
+        else:
+            server.token_count_response = {"input_tokens": True}
+        response = httpx.post(audit.base_url + "/messages/count_tokens", headers=headers, json=payload)
+    assert not audit.summary()["qualified"]
+    assert audit.summary()["requests"] == 1
+    assert len(server.requests) == (2 if condition == "invalid_count" else 1)
+    if condition == "invalid_count":
+        assert response.status_code == 200  # No manufactured replacement response.
+        assert audit.summary()["auxiliary_errors"]
+    else:
+        assert response.status_code >= 400
 
 
 @pytest.mark.parametrize("wire", ["anthropic", "openai"])

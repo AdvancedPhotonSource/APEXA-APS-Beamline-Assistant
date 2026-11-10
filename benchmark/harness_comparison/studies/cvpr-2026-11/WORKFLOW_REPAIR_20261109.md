@@ -96,3 +96,41 @@ Local parent-repository evidence is in ignored `build/workflow-repair-20261109/`
 and autonomous prompts/tool records/answers. Condensed native and autonomous
 review receipts accompany this note. Identifying review notes are excluded from
 the anonymous supplement. Production and frozen Copland code are not modified.
+
+## November 10: native adapter and local isolation repairs
+
+The completed single-example Claude/Pi results remain unchanged. Claude's accepted
+artifact was obtained despite a local Bash temporary-directory restriction, two
+rejected token-count requests and one recovered model timeout. Those conditions
+still disqualify its original model audit and prevent a clean timing comparison.
+
+The upstream `/v1/messages/count_tokens` API was checked directly and returned a
+real count. The current relay now forwards only that additional authenticated
+route, validates the requested model, retains wall-time enforcement and records
+the real response separately from generation requests. It never fabricates counts
+or grants additional generation calls. Failed or invalid count responses prevent
+new adapter qualification. Frozen R5 code and scores are unchanged.
+
+Claude's supported `CLAUDE_CODE_TMPDIR` and the MIDAS Numba cache now use the private
+trial profile. An opt-in macOS write allowlist enforces the same local isolation
+used in the previous probe. A new synthetic check explicitly exercised native
+Bash: seven successful generation requests, one successful auxiliary count,
+three successful Bash calls and an exact file copy; no protocol or transport
+errors. The count response was 22,447 input tokens in 0.3641 seconds. This is
+compatibility evidence, not another calibration trial.
+
+APEXA's plotting/cache and compute paths now honor `APEXA_HOME`; an explicit
+`APEXA_CHROMA_PATH` supports a private writable index while keeping the source
+corpus and generation manifest in their original location. Optional driver tool
+event capture records arguments and returned evidence for the single-example
+review. The original working Chroma database is not modified.
+
+Focused verification after these changes: 195 tests passed. This includes real
+HTTP forwarding and budget checks, actual macOS write/read restrictions, native
+context isolation and retrieval/compute regressions. The real Claude synthetic
+qualification is recorded separately from these offline tests.
+
+All new local receipts remain in the existing canonical Box audit's
+`guided_followup/` directory: `adapter_repair_20261110.json` and its compressed
+evidence; the latest APEXA scan-262 check uses the `apexa_example_262` prefix.
+No larger cohort is authorized by these setup checks.

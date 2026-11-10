@@ -65,7 +65,7 @@ from dataclasses import dataclass, asdict, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-APEXA_DIR      = Path.home() / ".apexa"
+APEXA_DIR      = Path(os.environ.get("APEXA_HOME", str(Path.home() / ".apexa")))
 PROFILES_JSON  = APEXA_DIR / "task_profiles.json"
 INVENTORY_JSON = APEXA_DIR / "compute_cache.json"
 

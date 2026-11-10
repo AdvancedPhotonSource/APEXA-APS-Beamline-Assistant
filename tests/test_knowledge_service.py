@@ -1,10 +1,32 @@
 import hashlib
 import json
+import sys
 from types import SimpleNamespace
 
 import numpy as np
 
 import apexa_knowledge_service as service
+
+
+def test_retrieval_opens_private_database_without_relocating_provenance(monkeypatch, tmp_path):
+    from knowledge_base import lifecycle
+    import apexa_model_policy
+    private = tmp_path / 'private-chroma'
+    private.mkdir()
+    opened = []
+    def open_database(*, path):
+        opened.append(path)
+        return object()
+    monkeypatch.setenv('APEXA_CHROMA_PATH', str(private))
+    monkeypatch.setattr(service, '_knowledge_base', None)
+    monkeypatch.setattr(service, '_apply_offline_hf_env', lambda: True)
+    monkeypatch.setitem(sys.modules, 'chromadb', SimpleNamespace(PersistentClient=open_database))
+    monkeypatch.setitem(sys.modules, 'sentence_transformers', SimpleNamespace(SentenceTransformer=object))
+    monkeypatch.setattr(apexa_model_policy, 'assert_allowed', lambda *args, **kwargs: None)
+    monkeypatch.setattr(lifecycle, 'load_embedder', lambda *args, **kwargs: (object(), {'model': 'fixture'}))
+    kb = service.get_knowledge_base()
+    assert kb['available'] and opened == [str(private)]
+    assert kb['kb_path'] == service.Path(service.__file__).parent / 'knowledge_base'
 
 
 def policy(monkeypatch, tmp_path, retrieval=None):
