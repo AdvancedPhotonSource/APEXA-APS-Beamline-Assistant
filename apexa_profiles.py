@@ -59,7 +59,7 @@ except ModuleNotFoundError:   # pragma: no cover - 3.10 and older
     tomllib = None          # type: ignore[assignment]
 
 
-APEXA_DIR     = Path.home() / ".apexa"
+APEXA_DIR     = Path(os.environ.get("APEXA_HOME", str(Path.home() / ".apexa")))
 PROFILES_TOML = APEXA_DIR / "profiles.toml"
 STATE_JSON    = APEXA_DIR / "state.json"
 NETCACHE_JSON = APEXA_DIR / "netcache.json"

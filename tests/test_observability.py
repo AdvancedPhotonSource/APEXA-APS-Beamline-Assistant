@@ -97,9 +97,11 @@ async def test_child_output_is_bounded_and_noisy_process_is_stopped(store):
     assert not psutil.pid_exists(child['attributes']['pid'])
 
 
-def test_interaction_log_omits_scientist_content(tmp_path):
+def test_interaction_log_omits_scientist_content(tmp_path, monkeypatch):
     from interaction_logger import InteractionLogger
-    logger = InteractionLogger(str(tmp_path))
+    monkeypatch.setenv('APEXA_HOME', str(tmp_path))
+    logger = InteractionLogger()
+    assert logger.log_dir == tmp_path / 'logs'
     entry = logger.start('secret query', 'sensitive-user', 'model')
     entry.add_tool_call('calibrate', {'token': 'secret'}, 'secret results', False, 4)
     entry.finish('secret summary', 1)

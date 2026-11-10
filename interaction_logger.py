@@ -112,7 +112,7 @@ class InteractionLogger:
         if log_dir:
             self.log_dir = Path(log_dir)
         else:
-            self.log_dir = Path.home() / ".apexa" / "logs"
+            self.log_dir = Path(os.environ.get("APEXA_HOME", str(Path.home() / ".apexa"))) / "logs"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = self.log_dir / "interactions.jsonl"
 

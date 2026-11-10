@@ -58,7 +58,7 @@ def feedback_dir() -> Path:
     """Where records live. ``APEXA_FEEDBACK_DIR`` overrides, for a shared triage
     location on a beamline host where several users share an install."""
     d = os.environ.get("APEXA_FEEDBACK_DIR", "").strip()
-    return Path(d).expanduser() if d else Path.home() / ".apexa" / "feedback"
+    return Path(d).expanduser() if d else Path(os.environ.get("APEXA_HOME", str(Path.home() / ".apexa"))) / "feedback"
 
 
 def _month_file(when: Optional[datetime] = None) -> Path:

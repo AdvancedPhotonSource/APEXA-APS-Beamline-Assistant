@@ -134,3 +134,21 @@ All new local receipts remain in the existing canonical Box audit's
 `guided_followup/` directory: `adapter_repair_20261110.json` and its compressed
 evidence; the latest APEXA scan-262 check uses the `apexa_example_262` prefix.
 No larger cohort is authorized by these setup checks.
+
+The full native startup check additionally exposed the interaction logger's
+hardcoded home path. Interaction logs, endpoint profiles and feedback now honor
+`APEXA_HOME`. The two zero-model-call startup failures are retained. The corrected
+native file-copy check passed with three generation requests; 28 profile/feedback
+tests and seven observability tests passed after the additional path changes.
+
+The single-exposure APEXA run then completed in 816.7782 seconds with 38/38
+successful model responses and an accepted geometry. Independent preprocessing,
+artifact hash and one saved-geometry gate replay passed (median 0.01304755 px,
+p95 0.04421591 px, 687/688 cells). The trace contains two native calibrations and
+26 shell calls. It does not establish lower request use or faster completion than
+the retained Claude/Pi probes. The review records the lattice difference, failed
+overlay, approximate wavelength/distance coupling and illustrative energy
+sensitivity. Retrieval was available in a private legacy-index copy, but no
+semantic query occurred during the scientific run. Three automatic-procedure
+blocks were verified in outgoing requests. The original working index and all
+retained Claude/Pi evidence remain unchanged.
