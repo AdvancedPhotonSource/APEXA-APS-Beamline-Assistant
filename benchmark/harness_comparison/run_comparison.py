@@ -309,7 +309,7 @@ def anthropic_model_id(model: str) -> str:
 
 
 def write_opencode_config(path: Path, base_url: str, api_key: str, model: str,
-                          max_tokens: int = MAX_TOKENS) -> Path:
+                          max_tokens: int = MAX_TOKENS, *, image_input: bool = False) -> Path:
     """A per-run OpenCode config with an `argo` provider for exactly one model."""
     cfg = {"$schema": "https://opencode.ai/config.json",
            "provider": {"argo": {
@@ -317,12 +317,16 @@ def write_opencode_config(path: Path, base_url: str, api_key: str, model: str,
                "options": {"baseURL": base_url, "apiKey": api_key},
                "models": {model: {"name": f"{model} (Argo)",
                                   "limit": {"context": 200000, "output": max_tokens}}}}}}
+    if image_input:
+        cfg["provider"]["argo"]["models"][model].update(
+            attachment=True, modalities={"input": ["text", "image"], "output": ["text"]})
     path.write_text(json.dumps(cfg, indent=2))
     return path
 
 
 def ensure_pi_provider(base_url: str, api_key: str, model: str,
-                       max_tokens: int = MAX_TOKENS, *, config_path: Optional[Path] = None) -> Path:
+                       max_tokens: int = MAX_TOKENS, *, config_path: Optional[Path] = None,
+                       image_input: bool = False) -> Path:
     """Write the Argo provider, preferably in an isolated PI_CODING_AGENT_DIR.
 
     The optional path keeps trial configuration out of the user's global state.
@@ -347,6 +351,10 @@ def ensure_pi_provider(base_url: str, api_key: str, model: str,
     models = [m for m in prov.get("models", []) if m.get("id") != model]
     models.append({"id": model, "name": f"{model} (Argo)",
                    "contextWindow": 200000, "maxTokens": max_tokens})
+    # Opt in only in a separately qualified revision. Historical provider
+    # configuration and the frozen R5 cohort keep their original behavior.
+    if image_input:
+        models[-1]["input"] = ["text", "image"]
     prov["models"] = models
     path.write_text(json.dumps(data, indent=2))
     path.chmod(0o600)

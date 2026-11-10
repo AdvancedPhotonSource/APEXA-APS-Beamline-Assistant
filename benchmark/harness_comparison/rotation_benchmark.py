@@ -889,7 +889,9 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             knowledge_manifest_sha256: Optional[str] = None, prompt_override: Optional[str] = None,
             structured_logs: bool = False, scratch_root: Optional[Path] = None,
             require_manifest: bool = False, procedure_candidates: Optional[Path] = None,
-            native_context_manifest: Optional[Path] = None) -> Run:
+            native_context_manifest: Optional[Path] = None,
+            guidance_text: Optional[str] = None, pi_image_input: bool = False,
+            opencode_image_input: bool = False) -> Run:
     h = HARNESSES[arm.harness]
     r = Run(arm=arm.id, harness=arm.harness, scan=scan, trial=trial, model=model,
             manuals=arm.manuals, enforcement=arm.enforcement,
@@ -924,6 +926,16 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         prompt = prompt_override if prompt_override is not None else PROMPT.format(
             fname=exposure.name, manual_note=("Use your native scientific tools and context.\n\n"
                 if native is not None and arm.harness == "apexa" else MANUAL_NOTE if arm.manuals else ""))
+        if guidance_text is not None:
+            if prompt_override is not None:
+                raise ValueError("Scientific guidance cannot be appended to a qualification prompt")
+            prompt += "\n\n" + guidance_text
+            r.policy_bundle["guidance_sha256"] = hashlib.sha256(guidance_text.encode()).hexdigest()
+        # Preserve the exact delivered prompt separately from the model-call
+        # hashes. This contains task data only, never provider credentials.
+        prompts = outdir / "prompts"
+        prompts.mkdir(parents=True, exist_ok=True)
+        (prompts / f"{arm.id}_{scan}_{trial}.txt").write_text(prompt)
         env = dict(os.environ)
         # A trial must never inherit an unrelated study policy from the caller.
         env.pop(MANIFEST_ENV, None)
@@ -971,7 +983,8 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         # removed with the trial root. No user's global provider file is changed.
         oc = ""
         if arm.harness == "opencode":
-            config = write_opencode_config(profile / "opencode.json", base_url, api_key, model)
+            config = write_opencode_config(profile / "opencode.json", base_url, api_key, model,
+                                           image_input=opencode_image_input)
             config.chmod(0o600)
             oc = str(config)
             for variable, subdir in (("XDG_CONFIG_HOME", "config"), ("XDG_DATA_HOME", "data"), ("XDG_STATE_HOME", "state")):
@@ -979,7 +992,8 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         elif arm.harness == "pi":
             agent_dir = profile / "pi"
             env["PI_CODING_AGENT_DIR"] = str(agent_dir)
-            ensure_pi_provider(base_url, api_key, model, config_path=agent_dir / "models.json")
+            ensure_pi_provider(base_url, api_key, model, config_path=agent_dir / "models.json",
+                               image_input=pi_image_input)
         elif arm.harness == "claude-code":
             env["CLAUDE_CONFIG_DIR"] = str(write_claude_profile(profile / "claude", api_key))
         ph = placeholders(base_url=base_url, api_key=api_key, model=model,

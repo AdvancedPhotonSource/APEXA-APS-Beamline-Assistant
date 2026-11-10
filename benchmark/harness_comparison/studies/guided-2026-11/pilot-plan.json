@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "status": "prepared_not_launched",
+  "purpose": "post-audit guided capability pilot; no estimate of guidance alone",
+  "scientific_trials_launched": 0,
+  "guidance_file": "benchmark/harness_comparison/studies/guided-2026-11/guidance.md",
+  "guidance_sha256": "e878f10f2ab62e6b5a98e2530f1959677a90d3b72fb53ecbe8cec6d548616f0c",
+  "model": "claudeopus5",
+  "wall_seconds": 1800,
+  "max_model_requests": 40,
+  "max_output_tokens": 16000,
+  "cpu_threads": 4,
+  "pi_image_input": true,
+  "opencode_image_input": true,
+  "schedule": {
+    "schema_version": 1,
+    "algorithm": "seeded_cyclic_latin_blocks_v1",
+    "seed": 20261110,
+    "arms": [
+      "A1",
+      "A3",
+      "A4",
+      "A5",
+      "A7"
+    ],
+    "scans": [
+      262,
+      284
+    ],
+    "trials": 1,
+    "block_count": 2,
+    "run_count": 10,
+    "entries": [
+      {
+        "schedule_index": 1,
+        "schedule_block": 1,
+        "schedule_position": 1,
+        "arm": "A1",
+        "scan": 262,
+        "trial": 0
+      },
+      {
+        "schedule_index": 2,
+        "schedule_block": 1,
+        "schedule_position": 2,
+        "arm": "A7",
+        "scan": 262,
+        "trial": 0
+      },
+      {
+        "schedule_index": 3,
+        "schedule_block": 1,
+        "schedule_position": 3,
+        "arm": "A4",
+        "scan": 262,
+        "trial": 0
+      },
+      {
+        "schedule_index": 4,
+        "schedule_block": 1,
+        "schedule_position": 4,
+        "arm": "A5",
+        "scan": 262,
+        "trial": 0
+      },
+      {
+        "schedule_index": 5,
+        "schedule_block": 1,
+        "schedule_position": 5,
+        "arm": "A3",
+        "scan": 262,
+        "trial": 0
+      },
+      {
+        "schedule_index": 6,
+        "schedule_block": 2,
+        "schedule_position": 1,
+        "arm": "A5",
+        "scan": 284,
+        "trial": 0
+      },
+      {
+        "schedule_index": 7,
+        "schedule_block": 2,
+        "schedule_position": 2,
+        "arm": "A3",
+        "scan": 284,
+        "trial": 0
+      },
+      {
+        "schedule_index": 8,
+        "schedule_block": 2,
+        "schedule_position": 3,
+        "arm": "A1",
+        "scan": 284,
+        "trial": 0
+      },
+      {
+        "schedule_index": 9,
+        "schedule_block": 2,
+        "schedule_position": 4,
+        "arm": "A7",
+        "scan": 284,
+        "trial": 0
+      },
+      {
+        "schedule_index": 10,
+        "schedule_block": 2,
+        "schedule_position": 5,
+        "arm": "A4",
+        "scan": 284,
+        "trial": 0
+      }
+    ]
+  },
+  "remaining_before_scientific_launch": [
+    "Investigate the R5 Claude endpoint issue on the launch host",
+    "Freeze a separate latest-source/native-context revision and qualify every arm on the launch host",
+    "Verify raw-input and upstream MIDAS resource hashes",
+    "Acquire the existing scientific lock after R5; do not compete with an active trial"
+  ],
+  "r5_modified": false,
+  "r5_rescored": false
+}

@@ -7,7 +7,9 @@ are. Streaming content is passed through without changing scientific context.
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
+import re
 import secrets
 import threading
 import time
@@ -21,6 +23,52 @@ from procedure_audit import delivered_blocks
 
 def model_key(value):
     return "".join(c for c in str(value).lower() if c.isalnum())
+
+
+def safe_request_target(method, target):
+    """Record route diagnostics, discarding queries and opaque path segments."""
+    path = urlsplit(target).path
+    safe = "/".join(part if re.fullmatch(r"[a-z][a-z_-]{0,31}|v[0-9]+", part) else
+                    "{redacted}" if part else "" for part in path.split("/"))
+    return {"method": method, "path": safe[:256],
+            "path_sha256": hashlib.sha256(path.encode()).hexdigest()}
+
+
+def image_evidence(payload):
+    """Hash inline image inputs without recording images, URLs or prompt text."""
+    images = []
+
+    def visit(value):
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, dict):
+            encoded = None
+            if value.get("type") == "image" and isinstance(value.get("source"), dict):
+                source = value["source"]
+                if source.get("type") == "base64":
+                    encoded = source.get("data")
+            elif value.get("type") in ("image_url", "input_image"):
+                url = value.get("image_url")
+                if isinstance(url, dict):
+                    url = url.get("url")
+                if isinstance(url, str) and url.startswith("data:") and ";base64," in url:
+                    encoded = url.split(";base64,", 1)[1]
+                else:
+                    images.append({"inline": False})
+            if encoded is not None:
+                try:
+                    raw = base64.b64decode(encoded, validate=True)
+                    images.append({"inline": True, "bytes": len(raw),
+                                   "sha256": hashlib.sha256(raw).hexdigest()})
+                except (ValueError, TypeError):
+                    images.append({"inline": True, "invalid_base64": True})
+            for item in value.values():
+                if isinstance(item, (dict, list)):
+                    visit(item)
+
+    visit(payload.get("messages", []))
+    return images
 
 
 def response_evidence(payload, record):
@@ -79,9 +127,10 @@ class ModelAudit:
                 pass
 
             def error(self, code, message):
+                target = safe_request_target(self.command, self.path)
                 with owner.lock:
-                    owner.violations.append({"status": code, "reason": message})
-                owner.record({"event": "rejected_request", "http_status": code, "reason": message})
+                    owner.violations.append({"status": code, "reason": message, **target})
+                owner.record({"event": "rejected_request", "http_status": code, "reason": message, **target})
                 body = json.dumps({"error": {"type": "study_gateway", "message": message}}).encode()
                 self.send_response(code)
                 self.send_header("Content-Type", "application/json")
@@ -150,6 +199,7 @@ class ModelAudit:
                     body = json.dumps(payload).encode()
                     record["forwarded_sha256"] = hashlib.sha256(body).hexdigest()
                     record["automatic_procedures_delivered"] = delivered_blocks(payload, owner.procedure_candidates)
+                    record["input_images"] = image_evidence(payload)
                 headers = {"Authorization": "Bearer " + owner.api_key, "x-api-key": owner.api_key,
                            "Content-Type": "application/json", "Accept-Encoding": "identity"}
                 for key in ("anthropic-version", "anthropic-beta", "Accept"):

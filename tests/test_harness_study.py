@@ -1,5 +1,7 @@
 """Offline checks for study containment, audit evidence and qualification gates."""
 import json
+import base64
+import hashlib
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -102,6 +104,108 @@ def test_returned_model_mismatch_is_not_a_common_model_result(tmp_path, upstream
                    json={"model": "claudeopus5"})
     assert not audit.summary()["all_response_models_match"]
     assert not audit.summary()["qualified"]
+
+
+def test_rejected_endpoint_keeps_route_but_not_query_or_opaque_identifiers(tmp_path, upstream):
+    _, url = upstream
+    log = tmp_path / "audit.jsonl"
+    with ma.ModelAudit(url, "upstream-secret", "claudeopus5", log) as audit:
+        response = httpx.post(audit.base_url + "/messages/count_tokens?key=query-secret",
+                              headers={"x-api-key": audit.token}, json={"private": "prompt-secret"})
+        assert response.status_code == 404
+        httpx.get(audit.base_url + "/accounts/1234-secret-5678")
+    raw = log.read_text()
+    for private in ("query-secret", "prompt-secret", "upstream-secret", "1234-secret-5678"):
+        assert private not in raw
+    assert audit.summary()["protocol_violations"][0]["path"] == "/v1/messages/count_tokens"
+    assert audit.summary()["protocol_violations"][0]["method"] == "POST"
+    assert audit.summary()["protocol_violations"][1]["path"] == "/v1/accounts/{redacted}"
+    assert not audit.summary()["scientific_evaluable"]
+
+
+@pytest.mark.parametrize("wire", ["anthropic", "openai"])
+def test_image_audit_proves_bytes_reach_upstream_without_logging_content(tmp_path, upstream, wire):
+    server, url = upstream
+    raw = b"synthetic-image-private-bytes"
+    encoded = base64.b64encode(raw).decode()
+    block = ({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": encoded}}
+             if wire == "anthropic" else
+             {"type": "image_url", "image_url": {"url": "data:image/png;base64," + encoded}})
+    payload = {"model": "claudeopus5", "messages": [{"role": "user", "content": [block]}]}
+    log = tmp_path / "audit.jsonl"
+    with ma.ModelAudit(url, "secret", "claudeopus5", log) as audit:
+        response = httpx.post(audit.base_url + ("/messages" if wire == "anthropic" else "/chat/completions"),
+                              headers={"x-api-key": audit.token}, json=payload)
+        assert response.status_code == 200
+    assert server.requests[0]["messages"] == payload["messages"]
+    assert audit.records[0]["input_images"] == [{"inline": True, "bytes": len(raw),
+                                               "sha256": hashlib.sha256(raw).hexdigest()}]
+    assert encoded not in log.read_text() and raw.decode() not in log.read_text()
+    assert audit.summary()["qualified"]
+
+
+def test_guidance_requires_frozen_content_and_matching_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(study, "REPO", tmp_path)
+    path = tmp_path / "guidance.md"
+    path.write_text("Shared guidance\n")
+    spec = {"guidance_file": "guidance.md", "guidance_sha256": study.sha(path),
+            "wall_seconds": 1800, "max_model_requests": 40}
+    assert study.guidance_for({}) is None
+    assert study.guidance_for(spec) == path.read_text()
+    with pytest.raises(ValueError, match="budget"):
+        study.guidance_for({**spec, "wall_seconds": 300})
+    path.write_text("Changed after freeze")
+    with pytest.raises(ValueError, match="hash"):
+        study.guidance_for(spec)
+
+
+def test_image_flag_cannot_admit_an_unqualified_or_changed_adapter(tmp_path, monkeypatch):
+    spec = {"arms": ["A5"], "model": "m", "pi_image_input": True}
+    assert study.check_image_qualifications(tmp_path, {**spec, "pi_image_input": False}) == {}
+    with pytest.raises(RuntimeError, match="receipt"):
+        study.check_image_qualifications(tmp_path, spec)
+    launcher = tmp_path / "pi"
+    launcher.write_text("fake native launcher")
+    monkeypatch.setattr(study.shutil, "which", lambda _: str(launcher))
+    path = tmp_path / "setup/image-input/A5/qualification.json"
+    path.parent.mkdir(parents=True)
+    record = {"arm": "A5", "test": "image", "passed": True, "answer_correct": True,
+              "exact_image_delivered": True, "image_input": True, "model_requested": "m",
+              "host": {"system": study.platform.system(), "machine": study.platform.machine()},
+              "harness": {"launcher_sha256": study.sha(launcher)}, "model_audit": {"qualified": True},
+              "source_hashes": {n: study.sha(study.HERE / n) for n in
+                                ("rotation_benchmark.py", "run_comparison.py", "model_audit.py")}}
+    path.write_text(json.dumps(record))
+    assert study.check_image_qualifications(tmp_path, spec) == {"A5": study.sha(path)}
+    record["source_hashes"]["model_audit.py"] = "stale-source"
+    path.write_text(json.dumps(record))
+    with pytest.raises(RuntimeError, match="changed since"):
+        study.check_image_qualifications(tmp_path, spec)
+
+
+def test_shared_guidance_reaches_every_arm_but_not_smoke_tasks(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANL_USERNAME", "test-secret")
+    monkeypatch.setattr(study, "REPO", tmp_path)
+    guidance = tmp_path / "guidance.md"
+    guidance.write_text("The same finishing guidance.\n")
+    spec = {"guidance_file": guidance.name, "guidance_sha256": study.sha(guidance),
+            "wall_seconds": 1800, "max_model_requests": 40, "max_output_tokens": 100,
+            "model_base_url": "http://127.0.0.1:1/v1", "model": "m", "tilt_tolerance_deg": .1,
+            "arms": ["A1", "A3", "A4", "A5", "A7"]}
+    monkeypatch.setattr(study, "denied_locations", lambda *a: [])
+    seen = []
+    def fake_run(arm, *args, **kwargs):
+        seen.append((arm.id, kwargs["guidance_text"], kwargs["prompt_override"]))
+        return rb.Run(arm.id, arm.harness, 0, 0, "m", True, False)
+    monkeypatch.setattr(rb, "run_one", fake_run)
+    for arm in spec["arms"]:
+        study.run_trial(tmp_path, spec, tmp_path / arm, {"arm": arm, "scan": 0, "trial": 0},
+                        tmp_path / "fixture", {})
+    study.run_trial(tmp_path, spec, tmp_path / "smoke", {"arm": "A3", "scan": 0, "trial": 0},
+                    tmp_path / "fixture", {}, smoke=True)
+    assert [row[0] for row in seen[:-1]] == spec["arms"]
+    assert all(row[1:] == (guidance.read_text(), None) for row in seen[:-1])
+    assert seen[-1][1] is None and "file-I/O qualification" in seen[-1][2]
 
 
 def test_automatic_procedure_ablation_keeps_other_policies_identical():

@@ -4,6 +4,11 @@ This directory contains adapters for APEXA, Claude Code, OpenCode and Pi, plus a
 
 `run_comparison.py`'s historical 31 records remain **withdrawn**. The old rig leaked a reference file into the workspace, admitted a nominal filename answer through its tolerance, assumed APEXA-specific output names, and inferred execution from file modification times. Its provider/CLI adapters are reused; its legacy scoring is not a publication reference. This README supersedes earlier claims that these scripts isolate the harness by construction.
 
+The [guided follow-up protocol](studies/guided-2026-11/PROTOCOL.md) adds shared
+completion guidance and separately qualified image-input settings for Pi and
+OpenCode. It is post-audit development, with synthetic adapter checks separate
+from scientific trials. R5's source, prompts, outcomes and scoring remain frozen.
+
 ## Copland setup, November 2026
 
 The new [development protocol](studies/cvpr-2026-11/PROTOCOL.md) lives in the dedicated remote directory `/home/beams/S20HEDM/apexa_eval/harness-comparison/` (canonical path `/home/beams45/S20HEDM/apexa_eval/harness-comparison/`). Its isolated `source/`, `runtime/`, `setup/`, `work/` and `results/` directories keep installation, evidence and temporary work together. Production APEXA and MIDAS installations are read-only dependencies. Failed setup logs are retained separately from scientific trials.

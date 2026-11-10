@@ -323,6 +323,11 @@ def test_opencode_config_routes_to_argo_with_the_fixed_model(tmp_path):
     assert cfg["models"]["claudeopus5"]["limit"]["output"] == RC.MAX_TOKENS
     argv, env = _built("opencode")
     assert "argo/claudeopus5" in argv and env["OPENCODE_CONFIG"] == "/x/oc.json"
+    assert "modalities" not in cfg["models"]["claudeopus5"]
+    RC.write_opencode_config(p, "https://a/v1", "u", "claudeopus5", image_input=True)
+    model = json.loads(p.read_text())["provider"]["argo"]["models"]["claudeopus5"]
+    assert model["attachment"] is True
+    assert model["modalities"] == {"input": ["text", "image"], "output": ["text"]}
 
 
 def test_pi_provider_merge_touches_only_argo_and_backs_up(tmp_path, monkeypatch):
@@ -597,6 +602,11 @@ def test_pi_current_capability_and_isolated_profile(tmp_path, monkeypatch):
     if os.name == "posix":
         assert isolated.stat().st_mode & 0o777 == 0o600
     assert json.loads(isolated.read_text())["providers"]["argo"]["apiKey"] == "secret-test-key"
+    assert "input" not in json.loads(isolated.read_text())["providers"]["argo"]["models"][0]
+    RC.ensure_pi_provider("https://example.invalid/v1", "secret-test-key", "model",
+                          config_path=isolated, image_input=True)
+    assert json.loads(isolated.read_text())["providers"]["argo"]["models"][0]["input"] == ["text", "image"]
+    assert global_config.read_text() == '{"existing":"untouched"}'
 
 
 def test_summary_labels_reference_as_consistency():

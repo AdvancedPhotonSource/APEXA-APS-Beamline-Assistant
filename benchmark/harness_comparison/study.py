@@ -11,6 +11,7 @@ import fcntl
 import hashlib
 import json
 import os
+import platform
 import secrets
 import shutil
 import subprocess
@@ -59,6 +60,9 @@ def source_hashes():
     paths += [REPO / n for n in ("servers.config", "pyproject.toml", "uv.lock") if (REPO / n).exists()]
     paths += [SPEC, MANIFEST]
     spec = json.loads(SPEC.read_text())
+    if spec.get("guidance_file"):
+        guidance_for(spec)  # validate the declared identity before freezing it
+        paths.append(REPO / spec["guidance_file"])
     if spec.get("context_mode") == "native_apexa_upstream_midas":
         import native_context
         receipt = Path(spec["context_manifest"])
@@ -73,6 +77,48 @@ def source_hashes():
     policy = rb.load_manifest(MANIFEST)
     paths += [REPO / p for p in policy["files"]]
     return {str(p.relative_to(REPO)): sha(p) for p in paths}
+
+
+def guidance_for(spec):
+    relative = spec.get("guidance_file")
+    if relative is None:
+        return None
+    path = REPO / relative
+    if path.is_symlink() or not path.resolve().is_relative_to(REPO):
+        raise ValueError("Guidance must be a regular file inside the source snapshot")
+    if sha(path) != spec.get("guidance_sha256"):
+        raise ValueError("Guidance differs from its declared hash")
+    if (spec["wall_seconds"], spec["max_model_requests"]) != (1800, 40):
+        raise ValueError("This guidance specifies a 1,800-second / 40-request budget")
+    return path.read_text()
+
+
+def check_image_qualifications(root, spec):
+    """New image settings need native-CLI evidence on this launch platform."""
+    receipts = {}
+    for arm, flag, binary in (("A4", "opencode_image_input", "opencode"),
+                               ("A5", "pi_image_input", "pi")):
+        if not spec.get(flag) or arm not in spec["arms"]:
+            continue
+        path = root / "setup/image-input" / arm / "qualification.json"
+        if not path.is_file() or path.is_symlink():
+            raise RuntimeError(f"{arm} image input needs a native image qualification receipt")
+        record = json.loads(path.read_text())
+        if (record.get("arm") != arm or record.get("test") != "image"
+                or not all(record.get(key) is True for key in
+                           ("passed", "answer_correct", "exact_image_delivered", "image_input"))
+                or record.get("model_requested") != spec["model"]
+                or record.get("host") != {"system": platform.system(), "machine": platform.machine()}
+                or not record.get("model_audit", {}).get("qualified")):
+            raise RuntimeError(f"{arm} image qualification does not match this platform/model")
+        launcher = shutil.which(binary)
+        if not launcher or sha(Path(launcher).resolve()) != record.get("harness", {}).get("launcher_sha256"):
+            raise RuntimeError(f"{arm} image qualification used a different harness installation")
+        for name in ("rotation_benchmark.py", "run_comparison.py", "model_audit.py"):
+            if record.get("source_hashes", {}).get(name) != sha(HERE / name):
+                raise RuntimeError(f"{arm} adapter changed since image qualification: {name}")
+        receipts[arm] = sha(path)
+    return receipts
 
 
 def solver_inventory(python):
@@ -253,6 +299,7 @@ print(json.dumps(visible))"""
 
 def run_trial(root, spec, output, entry, exposure, truth, *, smoke=False):
     arm, scan, trial = entry["arm"], entry["scan"], entry["trial"]
+    image_qualifications = {} if smoke else check_image_qualifications(root, spec)
     api_key = os.environ.get("ANL_USERNAME", "")
     if not api_key:
         raise RuntimeError("ANL_USERNAME is required; credentials are never stored in study files")
@@ -272,8 +319,13 @@ def run_trial(root, spec, output, entry, exposure, truth, *, smoke=False):
             structured_logs=True,
             scratch_root=root / "work",
             prompt_override=SMOKE_PROMPT.format(name=exposure.name) if smoke else None,
+            guidance_text=None if smoke else guidance_for(spec),
+            pi_image_input=spec.get("pi_image_input", False),
+            opencode_image_input=spec.get("opencode_image_input", False),
             require_manifest=not smoke, procedure_candidates=candidates)
     result.model_audit = audit.summary()
+    if arm in image_qualifications:
+        result.policy_bundle["image_qualification_sha256"] = image_qualifications[arm]
     apply_model_audit(result, smoke=smoke)
     for key in ("schedule_index", "schedule_block", "schedule_position"):
         setattr(result, key, entry.get(key))
@@ -465,12 +517,18 @@ def run_locked(root, spec, cohort):
 
 
 def main():
+    global SPEC
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("action", choices=("prepare", "verify", "qualify", "admit", "run"))
     p.add_argument("--root", type=Path, required=True)
     p.add_argument("--cohort", choices=("pilot", "main"), default="pilot")
     p.add_argument("--review", type=Path)
+    p.add_argument("--spec", type=Path, default=SPEC,
+                   help="Separate revision specification within its source snapshot")
     args = p.parse_args()
+    SPEC = args.spec.resolve()
+    if not SPEC.is_relative_to(REPO):
+        p.error("The specification must be inside the source snapshot")
     root = args.root.resolve()
     if not root.is_dir():
         p.error("Create and review the dedicated study directory first")
