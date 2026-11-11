@@ -513,6 +513,56 @@ def test_parallel_dispatch_keeps_explicit_specification(tmp_path, monkeypatch):
     assert seen == [selected]
 
 
+def test_native_qualification_exercises_all_four_slots_concurrently(tmp_path, monkeypatch):
+    import expanded_study as expanded
+    from concurrent.futures import ThreadPoolExecutor
+    sets = [[n] for n in range(4)]
+    spec = {"arms": ["A1", "A3", "A4", "A5"]}
+    barrier = threading.Barrier(4, timeout=5)
+    observed = []
+    monkeypatch.setattr(expanded, "cpu_sets", lambda spec: sets)
+    monkeypatch.setattr(expanded, "ProcessPoolExecutor",
+                        lambda max_workers, **kwargs: ThreadPoolExecutor(max_workers=max_workers))
+    def execute(root, received, output, entry, source, truth, cpus, *, smoke=False):
+        observed.append((entry["arm"], cpus, smoke))
+        barrier.wait()
+        return entry["arm"]
+    monkeypatch.setattr(expanded, "execute", execute)
+    assert expanded.qualify_trials(tmp_path, spec, tmp_path, tmp_path / "fixture") == spec["arms"]
+    assert sorted(observed) == [(arm, sets[i], True) for i, arm in enumerate(spec["arms"])]
+
+
+@pytest.mark.parametrize("failed_arm", [None, "A4"])
+def test_concurrent_qualification_requires_every_arm_to_pass(tmp_path, monkeypatch, failed_arm):
+    import expanded_study as expanded
+    spec = {"arms": ["A1", "A3", "A4", "A5"], "execution": {"workers": 4}}
+    monkeypatch.setattr(study, "verify", lambda *args, **kwargs: {})
+    monkeypatch.setattr(study, "source_hashes", lambda: {})
+    monkeypatch.setattr(study, "sandbox_check", lambda *args: {"passed": True})
+    (tmp_path / "setup").mkdir()
+    def qualify(root, spec, output, fixture):
+        results = []
+        for arm in spec["arms"]:
+            dest = output / f"workspaces/{arm}_0_0/smoke_copy.txt"
+            dest.parent.mkdir(parents=True)
+            dest.write_bytes(fixture.read_bytes())
+            result = rb.Run(arm, rb.ARMS[arm].harness, 0, 0, "m", True, False, return_code=0)
+            result.model_audit = {"qualified": arm != failed_arm,
+                "automatic_procedure_hashes_delivered": ["native-procedure"] if arm == "A1" else []}
+            results.append(result)
+        return results
+    monkeypatch.setattr(expanded, "qualify_trials", qualify)
+    if failed_arm:
+        with pytest.raises(RuntimeError, match="Qualification failed"):
+            study.qualify(tmp_path, spec)
+    else:
+        study.qualify(tmp_path, spec)
+    receipt = json.loads((tmp_path / "setup/qualification.json").read_text())
+    assert receipt["passed"] == (failed_arm is None)
+    assert receipt["execution"]["workers"] == 4
+    assert len(receipt["checks"]) == 4 and receipt["scientific_runs"] == 0
+
+
 def test_calibration_provenance_does_not_relabel_template_phase(tmp_path):
     from _calibrate_runner import phase_provenance
     param = tmp_path / "params.txt"

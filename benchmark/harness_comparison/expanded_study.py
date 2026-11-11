@@ -1,7 +1,7 @@
 """Fixed, CPU-isolated batches for a separately frozen supported comparison.
 
 The caller holds the common scientific lock for the entire cohort. Batches
-follow the frozen schedule, and the next batch waits for both terminal records.
+follow the frozen schedule, and the next batch waits for every terminal record.
 There is no completion-dependent reordering or retry of a started exposure.
 """
 from __future__ import annotations
@@ -41,9 +41,9 @@ def cpu_sets(spec):
     return sets
 
 
-def execute(root, spec, output, entry, source, truth, cpus):
+def execute(root, spec, output, entry, source, truth, cpus, *, smoke=False):
     os.sched_setaffinity(0, cpus)
-    result = study.run_trial(root, spec, output, entry, Path(source["path"]), truth)
+    result = study.run_trial(root, spec, output, entry, Path(source["path"]), truth, smoke=smoke)
     result.policy_bundle["cpu_affinity"] = cpus
     if entry.get("task_variant") == "pixel_size_100um":
         result.comparison_kind = "supplied_pixel_size_contradiction"
@@ -54,6 +54,21 @@ def execute(root, spec, output, entry, source, truth, cpus):
             result.outcome = "challenge_" + (result.scientific_status or "unresolved")
         result.detail += "; discrepancy detection and response require saved-evidence adjudication"
     return result
+
+
+def qualify_trials(root, spec, output, fixture):
+    """Exercise native tools and provider transport under the actual concurrency."""
+    sets = cpu_sets(spec)
+    results = []
+    with ProcessPoolExecutor(max_workers=len(sets), mp_context=multiprocessing.get_context("spawn")) as pool:
+        for start in range(0, len(spec["arms"]), len(sets)):
+            arms = spec["arms"][start:start + len(sets)]
+            print(f"Qualifying concurrent native file I/O: {', '.join(arms)}", flush=True)
+            futures = [pool.submit(execute, root, spec, output,
+                {"arm": arm, "scan": 0, "trial": 0}, {"path": str(fixture)}, {}, sets[slot], smoke=True)
+                for slot, arm in enumerate(arms)]
+            results.extend(future.result() for future in futures)
+    return results
 
 
 def interrupted(entry, spec):

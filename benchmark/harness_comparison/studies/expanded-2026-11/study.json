@@ -74,7 +74,7 @@
   },
   "execution": {
     "policy": "fixed_batches_v1",
-    "workers": 2,
+    "workers": 4,
     "cpu_affinity": [
       [
         32,
@@ -87,6 +87,18 @@
         37,
         38,
         39
+      ],
+      [
+        40,
+        41,
+        42,
+        43
+      ],
+      [
+        44,
+        45,
+        46,
+        47
       ]
     ]
   },

@@ -376,9 +376,15 @@ def qualify(root, spec):
     fixture = root / "setup/qualification_000000.txt"
     fixture.write_text("Synthetic file-copy fixture; no diffraction data.\n" + secrets.token_hex(32) + "\n")
     records = []
-    for arm in spec["arms"]:
-        print(f"Qualifying {arm}: model transport and synthetic file I/O only.", flush=True)
-        result = run_trial(root, spec, output, {"arm": arm, "scan": 0, "trial": 0}, fixture, {}, smoke=True)
+    if spec.get("execution", {}).get("workers", 1) > 1:
+        import expanded_study
+        expanded_study.study.SPEC = SPEC
+        trials = expanded_study.qualify_trials(root, spec, output, fixture)
+    else:
+        trials = (run_trial(root, spec, output, {"arm": arm, "scan": 0, "trial": 0}, fixture, {}, smoke=True)
+                  for arm in spec["arms"])
+    for result in trials:
+        arm = result.arm
         copied = output / f"workspaces/{arm}_0_0/smoke_copy.txt"
         success = (result.return_code == 0 and copied.is_file() and not copied.is_symlink()
                    and copied.read_bytes() == fixture.read_bytes()
@@ -397,6 +403,7 @@ def qualify(root, spec):
     passed = all(r["passed"] for r in records) and procedure_check
     write_new(root / "setup/qualification.json", {"passed": passed,
               "source_hashes": source_hashes(), "checks": records, "scientific_runs": 0,
+              "execution": spec.get("execution", {"workers": 1}),
               "automatic_procedure_delivery_passed": procedure_check})
     if not passed:
         raise RuntimeError("Qualification failed; see setup/qualification.json. No scientific trials were run.")

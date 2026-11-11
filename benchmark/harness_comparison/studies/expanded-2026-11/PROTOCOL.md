@@ -18,9 +18,10 @@ therefore it is not an estimate of the effect of budget alone.
   120 generation requests, 3,600 s and 16,000 output tokens/request. The exact
   shared guidance is the guide used by the completed supported local probes.
 - Four CPU threads per trial, with four distinct physical cores enforced by
-  affinity. Two fixed slots use CPUs 32–35 and 36–39 on Copland. The frozen
-  balanced schedule runs in consecutive two-entry batches; both finish before
-  the next batch. Slot and order do not depend on observed performance.
+  affinity. Four fixed slots use CPUs 32–35, 36–39, 40–43 and 44–47 on Copland.
+  Each four-entry batch is one scan/repeat block: all four systems run together,
+  and all finish before the next block. The frozen Latin schedule balances the
+  systems across CPU slots. Slot assignment does not depend on performance.
 - Hold the common scientific lock for setup and each cohort, after R5 becomes
   terminal. No new scientific computation competes with an R5 trial.
 - External systems receive unedited upstream MIDAS manuals and skills. They
@@ -33,7 +34,10 @@ therefore it is not an estimate of the effect of budget alone.
 
 Before science: verify scoped filesystem isolation, native file I/O for all four
 systems, Claude's native Bash and real token-count endpoint, and Pi/OpenCode
-delivery of the exact synthetic image to the model. Pin image receipts to the
+delivery of the exact synthetic image to the model. The four-system file-I/O
+qualification runs concurrently on the declared CPU slots, exercising provider
+transport, native context and private workspaces at the scientific concurrency.
+Pin image receipts to the
 launch platform, launcher, model and adapter source. Qualify native retrieval
 with pinned offline embedding weights, source freshness and hit integrity.
 Failed setup attempts are retained. A failed gate stops the queue.
@@ -102,8 +106,17 @@ job. Store evidence citations and adjudication alongside the original outputs.
 
 ## Capacity
 
-128 nominal trials plus 16 challenge trials require at most 72 one-hour batches
-under this two-worker policy, plus qualification, staging and archival overhead.
+128 nominal trials plus 16 challenge trials require at most 36 one-hour batches
+under this four-worker policy, plus qualification, staging and archival overhead.
 This is capacity arithmetic, not a promised completion time. Provider outages,
 failed qualification and host contention can delay the experiment. No partial
 results or operational placeholders are inserted into the manuscript.
+
+The two-worker queue was superseded on November 11 at the user's request before
+setup freezing, qualification or scientific execution. Its launch records and
+source snapshot are retained with the concurrency amendment. Per-trial budgets,
+CPU threads, cohort, repeats, input bytes, prompts and scientific scoring are
+unchanged. Four workers use 16 of Copland's 48 physical cores. This leaves room
+for other users and avoids committing eight simultaneous agent sessions before
+the provider has been qualified under a smaller concurrent workload. Qualification
+does not guarantee the provider's capacity will remain constant throughout R6.
