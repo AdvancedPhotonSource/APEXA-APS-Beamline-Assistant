@@ -620,6 +620,57 @@ def test_paired_bootstrap_preserves_pairing_and_both_sweeps():
     assert result["A1"]["percentile_95_interval"] == [0., 0.]
 
 
+@pytest.mark.parametrize("affected_arm,state", [
+    (None, None), ("A7", "not_launched_cutoff"), ("B0", "not_launched_cutoff"), ("A7", "unrun")])
+def test_r6_analysis_distinguishes_accounted_cutoff_from_completed_attempts(tmp_path, monkeypatch, affected_arm, state):
+    import analyze_r6
+    setup = tmp_path / "setup"
+    setup.mkdir()
+    reference = setup / "reference.csv"
+    reference.write_text("scan,tz_deg\n261,1\n304,2\n")
+    (setup / "reference_rs2_r2.csv").write_text("scan,predicted_tz_deg\n304,2\n")
+    spec = {"arms": ["A1", "A7"], "order_seed": 20261111, "tilt_tolerance_deg": .1}
+    study.write_new(setup / "frozen.json", {"spec": spec, "reference_sha256": study.sha(reference)})
+    monkeypatch.setattr(study, "load_reference", lambda *args: {})
+    rows = []
+    for scan in (261, 304):
+        for arm in ("A1", "A7", "B0"):
+            for trial in range(1 if arm == "B0" else 2):
+                row = {"scan": scan, "trial": trial, "arm": arm, "record_status": "terminal",
+                       "outcome": "correct", "endpoint": True, "elapsed_s": 100.,
+                       "model_requests": 0 if arm == "B0" else 10, "technically_evaluable": True}
+                if scan == 304 and arm == affected_arm:
+                    if state == "not_launched_cutoff":
+                        row.update(outcome=state, endpoint=False, elapsed_s=0., model_requests=0)
+                    else:
+                        row.update(record_status=state, outcome=state, endpoint=None)
+                rows.append(row)
+    # analyze_main counts cutoff records as terminal before the R6-specific
+    # reclassification; this reproduces the inherited completion/pairing bug.
+    inherited = {"complete": state != "unrun", "illustrative_pairs": {"A7": "inherited"},
+                 "trials": rows, "acquisitions": [
+                     {"scan": scan, "calibrant": "CeO2", "A1": 1., "A7": 0., "B0": 0.}
+                     for scan in (261, 304)]}
+    monkeypatch.setattr(analyze_r6.analyze_main, "analyze", lambda *args: inherited)
+    report = analyze_r6.analyze(tmp_path)
+    cutoff_count = (1 if affected_arm == "B0" else 2) if state == "not_launched_cutoff" else 0
+    assert report["complete"] is (affected_arm is None)
+    assert report["accounting_complete"] is (state != "unrun")
+    assert report["not_launched_cutoff"] == cutoff_count
+    assert report["agent_attempts_complete"] is (affected_arm in (None, "B0"))
+    assert (report["paired_comparisons"] is not None) is (affected_arm in (None, "B0"))
+    assert (report["illustrative_pairs"] is not None) is (affected_arm is None)
+    assert report["acquisitions"][0]["A7"] == 1.
+    if affected_arm:
+        assert report["acquisitions"][1][affected_arm] is None
+        summary = report["arms"][affected_arm]
+        assert summary["not_launched_cutoff"] == cutoff_count
+        assert summary["attempted_terminal"] == (1 if affected_arm == "B0" else 2)
+        assert summary["rate_all_scheduled"] == .5
+        assert summary["attempted_cost"]["elapsed_s"]["median"] == 100.
+        assert "excluding staging" in summary["attempted_cost"]["elapsed_s"]["description"]
+
+
 def test_calibration_provenance_does_not_relabel_template_phase(tmp_path):
     from _calibrate_runner import phase_provenance
     param = tmp_path / "params.txt"

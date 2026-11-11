@@ -37,10 +37,21 @@ scientific claims. These execution audits are separate from the automated endpoi
 ## Estimation and costs
 
 For each arm report completion count/planned cells and every operational status.
-Costs: median and minimum/maximum generation requests and observed wall time over
+Costs: median and minimum/maximum generation requests and observed subprocess runtime over
 attempted trials, and separately over completed endpoint trials. Count auxiliary
 token requests separately. Interrupted time is unknown, timeout is censored, and
 never-launched cost is missing rather than zero. Retain provider usage and latency.
+The saved `elapsed_s` measures harness (or fixed-solver) subprocess runtime and
+excludes input/context staging. The model relay's 3,600-second deadline starts
+before staging, so staging reduces the time available for model requests. These
+runtime summaries do not measure full end-to-end duration.
+
+Distinguish complete accounting from completed attempts: cutoff records account
+for planned cells but do not make the attempted cohort complete. Acquisition means
+are unavailable when any of that arm's repeats was unlaunched or nonterminal;
+the full planned denominator remains visible in the arm summaries. Withhold
+illustrative outcome pairs when any planned nominal or baseline cell was
+unlaunched or nonterminal.
 
 Provide all 24 acquisition rows with each agent's mean of two repeats and B0's
 single outcome. Predeclared contrasts are A1, A3, A4 and A5 minus A7; A1 minus A7

@@ -35,6 +35,7 @@ def costs(rows):
         result[field] = {"observed": len(values), "missing": len(rows) - len(values),
             "median": statistics.median(values) if values else None,
             "range": [min(values), max(values)] if values else None}
+    result["elapsed_s"]["description"] = "Harness or fixed-solver subprocess runtime, excluding staging."
     return result
 
 
@@ -60,10 +61,17 @@ def analyze(root):
             row = json.loads(line)
             if row.get("predicted_tz") is not None and abs(row["predicted_tz"] - truth[row["scan"]]["predicted_tz"]) > 1e-10:
                 raise ValueError("Terminal reference differs from the frozen within-sweep reference")
+    arms = [*spec["arms"], "B0"]
     for row in report["acquisitions"]:
         row["sweep"] = "first" if row["scan"] < 304 else "second"
         row["stratum"] = row["sweep"] + "_" + row["calibrant"]
-    arms = [*spec["arms"], "B0"]
+        # The shared audit initially treats administrative cutoff records as
+        # terminal failures. Do not present their acquisition means as observed
+        # failures after reclassifying those records as never launched.
+        for arm in arms:
+            rows = [r for r in report["trials"] if r["scan"] == row["scan"] and r["arm"] == arm]
+            row[arm] = statistics.mean(r["endpoint"] for r in rows) if all(
+                r["record_status"] == "terminal" for r in rows) else None
     summary = {}
     for arm in arms:
         rows = [r for r in report["trials"] if r["arm"] == arm]
@@ -78,7 +86,13 @@ def analyze(root):
             "attempted_cost": costs(attempted), "completed_cost": costs(accepted)}
     agent_rows = [r for r in report["trials"] if r["arm"] != "B0"]
     attempted_complete = all(r["record_status"] == "terminal" for r in agent_rows)
-    report.update(arms=summary, paired_comparisons=None,
+    complete = all(r["record_status"] == "terminal" for r in report["trials"])
+    report.update(arms=summary, complete=complete, agent_attempts_complete=attempted_complete,
+        accounting_complete=all(r["record_status"] in ("terminal", "not_launched_cutoff")
+                                for r in report["trials"]),
+        not_launched_cutoff=sum(r["record_status"] == "not_launched_cutoff" for r in report["trials"]),
+        illustrative_pairs=report.get("illustrative_pairs") if complete else None,
+        paired_comparisons=None,
         bootstrap={"samples": 10000, "seed": spec["order_seed"], "reference": "A7",
             "stratified_by": "sweep and calibrant", "unit": "acquisition; two repeats averaged",
             "interval": "percentile 95%; no significance stars"},
@@ -86,6 +100,7 @@ def analyze(root):
                 "Primary endpoint requires independent execution/raw-image review before scientific conclusions.",
                 "Administrative cutoff cells stay in the planned denominator and are distinct from attempted failures.",
                 "Costs exclude never-launched cells; interrupted elapsed times remain unknown.",
+                "elapsed_s measures subprocess runtime, excluding staging; the model relay deadline starts before staging.",
                 "Paired intervals are withheld if any agent cell is unlaunched or nonterminal.",
                 "Relative tilt consistency is not independent absolute-angle or distance metrology."])
     if attempted_complete:
