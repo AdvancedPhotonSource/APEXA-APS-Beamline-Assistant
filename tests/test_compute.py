@@ -137,6 +137,44 @@ def test_busy_cpu_does_not_force_one_worker():
     assert C.plan(1, "calibration", resources=res(load1=100)).n_workers == 0
 
 
+@pytest.mark.parametrize("remote", [False, True])
+@pytest.mark.parametrize("busy_cpus,quota", [(2, 8), (8, 8), (2, 4)])
+def test_cpu_admission_measures_the_allocated_cpus(monkeypatch, remote, busy_cpus, quota):
+    """Host load 44 cannot consume all eight pinned CPUs; their own usage can."""
+    if remote:
+        namespace = {}
+        exec(C._CPU_PROBE_SRC, namespace)
+        sample = namespace["_allocation_load"]
+    else:
+        sample = C._allocation_load
+    allowed = set(range(32, 40))
+    before = {i: (1000, 800) for i in range(112)}
+    after = {i: (1100, 800 if i in range(32, 32 + busy_cpus) else 900)
+             for i in range(112)}
+    snapshots = iter([before, after])
+    monkeypatch.setitem(sample.__globals__, "_read_cpu_ticks", lambda: next(snapshots))
+    monkeypatch.setattr(C.time, "sleep", lambda _: None)
+    load, kind = sample(quota, allowed, 112, 44)
+    assert kind == "allocation_cpu_usage"
+    assert load == pytest.approx(quota * busy_cpus / 8)
+    resources = res(cores=quota, load1=load, gpus=0)
+    plan = C.plan(1, "calibration", resources=resources)
+    assert plan.n_workers == (0 if busy_cpus == 8 else 1)
+
+
+def test_unrestricted_inventory_retains_the_host_load(monkeypatch):
+    monkeypatch.setattr(C, "_read_cpu_ticks", lambda: pytest.fail("No sampling needed"))
+    assert C._allocation_load(112, set(range(112)), 112, 120) == (120, "host_load_average")
+
+
+def test_unknown_allocation_usage_is_not_treated_as_free(monkeypatch):
+    def missing():
+        raise OSError("proc counters unavailable")
+    monkeypatch.setattr(C, "_read_cpu_ticks", missing)
+    assert C._allocation_load(8, set(range(32, 40)), 112, 1) == (
+        8.0, "allocation_cpu_usage_unavailable")
+
+
 def test_vram_caps_concurrency_separately_from_host_rss():
     p = C.plan(50, profile=C.TaskProfile("gpu-fit", rss_gb=1, vram_gb=12,
                                        threads_per_worker=1, gpu_speedup=8),

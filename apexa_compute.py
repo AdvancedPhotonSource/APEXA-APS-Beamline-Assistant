@@ -57,6 +57,7 @@ import shlex
 import subprocess
 import csv
 import io
+import inspect
 from contextlib import contextmanager
 from contextvars import ContextVar
 import sys
@@ -105,21 +106,23 @@ class Resources:
     mem_free_gb: float = 0.0
     gpus: List[GPU] = field(default_factory=list)
     source: str = "local"
+    cpu_load_kind: str = "host_load_average"
 
     @property
     def free_cores(self) -> float:
         """Cores not already busy; zero means no capacity can be admitted.
 
-        Uses the 1-minute load average rather than a snapshot of CPU percent:
-        load is what the other users on this host are actually costing us, and
-        it is the number a human looks at before launching work on a shared box.
+        Unrestricted hosts use the one-minute load average. A restricted CPU
+        allocation uses busy CPU-equivalents measured on its allowed CPUs;
+        subtracting whole-host load from that smaller allocation mixes scopes.
         """
         return max(0.0, float(self.cores) - max(0.0, self.load1))
 
     def describe(self) -> str:
         g = f", {len(self.gpus)} GPU" + ("s" if len(self.gpus) != 1 else "") if self.gpus else ", no GPU"
+        metric = "load" if self.cpu_load_kind == "host_load_average" else "busy CPU-equivalents"
         return (f"{self.host or 'local'}: {self.cores} cores "
-                f"({self.free_cores:.0f} free, load {self.load1:.1f}), "
+                f"({self.free_cores:.0f} free, {metric} {self.load1:.1f}), "
                 f"{self.mem_free_gb:.0f}/{self.mem_total_gb:.0f} GB free{g}")
 
 
@@ -146,15 +149,61 @@ def _darwin_correction(load1: float, cores: int):
     return load1, pct
 
 
+def _read_cpu_ticks():
+    """Per-logical-CPU (total, idle) counters; guest time is already in user time."""
+    result = {}
+    for line in Path("/proc/stat").read_text().splitlines():
+        fields = line.split()
+        if not fields or not fields[0].startswith("cpu") or not fields[0][3:].isdigit():
+            continue
+        values = list(map(int, fields[1:9]))
+        if len(values) < 4:
+            raise ValueError("Incomplete per-CPU counters")
+        result[int(fields[0][3:])] = (sum(values), values[3] + (values[4] if len(values) > 4 else 0))
+    return result
+
+
+def _allocation_load(cores, allowed, host_cores, host_load):
+    """Match busy-capacity units to the affinity/quota-limited core count."""
+    if cores >= host_cores and len(allowed) >= host_cores:
+        return host_load, "host_load_average"
+    try:
+        before = _read_cpu_ticks()
+        time.sleep(0.1)
+        after = _read_cpu_ticks()
+        busy = []
+        for cpu in allowed:
+            total = after[cpu][0] - before[cpu][0]
+            idle = after[cpu][1] - before[cpu][1]
+            if total <= 0 or idle < 0 or idle > total:
+                raise ValueError("Invalid per-CPU counter delta")
+            busy.append(1.0 - idle / total)
+        if not busy:
+            raise ValueError("Empty CPU affinity")
+        return cores * sum(busy) / len(busy), "allocation_cpu_usage"
+    except (OSError, ValueError, KeyError):
+        # Missing allocation telemetry is not evidence that its CPUs are idle.
+        return float(cores), "allocation_cpu_usage_unavailable"
+
+
+# Embed the same dependency-free helpers in the remote probe, so its scope
+# arithmetic cannot diverge from the local inventory implementation.
+_CPU_PROBE_SRC = ("import time\nfrom pathlib import Path\n" + inspect.getsource(_read_cpu_ticks)
+                  + "\n" + inspect.getsource(_allocation_load))
+
 #: Dependency-free inventory for data hosts. NVIDIA telemetry uses nvidia-smi,
 #: not importing a heavyweight tensor runtime just to populate a resource badge.
-_PROBE_SRC = r'''
+_PROBE_SRC = _CPU_PROBE_SRC + r'''
 import csv, io, json, os, subprocess
 d = {"cores": os.cpu_count() or 1, "load1": os.getloadavg()[0], "gpus": []}
+host_cores = d["cores"]
+allowed = set(range(host_cores))
 try:
-    d["cores"] = min(d["cores"], len(os.sched_getaffinity(0)))
+    allowed = os.sched_getaffinity(0)
+    d["cores"] = min(d["cores"], len(allowed))
 except (AttributeError, OSError):
     pass
+d["load1"], d["cpu_load_kind"] = _allocation_load(d["cores"], allowed, host_cores, d["load1"])
 try:
     for line in open("/proc/meminfo"):
         k, v = line.split(":")[0], line.split()[1]
@@ -214,9 +263,11 @@ def _visible_gpus(gpus: List[GPU]) -> List[GPU]:
 
 
 def _local_inventory() -> Resources:
-    cores = os.cpu_count() or 1
+    host_cores = cores = os.cpu_count() or 1
+    allowed = set(range(host_cores))
     try:
-        cores = min(cores, len(os.sched_getaffinity(0)))
+        allowed = os.sched_getaffinity(0)
+        cores = min(cores, len(allowed))
     except (AttributeError, OSError):
         pass
     try:
@@ -236,6 +287,9 @@ def _local_inventory() -> Resources:
     except (OSError, AttributeError):
         load1 = 0.0
     load1, darwin_mem_pct = _darwin_correction(load1, cores)
+    cpu_load_kind = "host_load_average" if sys.platform != "darwin" else "cpu_usage"
+    if sys.platform.startswith("linux"):
+        load1, cpu_load_kind = _allocation_load(cores, allowed, host_cores, load1)
     mem_total = mem_free = 0.0
     try:
         import psutil
@@ -263,7 +317,7 @@ def _local_inventory() -> Resources:
     except (OSError, ValueError, subprocess.SubprocessError):
         pass
     gpus = _visible_gpus(gpus)
-    return Resources("", cores, load1, mem_total, mem_free, gpus, "local")
+    return Resources("", cores, load1, mem_total, mem_free, gpus, "local", cpu_load_kind)
 
 
 def _remote_inventory(host: str, python: str = "") -> Optional[Resources]:
@@ -296,7 +350,7 @@ def _remote_inventory(host: str, python: str = "") -> Optional[Resources]:
                      mem_total_gb=float(d.get("mem_total_gb", 0.0)),
                      mem_free_gb=float(d.get("mem_free_gb", 0.0)),
                      gpus=[GPU(**g) for g in d.get("gpus", [])],
-                     source="remote")
+                     source="remote", cpu_load_kind=d.get("cpu_load_kind", "host_load_average"))
 
 
 def inventory(host: str = "", *, force: bool = False,
@@ -313,7 +367,8 @@ def inventory(host: str = "", *, force: bool = False,
                                  mem_total_gb=r["mem_total_gb"],
                                  mem_free_gb=r["mem_free_gb"],
                                  gpus=[GPU(**g) for g in r["gpus"]],
-                                 source=r.get("source", "cache"))
+                                 source=r.get("source", "cache"),
+                                 cpu_load_kind=r.get("cpu_load_kind", "host_load_average"))
         except Exception:
             pass
     res = (_remote_inventory(host) if host else _local_inventory())
