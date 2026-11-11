@@ -53,7 +53,8 @@ def write_new(path, data):
 def source_hashes():
     paths = [HERE / n for n in ("study.py", "rotation_benchmark.py", "run_comparison.py",
                                 "_apexa_driver.py", "model_audit.py", "procedure_audit.py", "native_context.py",
-                                "freeze_native_context.py", "main_supervisor.py")]
+                                "freeze_native_context.py", "main_supervisor.py", "expanded_study.py",
+                                "qualify_guided_adapters.py", "expanded_queue.py")]
     paths += [REPO / n for n in ("apexa_agents.py", "midas_comprehensive_server.py",
                                 "_calibrate_runner.py", "skill_registry.py", "apexa_knowledge_policy.py")]
     paths += list(REPO.glob("*.py"))
@@ -88,9 +89,26 @@ def guidance_for(spec):
         raise ValueError("Guidance must be a regular file inside the source snapshot")
     if sha(path) != spec.get("guidance_sha256"):
         raise ValueError("Guidance differs from its declared hash")
-    if (spec["wall_seconds"], spec["max_model_requests"]) != (1800, 40):
-        raise ValueError("This guidance specifies a 1,800-second / 40-request budget")
+    # Legacy guidance retains its original contract. New revisions declare both
+    # limits explicitly and freeze that declaration with the guide's exact bytes.
+    budget = spec.get("guidance_budget", {"wall_seconds": 1800, "max_model_requests": 40})
+    if (set(budget) != {"wall_seconds", "max_model_requests"}
+            or any(type(v) is not int or v <= 0 for v in budget.values())
+            or any(spec[k] != v for k, v in budget.items())):
+        raise ValueError("Guidance budget differs from the execution budget")
     return path.read_text()
+
+
+def cohorts(spec):
+    result = [("main", spec["scans"], spec["repeats"]), ("pilot", spec["pilot_scans"], 1)]
+    if spec.get("challenge_scans"):
+        result.append(("challenge", spec["challenge_scans"], spec["repeats"]))
+    return [item for item in result if item[1]]
+
+
+def load_reference(root, spec):
+    return rb.load_truth(root / "setup/reference.csv", value_col="tz_deg",
+                         group_col=spec.get("reference_group", "calibrant"))
 
 
 def check_image_qualifications(root, spec):
@@ -208,9 +226,9 @@ def prepare(root, spec):
     if target.exists():
         raise RuntimeError("A frozen setup already exists. Verify it; do not overwrite a study identity.")
     reference = root / "setup/reference.csv"
-    truth = rb.load_truth(reference, value_col="tz_deg")
-    scans = sorted(set(spec["scans"] + spec["pilot_scans"]))
-    files = rb.select_exposures(Path(spec["raw_root"]), "*.vrx.h5", truth, scans)
+    truth = load_reference(root, spec)
+    scans = sorted({scan for _, cases, _ in cohorts(spec) for scan in cases})
+    files = rb.select_exposures(Path(spec["raw_root"]), spec.get("raw_glob", "*.vrx.h5"), truth, scans)
     print(f"Hashing and inspecting {len(files)} raw files; no copying or fitting.", flush=True)
     inputs = inspect_inputs(spec["solver_python"], files.values())
     inventory = solver_inventory(spec["solver_python"])
@@ -220,8 +238,7 @@ def prepare(root, spec):
               "source_hashes": source_hashes(), "reference_sha256": sha(reference),
               "inputs": inputs, "solver": inventory, "harnesses": harness_versions(root),
               "model_calls": 0, "scientific_runs": 0}
-    for cohort, cases, repeats in (("main", spec["scans"], spec["repeats"]),
-                                    ("pilot", spec["pilot_scans"], 1)):
+    for cohort, cases, repeats in cohorts(spec):
         write_new(root / f"setup/{cohort}_schedule.json",
                   rb.make_schedule(spec["arms"], cases, repeats, spec["order_seed"]))
     write_new(target, record)
@@ -242,8 +259,7 @@ def verify(root, spec, *, check_inputs=True):
         for item in frozen["inputs"]:
             if sha(item["path"]) != item["sha256"]:
                 raise RuntimeError("Raw input changed after freezing")
-    for cohort, scans, repeats in (("main", spec["scans"], spec["repeats"]),
-                                  ("pilot", spec["pilot_scans"], 1)):
+    for cohort, scans, repeats in cohorts(spec):
         schedule = json.loads((root / f"setup/{cohort}_schedule.json").read_text())
         if schedule != rb.make_schedule(spec["arms"], scans, repeats, spec["order_seed"]):
             raise RuntimeError("Frozen schedule changed")
@@ -322,14 +338,15 @@ def run_trial(root, spec, output, entry, exposure, truth, *, smoke=False):
             guidance_text=None if smoke else guidance_for(spec),
             pi_image_input=spec.get("pi_image_input", False),
             opencode_image_input=spec.get("opencode_image_input", False),
-            require_manifest=not smoke, procedure_candidates=candidates)
+            require_manifest=not smoke, procedure_candidates=candidates,
+            task_variant=entry.get("task_variant", "nominal"))
     result.model_audit = audit.summary()
     if arm in image_qualifications:
         result.policy_bundle["image_qualification_sha256"] = image_qualifications[arm]
     apply_model_audit(result, smoke=smoke)
     for key in ("schedule_index", "schedule_block", "schedule_position"):
         setattr(result, key, entry.get(key))
-    result.comparison_kind = "native_systems_and_automatic_procedure_ablation"
+    result.comparison_kind = spec.get("comparison_kind", "native_systems_and_automatic_procedure_ablation")
     return result
 
 
@@ -374,8 +391,9 @@ def qualify(root, spec):
         print(json.dumps(record), flush=True)
         verify(root, spec, check_inputs=False)
     by_arm = {r["arm"]: r for r in records}
-    procedure_check = (bool(by_arm["A1"]["model_audit"]["automatic_procedure_hashes_delivered"])
-                       and not by_arm["A7"]["model_audit"]["automatic_procedure_hashes_delivered"])
+    procedure_check = all(
+        bool(row["model_audit"]["automatic_procedure_hashes_delivered"]) == rb.ARMS[arm].automatic_procedures
+        for arm, row in by_arm.items() if rb.ARMS[arm].harness == "apexa")
     passed = all(r["passed"] for r in records) and procedure_check
     write_new(root / "setup/qualification.json", {"passed": passed,
               "source_hashes": source_hashes(), "checks": records, "scientific_runs": 0,
@@ -454,12 +472,18 @@ def prior_results(output, schedule):
 
 
 def run(root, spec, cohort):
-    if cohort == "main":
+    if cohort in ("main", "challenge"):
         check_admission(root)
     lock_path = Path(spec.get("scientific_lock", root / "setup/scientific-run.lock"))
     with lock_path.open("a") as lock:
         print("Waiting for the common numerical-study lock.", flush=True)
         fcntl.flock(lock, fcntl.LOCK_EX)
+        if spec.get("execution", {}).get("workers", 1) > 1:
+            import expanded_study
+            # Running this file as __main__ otherwise creates a second imported
+            # study module with the historical default specification.
+            expanded_study.study.SPEC = SPEC
+            return expanded_study.run_locked(root, spec, cohort)
         return run_locked(root, spec, cohort)
 
 
@@ -477,7 +501,7 @@ def run_locked(root, spec, cohort):
     else:
         write_new(output / "schedule.json", schedule)
     (output / "started").mkdir(exist_ok=True)
-    truth = rb.load_truth(root / "setup/reference.csv", value_col="tz_deg")
+    truth = load_reference(root, spec)
     inputs = {int(p["path"].split("_")[-1].split(".")[0]): p for p in frozen["inputs"]}
     results = prior_results(output, schedule)
     completed = {r.schedule_index for r in results}
@@ -521,7 +545,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("action", choices=("prepare", "verify", "qualify", "admit", "run"))
     p.add_argument("--root", type=Path, required=True)
-    p.add_argument("--cohort", choices=("pilot", "main"), default="pilot")
+    p.add_argument("--cohort", choices=("pilot", "main", "challenge"), default="pilot")
     p.add_argument("--review", type=Path)
     p.add_argument("--spec", type=Path, default=SPEC,
                    help="Separate revision specification within its source snapshot")

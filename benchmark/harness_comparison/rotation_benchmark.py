@@ -895,7 +895,12 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             require_manifest: bool = False, procedure_candidates: Optional[Path] = None,
             native_context_manifest: Optional[Path] = None,
             guidance_text: Optional[str] = None, pi_image_input: bool = False,
-            opencode_image_input: bool = False, strict_writes: bool = False) -> Run:
+            opencode_image_input: bool = False, strict_writes: bool = False,
+            task_variant: str = "nominal") -> Run:
+    if task_variant not in ("nominal", "pixel_size_100um"):
+        raise ValueError("Unknown scientific task variant")
+    if task_variant != "nominal" and prompt_override is not None:
+        raise ValueError("A scientific task variant cannot modify a qualification prompt")
     h = HARNESSES[arm.harness]
     r = Run(arm=arm.id, harness=arm.harness, scan=scan, trial=trial, model=model,
             manuals=arm.manuals, enforcement=arm.enforcement,
@@ -930,6 +935,9 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         prompt = prompt_override if prompt_override is not None else PROMPT.format(
             fname=exposure.name, manual_note=("Use your native scientific tools and context.\n\n"
                 if native is not None and arm.harness == "apexa" else MANUAL_NOTE if arm.manuals else ""))
+        if task_variant == "pixel_size_100um":
+            prompt = prompt.replace("Detector pixel size is 150 um.", "Detector pixel size is 100 um.")
+            r.policy_bundle["task_variant"] = task_variant
         if guidance_text is not None:
             if prompt_override is not None:
                 raise ValueError("Scientific guidance cannot be appended to a qualification prompt")
@@ -948,6 +956,9 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         env.pop("APEXA_BENCH_CONTEXT_SHA256", None)
         env.update(r.policy_bundle)
         env.pop("APEXA_PROCEDURE_AUDIT", None)
+        env.pop("APEXA_BENCH_TOOL_AUDIT", None)
+        if arm.harness == "apexa":
+            env["APEXA_BENCH_TOOL_AUDIT"] = str(profile / "tool-results.jsonl")
         if procedure_candidates is not None and arm.harness == "apexa":
             env["APEXA_PROCEDURE_AUDIT"] = str(profile / "procedures.jsonl")
             # The relay reads this supervisor-owned link; the candidate file is
@@ -1122,6 +1133,9 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
         traces.mkdir(parents=True, exist_ok=True)
         (traces / f"{arm.id}_{scan}_{trial}.stdout.txt").write_text(stdout)
         (traces / f"{arm.id}_{scan}_{trial}.stderr.txt").write_text(stderr)
+        tool_log = profile / "tool-results.jsonl"
+        if tool_log.is_file() and not tool_log.is_symlink():
+            (traces / f"{arm.id}_{scan}_{trial}.tools.jsonl").write_bytes(tool_log.read_bytes())
         procedure_log = profile / "procedures.jsonl"
         if procedure_log.is_file() and not procedure_log.is_symlink():
             raw = procedure_log.read_bytes()

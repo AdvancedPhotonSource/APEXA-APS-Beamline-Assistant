@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "study_id": "cvpr-2026-11-supported-r6",
+  "context_mode": "native_apexa_upstream_midas",
+  "context_manifest": "/home/beams45/S20HEDM/apexa_eval/harness-comparison/revisions/r6/setup/native-context.json",
+  "comparison_kind": "supported_native_systems",
+  "arms": [
+    "A1",
+    "A3",
+    "A4",
+    "A5"
+  ],
+  "scans": [
+    261,
+    265,
+    269,
+    274,
+    278,
+    282,
+    283,
+    287,
+    291,
+    295,
+    299,
+    303,
+    304,
+    344,
+    345,
+    385
+  ],
+  "pilot_scans": [],
+  "selection": "Retain the 12 R5 main cases. Add first and last scan by acquisition index within each of the two second-sweep calibrants: 304, 344, 345, 385. No outcome-based selection.",
+  "repeats": 2,
+  "order_seed": 20261110,
+  "tilt_tolerance_deg": 0.1,
+  "model": "claudeopus5",
+  "model_base_url": "https://apps.inside.anl.gov/argoapi/v1",
+  "solver_python": "/home/beams12/S1IDUSER/opt/envs/midas/bin/python",
+  "solver_version": "0.26.0",
+  "production_repo": "/home/beams45/S20HEDM/opt/APEXA-APS-Beamline-Assistant",
+  "raw_root": "/gdata/dm/20ID/HT_HEDM/2026-3/startup_d_sep26/data/varexD/ai_tune",
+  "wall_seconds": 3600,
+  "max_model_requests": 120,
+  "max_output_tokens": 16000,
+  "cpu_threads": 4,
+  "scientific_lock": "/home/beams/S20HEDM/apexa_eval/harness-comparison/setup/scientific-run.lock",
+  "filesystem_scope": "software_and_trial_only",
+  "additional_software_roots": [
+    "/home/beams12/S1IDUSER/opt/MIDAS_canonical/packages/midas_ckernel",
+    "/home/beams/S20HEDM/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu"
+  ],
+  "native_environment": {
+    "APEXA_EMBED_MODEL": "nomic-ai/nomic-embed-text-v1.5",
+    "APEXA_EMBED_REVISION": "e9b6763023c676ca8431644204f50c2b100d9aab",
+    "APEXA_EMBED_TRUST_REMOTE_CODE": "1",
+    "APEXA_EMBED_CODE_REVISION": "7710840340a098cfb869c4f65e87cf2b1b70caca",
+    "HF_HUB_CACHE": "/home/beams45/S20HEDM/apexa_eval/knowledge-maintenance/20261107/assets/hub",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "CUDA_VISIBLE_DEVICES": ""
+  },
+  "native_software_roots": [
+    "/home/beams45/S20HEDM/apexa_eval/knowledge-maintenance/20261107/assets"
+  ],
+  "pi_image_input": true,
+  "opencode_image_input": true,
+  "raw_glob": "rot_series*/*.vrx.h5",
+  "reference_group": "sweep_calibrant",
+  "guidance_file": "benchmark/harness_comparison/studies/expanded-2026-11/guidance.md",
+  "guidance_sha256": "90addd5fba251860f32d3ac8a8a828a27255fbdfae71794a99d521be7f12d704",
+  "guidance_budget": {
+    "wall_seconds": 3600,
+    "max_model_requests": 120
+  },
+  "execution": {
+    "policy": "fixed_batches_v1",
+    "workers": 2,
+    "cpu_affinity": [
+      [
+        32,
+        33,
+        34,
+        35
+      ],
+      [
+        36,
+        37,
+        38,
+        39
+      ]
+    ]
+  },
+  "challenge_scans": [
+    274,
+    295
+  ],
+  "challenge_variant": "pixel_size_100um"
+}

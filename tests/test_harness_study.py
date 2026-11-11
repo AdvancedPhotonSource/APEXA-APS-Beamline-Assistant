@@ -205,6 +205,11 @@ def test_guidance_requires_frozen_content_and_matching_budget(tmp_path, monkeypa
     assert study.guidance_for(spec) == path.read_text()
     with pytest.raises(ValueError, match="budget"):
         study.guidance_for({**spec, "wall_seconds": 300})
+    larger = {**spec, "wall_seconds": 3600, "max_model_requests": 120,
+              "guidance_budget": {"wall_seconds": 3600, "max_model_requests": 120}}
+    assert study.guidance_for(larger) == path.read_text()
+    with pytest.raises(ValueError, match="budget"):
+        study.guidance_for({**larger, "max_model_requests": 40})
     path.write_text("Changed after freeze")
     with pytest.raises(ValueError, match="hash"):
         study.guidance_for(spec)
@@ -437,6 +442,75 @@ def test_resumption_skips_completed_and_preserves_interrupted_trials(tmp_path, m
     assert calls == [third["schedule_index"]]
     assert len(rows) == 3 and rows[1].outcome == "interrupted"
     assert json.loads((output / "progress.json").read_text())["completed"] == 3
+
+
+def test_expanded_resumption_retains_attempts_and_batch_assignment(tmp_path, monkeypatch):
+    import expanded_study as expanded
+    from concurrent.futures import Future
+    spec = {"arms": ["A3"], "scans": [1, 2, 3, 4], "pilot_scans": [], "repeats": 1,
+            "order_seed": 1, "model": "m", "model_base_url": "unused",
+            "execution": {"workers": 2}}
+    schedule = rb.make_schedule(spec["arms"], spec["scans"], 1, 1)
+    study.write_new(tmp_path / "setup/main_schedule.json", schedule)
+    study.write_new(tmp_path / "setup/qualification.json", {"passed": True, "source_hashes": {}})
+    output = tmp_path / "results/main"
+    output.mkdir(parents=True)
+    entries = schedule["entries"]
+    study.append_record(output / "runs.jsonl", study.asdict(expanded.interrupted(entries[0], spec)))
+    study.write_new(output / "started" / f"{entries[1]['schedule_index']:04d}.json", entries[1])
+    frozen = {"inputs": [{"path": f"/raw_{n:06d}.h5", "sha256": "h"} for n in spec["scans"]]}
+    monkeypatch.setattr(study, "verify", lambda *args, **kw: frozen)
+    monkeypatch.setattr(study, "source_hashes", lambda: {})
+    monkeypatch.setattr(study, "sha", lambda p: "h")
+    monkeypatch.setattr(study, "load_reference", lambda *args: {})
+    monkeypatch.setattr(rb, "wait_for_host", lambda *args: {})
+    monkeypatch.setattr(expanded, "cpu_sets", lambda spec: [[0], [1]])
+    calls = []
+    class Pool:
+        def __init__(self, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def submit(self, fn, root, spec, out, entry, source, truth, cpus):
+            calls.append((entry["schedule_index"], cpus))
+            future = Future()
+            if len(calls) == 1:
+                future.set_exception(RuntimeError("synthetic worker failure"))
+            else:
+                future.set_result(expanded.interrupted(entry, spec))
+            return future
+    monkeypatch.setattr(expanded, "ProcessPoolExecutor", Pool)
+    expanded.run_locked(tmp_path, spec, "main")
+    expanded.run_locked(tmp_path, spec, "main")
+    assert calls == [(entries[2]["schedule_index"], [0]), (entries[3]["schedule_index"], [1])]
+    rows = study.prior_results(output, schedule)
+    assert len(rows) == 4 and rows[2].outcome == "infra_error"
+    assert json.loads((output / "progress.json").read_text())["status"] == "completed"
+
+
+def test_reference_separates_acquisition_sweeps(tmp_path):
+    reference = tmp_path / "setup/reference.csv"
+    reference.parent.mkdir()
+    reference.write_text("scan,calibrant,sweep_calibrant,tz_deg\n"
+        "1,CeO2,first_CeO2,1\n2,CeO2,first_CeO2,2\n3,CeO2,first_CeO2,3\n"
+        "4,CeO2,second_CeO2,20\n5,CeO2,second_CeO2,20.1\n6,CeO2,second_CeO2,20.2\n")
+    truth = study.load_reference(tmp_path, {"reference_group": "sweep_calibrant"})
+    assert truth[3]["predicted_tz"] == pytest.approx(3)
+    assert truth[4]["predicted_tz"] == pytest.approx(20)
+    assert truth[4]["n_fit"] == 2
+
+
+def test_parallel_dispatch_keeps_explicit_specification(tmp_path, monkeypatch):
+    import expanded_study as expanded
+    from types import SimpleNamespace
+    selected = tmp_path / "explicit.json"
+    isolated_module = SimpleNamespace(SPEC=None)
+    monkeypatch.setattr(study, "SPEC", selected)
+    monkeypatch.setattr(expanded, "study", isolated_module)
+    seen = []
+    monkeypatch.setattr(expanded, "run_locked", lambda *args: seen.append(isolated_module.SPEC))
+    (tmp_path / "setup").mkdir()
+    study.run(tmp_path, {"execution": {"workers": 2}}, "pilot")
+    assert seen == [selected]
 
 
 def test_calibration_provenance_does_not_relabel_template_phase(tmp_path):
