@@ -80,3 +80,48 @@ def test_main_baseline_is_held_until_pilot_review(tmp_path):
     with pytest.raises(RuntimeError, match="pilot review"):
         baseline.run(tmp_path, {}, "main")
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("at_cutoff", [False, True])
+def test_parallel_baseline_retains_prior_attempts_and_obeys_cutoff(tmp_path, monkeypatch, at_cutoff):
+    import concurrent.futures
+    import expanded_study
+    study = baseline.study
+    spec = {"execution": {"workers": 2}, "tilt_tolerance_deg": .1}
+    if at_cutoff:
+        spec["launch_cutoff"] = "2000-01-01T00:00:00+00:00"
+    plan = {"baseline": "B0_fixed_midas_tilted", "main_scans": [1, 2, 3, 4],
+            "cases": [{"path": f"/raw_{n:06d}.h5", "sha256": "h"} for n in range(1, 5)]}
+    monkeypatch.setattr(study, "check_admission", lambda *a: {})
+    monkeypatch.setattr(baseline, "verify_plan", lambda *a: plan)
+    monkeypatch.setattr(study, "load_reference", lambda *a: {n: {"predicted_tz": 0} for n in range(1, 5)})
+    monkeypatch.setattr(study, "sha", lambda p: "h")
+    monkeypatch.setattr(expanded_study, "cpu_sets", lambda spec: [[0], [1]])
+    (tmp_path / "setup").mkdir()
+    output = tmp_path / "results/baseline-main"
+    output.mkdir(parents=True)
+    def result(scan):
+        return baseline.rb.Run("B0", "fixed-midas-tilted", scan, 0, "none", False, False,
+                               outcome="honest_failure", schedule_index=scan)
+    study.append_record(output / "runs.jsonl", baseline.asdict(result(1)))
+    (output / "B0_2_0/workspace").mkdir(parents=True)
+    calls = []
+    class Pool:
+        def __init__(self, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def submit(self, fn, root, spec, plan, source, scan, truth, cpus, cohort):
+            calls.append((scan, cpus, cohort))
+            future = concurrent.futures.Future()
+            future.set_result(result(scan))
+            return future
+    monkeypatch.setattr(concurrent.futures, "ProcessPoolExecutor", Pool)
+    baseline.run(tmp_path, spec, "main")
+    baseline.run(tmp_path, spec, "main")
+    rows = [json.loads(line) for line in (output / "runs.jsonl").read_text().splitlines()]
+    assert len(rows) == 4
+    assert rows[1]["outcome"] == "interrupted"
+    assert calls == ([] if at_cutoff else [(3, [0], "main"), (4, [1], "main")])
+    if at_cutoff:
+        assert [r["outcome"] for r in rows[2:]] == ["not_launched_cutoff"] * 2
+        assert not (output / "B0_3_0").exists()

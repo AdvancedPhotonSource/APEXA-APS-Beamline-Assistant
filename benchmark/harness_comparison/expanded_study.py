@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
+from datetime import datetime
 import json
 import multiprocessing
 import os
@@ -16,6 +17,16 @@ import time
 
 import study
 import rotation_benchmark as rb
+
+
+def deadline_reached(spec, *, now=None):
+    value = spec.get("launch_cutoff")
+    if value is None:
+        return False
+    cutoff = datetime.fromisoformat(value)
+    if cutoff.tzinfo is None:
+        raise ValueError("Launch cutoff must include an explicit timezone offset")
+    return (time.time() if now is None else now) >= cutoff.timestamp()
 
 
 def cpu_sets(spec):
@@ -79,6 +90,13 @@ def interrupted(entry, spec):
                   detail="Started before supervisor interruption; retained without rerunning")
 
 
+def unlaunched(entry, spec):
+    result = interrupted(entry, spec)
+    result.outcome = "not_launched_cutoff"
+    result.detail = "Prespecified cutoff reached before this block; no model or solver launched"
+    return result
+
+
 def run_locked(root, spec, cohort):
     sets = cpu_sets(spec)
     frozen = study.verify(root, spec)
@@ -102,6 +120,8 @@ def run_locked(root, spec, cohort):
     def progress(active, status="running"):
         study.atomic_json(output / "progress.json", {
             "completed": len(results), "scheduled": schedule["run_count"],
+            "attempted_terminal": sum(r.outcome != "not_launched_cutoff" for r in results),
+            "not_launched": sum(r.outcome == "not_launched_cutoff" for r in results),
             "active": active, "status": status, "updated_unix": time.time(),
             "execution": spec["execution"]})
 
@@ -118,8 +138,11 @@ def run_locked(root, spec, cohort):
             unfinished = [e for e in entries if e["schedule_index"] not in completed]
             if not unfinished:
                 continue
-            host = rb.wait_for_host(spec["model_base_url"])
-            study.verify(root, spec, check_inputs=False)
+            stopped = deadline_reached(spec)
+            host = {} if stopped else rb.wait_for_host(spec["model_base_url"])
+            if not stopped:
+                study.verify(root, spec, check_inputs=False)
+                stopped = deadline_reached(spec)
             active = []
             for slot, original in enumerate(entries):
                 entry = dict(original)
@@ -129,6 +152,9 @@ def run_locked(root, spec, cohort):
                 marker = output / "started" / f"{index:04d}.json"
                 if marker.exists():
                     retain(interrupted(entry, spec))
+                    continue
+                if stopped:
+                    retain(unlaunched(entry, spec))
                     continue
                 source = sources[entry["scan"]]
                 if study.sha(source["path"]) != source["sha256"]:
@@ -150,4 +176,4 @@ def run_locked(root, spec, cohort):
                 result.host = host
                 retain(result)
                 progress([e for e, _ in active if e["schedule_index"] not in completed])
-    progress([], "completed")
+    progress([], "stopped_at_cutoff" if any(r.outcome == "not_launched_cutoff" for r in results) else "completed")

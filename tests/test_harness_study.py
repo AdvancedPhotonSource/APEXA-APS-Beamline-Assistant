@@ -563,6 +563,63 @@ def test_concurrent_qualification_requires_every_arm_to_pass(tmp_path, monkeypat
     assert len(receipt["checks"]) == 4 and receipt["scientific_runs"] == 0
 
 
+def test_cutoff_retains_unlaunched_cells_and_prior_interruption(tmp_path, monkeypatch):
+    import expanded_study as expanded
+    spec = {"arms": ["A3"], "scans": [1, 2, 3, 4], "pilot_scans": [], "repeats": 1,
+            "order_seed": 1, "model": "m", "model_base_url": "unused",
+            "launch_cutoff": "2000-01-01T12:00:00-06:00", "execution": {"workers": 2}}
+    schedule = rb.make_schedule(spec["arms"], spec["scans"], 1, 1)
+    study.write_new(tmp_path / "setup/main_schedule.json", schedule)
+    study.write_new(tmp_path / "setup/qualification.json", {"passed": True, "source_hashes": {}})
+    first = schedule["entries"][0]
+    study.write_new(tmp_path / "results/main/started" / f"{first['schedule_index']:04d}.json", first)
+    frozen = {"inputs": [{"path": f"/raw_{n:06d}.h5", "sha256": "h"} for n in spec["scans"]]}
+    monkeypatch.setattr(study, "verify", lambda *args, **kw: frozen)
+    monkeypatch.setattr(study, "source_hashes", lambda: {})
+    monkeypatch.setattr(study, "load_reference", lambda *args: {})
+    monkeypatch.setattr(expanded, "cpu_sets", lambda spec: [[0], [1]])
+    monkeypatch.setattr(rb, "wait_for_host", lambda *args: pytest.fail("No host/model probe after cutoff"))
+    expanded.run_locked(tmp_path, spec, "main")
+    expanded.run_locked(tmp_path, spec, "main")
+    rows = study.prior_results(tmp_path / "results/main", schedule)
+    assert rows[0].outcome == "interrupted"
+    assert [r.outcome for r in rows[1:]] == ["not_launched_cutoff"] * 3
+    progress = json.loads((tmp_path / "results/main/progress.json").read_text())
+    assert progress["status"] == "stopped_at_cutoff" and progress["not_launched"] == 3
+    assert len(list((tmp_path / "results/main/started").glob("*.json"))) == 1
+
+
+def test_cutoff_uses_explicit_chicago_offset():
+    import expanded_study as expanded
+    from datetime import datetime
+    spec = {"launch_cutoff": "2026-11-13T12:00:00-06:00"}
+    utc = datetime.fromisoformat("2026-11-13T18:00:00+00:00").timestamp()
+    assert expanded.deadline_reached(spec, now=utc)
+    assert not expanded.deadline_reached(spec, now=utc - 1)
+    with pytest.raises(ValueError, match="timezone"):
+        expanded.deadline_reached({"launch_cutoff": "2026-11-13T12:00:00"})
+
+
+def test_reference_prediction_excludes_the_held_acquisition_and_other_calibrant():
+    import prepare_references
+    rows = [{"scan": i, "calibrant": "CeO2", "tz_deg": float(i)} for i in (1, 2, 3)]
+    rows[1]["tz_deg"] = 999.
+    rows += [{"scan": i, "calibrant": "LaB6", "tz_deg": 100. + i} for i in (4, 5, 6)]
+    predicted = {r["scan"]: r for r in prepare_references.predict(rows)}
+    assert predicted[2]["predicted_tz_deg"] == pytest.approx(2.)
+    assert predicted[2]["n_fit"] == 2
+    assert predicted[5]["predicted_tz_deg"] == pytest.approx(105.)
+
+
+def test_paired_bootstrap_preserves_pairing_and_both_sweeps():
+    import analyze_r6
+    rows = [{"stratum": s, "A7": x, "A1": x} for s in
+            ("first_CeO2", "first_LaB6", "second_CeO2", "second_LaB6") for x in (0., 1.)]
+    result = analyze_r6.paired_estimates(rows, ["A1", "A7"], samples=200)
+    assert result["A1"]["mean_difference_arm_minus_A7"] == 0
+    assert result["A1"]["percentile_95_interval"] == [0., 0.]
+
+
 def test_calibration_provenance_does_not_relabel_template_phase(tmp_path):
     from _calibrate_runner import phase_provenance
     param = tmp_path / "params.txt"

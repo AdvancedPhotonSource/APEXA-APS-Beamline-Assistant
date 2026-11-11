@@ -35,10 +35,12 @@ def main():
     if state_path.exists():
         raise RuntimeError("Queue receipt already exists; inspect retained phases before any explicit resumption")
     state = {"pid": os.getpid(), "started_unix": time.time(), "completed_phases": [],
-             "source_sha256": study.sha(__file__), "scientific_trials_started": False}
+             "source_sha256": study.sha(__file__), "scientific_trials_started": 0}
 
     def update(**changes):
         state.update(changes, updated_unix=time.time())
+        state["scientific_trials_started"] = len(list((root / "results").glob("*/started/*.json"))) + len(
+            list((root / "results/baseline-main").glob("B0_*/started.json")))
         study.atomic_json(state_path, state)
 
     def run(phase, command):
@@ -85,6 +87,7 @@ def main():
                 "--embedding-assets-manifest", str(root / "setup/embedding-assets.json"),
                 "--output", str(root / "setup/native-context.json")])
             run("prepare", [*common, "prepare", *suffix])
+            run("baseline-prepare", [python, str(study.HERE / "baseline.py"), "prepare", *suffix])
             # These use the exact installed CLI and adapters, on the launch host.
             qualifier = str(study.HERE / "qualify_guided_adapters.py")
             run("claude-bash", [python, qualifier, "--arm", "A3", "--test", "bash",
@@ -106,13 +109,13 @@ def main():
                 "accounting_regressions_passed": True, "numerical_semantics_unchanged": True,
                 "retain_all_pilot_outcomes": True, "reviewed_evidence": evidence,
                 "reviewed_by": "Codex assisted review with explicit launch-host qualification gates",
-                "baseline_scope": "Retained solver/pilot evidence, not a matched-budget R6 baseline",
+                "baseline_scope": "Previously validated fixed recipe; new matched-budget R6 baseline plan frozen before science",
                 "scientific_claim": "Supported capability comparison; no result or ranking assumed"}
             study.write_new(root / "setup/main-review.json", review)
             run("admit", [*common, "admit", "--review", str(root / "setup/main-review.json"), *suffix])
-        update(scientific_trials_started=True)
         run("nominal", [*common, "run", "--cohort", "main", *suffix])
         run("challenge", [*common, "run", "--cohort", "challenge", *suffix])
+        run("baseline-main", [python, str(study.HERE / "baseline.py"), "run", "--cohort", "main", *suffix])
         update(status="completed", phase="completed", finished_unix=time.time())
     except BaseException as exc:
         update(status="failed", error=f"{type(exc).__name__}: {exc}", finished_unix=time.time())

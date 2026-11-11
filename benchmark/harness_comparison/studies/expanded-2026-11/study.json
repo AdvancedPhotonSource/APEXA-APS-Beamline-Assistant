@@ -3,12 +3,13 @@
   "study_id": "cvpr-2026-11-supported-r6",
   "context_mode": "native_apexa_upstream_midas",
   "context_manifest": "/home/beams45/S20HEDM/apexa_eval/harness-comparison/revisions/r6/setup/native-context.json",
-  "comparison_kind": "supported_native_systems",
+  "comparison_kind": "supported_native_systems_with_automatic_procedure_ablation",
   "arms": [
     "A1",
     "A3",
     "A4",
-    "A5"
+    "A5",
+    "A7"
   ],
   "scans": [
     261,
@@ -24,14 +25,22 @@
     299,
     303,
     304,
+    312,
+    320,
+    328,
+    336,
     344,
     345,
+    353,
+    361,
+    369,
+    377,
     385
   ],
   "pilot_scans": [],
-  "selection": "Retain the 12 R5 main cases. Add first and last scan by acquisition index within each of the two second-sweep calibrants: 304, 344, 345, 385. No outcome-based selection.",
+  "selection": "Retain the original 12 first-sweep main cases; add six equally spaced scan ranks (0,8,16,24,32,40) within each second-sweep calibrant. No selection by observed R6 outcome.",
   "repeats": 2,
-  "order_seed": 20261110,
+  "order_seed": 20261111,
   "tilt_tolerance_deg": 0.1,
   "model": "claudeopus5",
   "model_base_url": "https://apps.inside.anl.gov/argoapi/v1",
@@ -74,7 +83,7 @@
   },
   "execution": {
     "policy": "fixed_batches_v1",
-    "workers": 4,
+    "workers": 5,
     "cpu_affinity": [
       [
         32,
@@ -99,6 +108,12 @@
         45,
         46,
         47
+      ],
+      [
+        28,
+        29,
+        30,
+        31
       ]
     ]
   },
@@ -106,5 +121,18 @@
     274,
     295
   ],
-  "challenge_variant": "pixel_size_100um"
+  "challenge_variant": "pixel_size_100um",
+  "launch_cutoff": "2026-11-13T12:00:00-06:00",
+  "analysis_reference_arm": "A7",
+  "evaluator_files": [
+    "reference_rs2.csv",
+    "reference_rs2_r2.csv",
+    "reference-provenance.json",
+    "analysis-plan.md"
+  ],
+  "extra_evaluator_denies": [
+    "/gdata/dm/20ID/HT_HEDM/2026-3/startup_d_sep26/analysis/APEXA-Analysis",
+    "/gdata/dm/20ID/HT_HEDM/2026-3/startup_d_sep26/analysis/APEXA-Analysis/v0.26_rs2",
+    "/home/beams45/S20HEDM/apexa_eval/harness-comparison/setup"
+  ]
 }

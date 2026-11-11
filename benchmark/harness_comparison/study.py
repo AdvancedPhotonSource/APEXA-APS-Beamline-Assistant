@@ -54,7 +54,8 @@ def source_hashes():
     paths = [HERE / n for n in ("study.py", "rotation_benchmark.py", "run_comparison.py",
                                 "_apexa_driver.py", "model_audit.py", "procedure_audit.py", "native_context.py",
                                 "freeze_native_context.py", "main_supervisor.py", "expanded_study.py",
-                                "qualify_guided_adapters.py", "expanded_queue.py")]
+                                "qualify_guided_adapters.py", "expanded_queue.py", "prepare_references.py",
+                                "analyze_r6.py", "analyze_main.py", "review_pilot.py", "baseline.py", "baseline_worker.py")]
     paths += [REPO / n for n in ("apexa_agents.py", "midas_comprehensive_server.py",
                                 "_calibrate_runner.py", "skill_registry.py", "apexa_knowledge_policy.py")]
     paths += list(REPO.glob("*.py"))
@@ -109,6 +110,16 @@ def cohorts(spec):
 def load_reference(root, spec):
     return rb.load_truth(root / "setup/reference.csv", value_col="tz_deg",
                          group_col=spec.get("reference_group", "calibrant"))
+
+
+def evaluator_hashes(root, spec):
+    result = {}
+    for relative in spec.get("evaluator_files", []):
+        path = root / "setup" / relative
+        if path.is_symlink() or not path.resolve().is_relative_to((root / "setup").resolve()):
+            raise ValueError("Evaluator files must remain within setup")
+        result[relative] = sha(path)
+    return result
 
 
 def check_image_qualifications(root, spec):
@@ -236,6 +247,7 @@ def prepare(root, spec):
         raise RuntimeError("Installed solver differs from the protocol")
     record = {"schema_version": 1, "created_unix": time.time(), "spec": spec,
               "source_hashes": source_hashes(), "reference_sha256": sha(reference),
+              "evaluator_files": evaluator_hashes(root, spec),
               "inputs": inputs, "solver": inventory, "harnesses": harness_versions(root),
               "model_calls": 0, "scientific_runs": 0}
     for cohort, cases, repeats in cohorts(spec):
@@ -251,6 +263,8 @@ def verify(root, spec, *, check_inputs=True):
         raise RuntimeError("Protocol/source changed after freezing; create a new documented study revision")
     if sha(root / "setup/reference.csv") != frozen["reference_sha256"]:
         raise RuntimeError("Evaluator reference changed")
+    if evaluator_hashes(root, spec) != frozen.get("evaluator_files", {}):
+        raise RuntimeError("Frozen evaluator files or analysis plan changed")
     if solver_inventory(spec["solver_python"]) != frozen["solver"]:
         raise RuntimeError("Numerical environment changed after freezing")
     if harness_versions(root) != frozen["harnesses"]:
@@ -269,10 +283,11 @@ def verify(root, spec, *, check_inputs=True):
 def denied_locations(root, spec):
     return [root / "setup", root / "results", root / "source/manuscripts",
             Path(spec["raw_root"]).parents[3] / "analysis",
-            Path(spec["production_repo"]), Path.home() / ".codex", Path.home() / ".pi"]
+            Path(spec["production_repo"]), Path.home() / ".codex", Path.home() / ".pi",
+            *map(Path, spec.get("extra_evaluator_denies", []))]
 
 
-def sandbox_check(root):
+def sandbox_check(root, spec=None):
     probe = root / "setup/sandbox-probe"
     probe.mkdir()
     secret = probe / "reference.txt"
@@ -305,8 +320,16 @@ print(json.dumps(visible))"""
     result["outside_write_blocked"] = outside.returncode != 0 and not forbidden.exists()
     if os.environ.get("RB_SOFTWARE_READ_ROOTS"):
         result["unrelated_data_roots_hidden"] = scope.returncode == 0 and json.loads(scope.stdout) == []
+    if spec and spec.get("extra_evaluator_denies"):
+        targets = [str(root / "setup"), *spec["extra_evaluator_denies"]]
+        check = subprocess.run(rb.sandboxed([sys.executable, "-c", scope_code, json.dumps(targets)],
+            [root / "setup", *map(Path, spec["extra_evaluator_denies"])], writable=[work]),
+            capture_output=True, text=True, timeout=20)
+        result["actual_evaluator_locations_hidden"] = check.returncode == 0 and json.loads(check.stdout) == []
+        result["evaluator_locations_checked"] = targets
     result["passed"] = result["reference_not_visible"] and result["workspace_writable"] and result["outside_write_blocked"]
     result["passed"] = result["passed"] and result.get("unrelated_data_roots_hidden", True)
+    result["passed"] = result["passed"] and result.get("actual_evaluator_locations_hidden", True)
     if not result["passed"]:
         result["diagnostic"] = (write.stderr or read.stderr)[-2000:]
     write_new(root / "setup/sandbox.json", result)
@@ -368,7 +391,7 @@ def qualify(root, spec):
     verify(root, spec, check_inputs=False)
     if (root / "setup/qualification.json").exists():
         raise RuntimeError("Qualification record exists; preserve it and use a new setup revision for repairs")
-    sandbox = sandbox_check(root)
+    sandbox = sandbox_check(root, spec)
     if not sandbox["passed"]:
         raise RuntimeError("Sandbox qualification failed; see setup/sandbox.json")
     output = root / "results/qualification"
