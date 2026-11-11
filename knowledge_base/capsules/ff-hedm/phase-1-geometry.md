@@ -18,8 +18,9 @@ awk '{print $9}' <METADATA_DIR>/<beamtime>_FF.par | sort | uniq -c
 | field 9 reads | meaning | action |
 |---|---|---|
 | `aero` / `Aero` | stage turns **clockwise**; **ω_MIDAS = −ω_logged** | negate `OmegaStart` **and** `OmegaStep` |
+| `ramsrot` | RAMS-III load-frame stage; turns **counterclockwise**; **ω_MIDAS = +ω_logged** | use `OmegaStart` / `OmegaStep` **as logged**. Determined 2026-09-21, instrument scientist (H. Sharma): the 1-ID RAMS-III load-frame stage `ramsrot` always turns **counterclockwise**, the MIDAS sense, so ω is used **as logged**. First applied to `datasetI` (NF and FF), whose 2021 paramfiles already carried the un-negated sweep. |
 | anything else | not established by this session | **stop and ask** |
-| *there is no par file* | 20-ID and anything else without one | **§2b** — settle ω and the detector mirror together |
+| *there is no par file* | 20-ID-D, 20-ID-E and anything else without one — conventions table in the spine scope block | **§2b** — settle ω and the detector mirror together |
 
 Verified on `bt_1id_jul26`: all **7297** FF rows read `aero`.
 
@@ -46,7 +47,7 @@ OmegaRange -180 180
 > at r = 500 µm; every difference — misorientation, relative orientation, strain —
 > unaffected). Read the zarr instead. The zipper stores
 > `measurement/process/scan_parameters/start = OmegaStart − SkipFrame·OmegaStep`
-> (`ff_zip.py:250`), so on this sweep the stored `start` **must equal the negated raw
+> (`ff_zip.py:266`), so on this sweep the stored `start` **must equal the negated raw
 > frame 0, +180.25**. Measured on the 1441-frame `aero` sweep: `OmegaStart 180.25` stored
 > 180.50 — one step past raw frame 0, wrong — and `OmegaStart 180.00` stored 180.25,
 > correct.
@@ -72,7 +73,7 @@ same beamline, and the bundled NF reference paramfile carries `OmegaStart 180` /
 
 ### 2b. No par file — settle the ω sign and the detector mirror TOGETHER
 
-**20-ID HT-HEDM has no par file at all.** Metadata lives in EPICS NDAttributes inside
+**20-ID (D and E) has no par file at all.** Everything worked below is 20-ID-D; for 20-ID-E the stage sense (argument 1) is known — ω positive — see the spine's conventions table. Metadata lives in EPICS NDAttributes inside
 each `.vrx.h5` (§3b-2). There is no field 9, so §2 has no input — and the problem is
 worse than one missing convention, because **the ω sign and the detector mirror are
 coupled and neither the calibration nor the grain list can break either one:**
@@ -329,7 +330,7 @@ spellings consumed by different code:
 
 | key | read by | default |
 |---|---|---|
-| `dataLoc` / `darkLoc` | `midas_zipper.ff_zip` — `config['darkLoc']`, `ff_zip.py:334` | `exchange/data` / **`exchange/dark`** |
+| `dataLoc` / `darkLoc` | `midas_zipper.ff_zip` — `config['darkLoc']`, `ff_zip.py:350` | `exchange/data` / **`exchange/dark`** |
 | `dataDataset` / `darkDataset` | downstream consumers (`FF_Parameters_Reference.md` §2) | same |
 
 Set **both**:
@@ -398,7 +399,7 @@ layered design is easy to misread:
 Consequently **`OmegaStart` is the ω of the first frame you want to USE** (post-skip), and
 the zarr's `scan_parameters/start` is deliberately back-dated to
 `OmegaStart − SkipFrame·OmegaStep`, which the zipper computes as
-`start_omega` (`ff_zip.py:250`), so that it describes raw frame 0.
+`start_omega` (`ff_zip.py:266`), so that it describes raw frame 0.
 The consumer recovers `start + SkipFrame·step = OmegaStart` for the first frame it
 processes. The chain is self-consistent; changing either half alone breaks it.
 
@@ -421,7 +422,7 @@ Sanity check in the peakfit banner: `nFrames` must equal *logged frames − Skip
 For a hand-reduced average outside the pipeline (calibrant staging, quick looks) there is
 no consumer to do it for you, so drop it yourself: `data[1:].mean(axis=0)`, dark included.
 
-> #### 20-ID carries a known **one-step (0.25°) ω zero-point offset**. Quote it, do not chase it.
+> #### 20-ID-D carries a known **one-step (0.25°) ω zero-point offset**. Quote it, do not chase it.
 >
 > **This is documented, accepted and not a defect to fix mid-analysis.** It is recorded
 > here because it is invisible in every output and would otherwise be rediscovered once
@@ -469,7 +470,9 @@ it (`midas_peakfit/midas_peakfit/preprocess.py`,
 | 2 | flip vertical, along Z / the column axis | `image[l, m] := image[N-l-1, m]` |
 | 3 | transpose | `image[l, m] := image[m, l]` |
 
-`ImTransOpt 2` on 20-ID Varex; establish it per detector, not per run.
+`ImTransOpt 2` on the 20-ID-D HT-HEDM Varex; **`ImTransOpt 1`** (y-flip only, z not flipped; established) on the
+20-ID-E HEXM `s20varex2`, where ω is also **positive as logged** (README scope block).
+Establish it per detector, not per run.
 
 **It is a convention, like the ω sign, and it belongs in the same category of
 danger.** A wrong flip does not fail. It mirrors the reconstruction, and a
@@ -842,7 +845,7 @@ carrying thresholds and scan keys through verbatim.
 
 ---
 
-### 5h. `tx` and `Wedge` — the two the calibrant cannot see
+### 5h. `tx`, `Wedge` and `OmegaStep` — what the calibrant cannot see
 
 Run this **after** a first reconstruction, then reconstruct again with the file
 it writes. It is the one geometry step that needs grains rather than powder.
@@ -856,20 +859,122 @@ rather than precision:
   seeds it at 0 and never refines it.
 * **`Wedge`** is the departure of the rotation axis from perpendicular. A still
   image never sees the rotation axis at all.
+* **`OmegaStep`** sets the ω scale. A still calibrant image has no ω.
 
-Both act on single-crystal spots followed across ω, which is what a grain list
-is.
+Two tools, one per channel. **Order: Friedel first, then `tx`.**
+
+#### Wedge and OmegaStep from Friedel pairs (`friedel-wedge`)
+
+A reflection **G** and its Friedel mate **−G** diffract 180° apart in ω, exactly,
+whatever the grain's orientation, position or strain and whatever the detector
+geometry — *if* the rotation axis is perpendicular to the beam. A wedge `W`
+(MIDAS convention `G_lab = R_y(−W) R_z(ω) O g`) breaks that, to first order
+
+    ω₂ − ω₁ − 180° = −2·W·cot η₁       (radians; η = atan2(−Y, Z))
+
+and an `OmegaStep` error adds a **constant** (180° × the relative step error).
+`friedel-wedge` pairs Friedel mates, solves the Bragg condition of −G exactly at
+the trial wedge, and fits `W` and the ω scale **jointly** (Huber loss). It works in
+the raw frame (pre-wedge ω and detector-corrected Y, Z), so the Wedge is
+**absolute** whatever Wedge the reconstruction ran with.
+
+**Where the pairs come from (`--pairs`, default `peaks`).** By default the pairs
+come from the **raw peak list**, `InputAllExtraInfoFittingAll.csv` (`OmegaIni`,
+`YOrigDetCor`, `ZOrigDetCor`, `RingNumber`), with no grain assignment: a peak is
+paired with the *unique* same-ring peak within 0.5° of ω + 180°, 0.6° of the
+mirrored η and 1.5 mm of its radius, unique in both directions, `|cot η| ≤ 3`
+(`friedel_wedge.find_friedel_pairs_peaks`; SE by bootstrap over pairs). The
+answer then does not depend on the reconstruction at all. `--pairs grains`
+pairs within each grain's matched spots in `SpotMatrix.csv` (SE by bootstrap
+over grains), and that set was **selected** through `MarginOme` around the ω
+the run predicted at its own Wedge: the selection is on the quantity being
+measured. On the 20-ID-E ss_cal run grain pairs read 0.02339° from the Wedge-0
+reconstruction and 0.02622° from the Wedge-0.05 one, about 6 % of the run's
+Wedge leaking in (solving the two for a fixed point gives 0.0248;
+`s13_friedel_dev/s13a.log`). Peak-list pairs gave **+0.02457 ± 0.00011°** from
+36,235 pairs and OmegaStep 0.250584, identical from both reconstructions
+(`s13_friedel_dev/s13d.log`). PROVISIONAL (not yet through /verify). Paths are
+under the analysis folder named in Lab Notebook §17.
+
+**Wrong pairs in peak-list mode.** A wrong pair survives the two-way uniqueness
+test only when both true mates are missing, so the tool estimates
+
+    wrong ≈ decoy pairs × P(mate missing)²
+
+where the decoys are the same pairing run at 180 ± 3° (where no mate exists)
+and P(mate missing) is the empty-window rate at 180° over that at 180 ± 3°
+(`friedel_wedge.chance_pair_fraction`). It prints the estimate and warns above
+10 %. On ss_cal: **0.1 %** (`s13_friedel_dev/s13e_chance.log`). Checked on
+synthetics with known wrong-pair fractions of 0-15 %: it reads low by at most
+25 % of the true fraction. **Do not read the raw decoy count as the rate**: on
+synthetics with every mate present it read 3-35 % where the truth was about 0.
+PROVISIONAL.
+
+```bash
+midas-joint-ff-calibrate friedel-wedge \
+  --paramstest <result>/LayerNr_1/paramstest.txt   # or the master param file \
+  --layer-dir  <result>/LayerNr_1 \
+  [--pairs peaks]                                  # default; 'grains' leaks the run's Wedge \
+  --out ps_wedge.txt [--write-omega-step]
+```
+
+Read the **split table** it prints: one fixed axis tilt gives one wedge in every
+ring, both halves of the ω range and both sides of the beam (`cot η` > 0 / < 0).
+It warns when they disagree. This is the method of the 2014 `FitWedge.c`;
+**`FitWedgeParallel.c` (FF_HEDM, 2026-02) is deprecated**: it fits the wedge pair
+by pair with no ω-scale term, so a step error is charged to the wedge with
+opposite signs above and below the beam (on the 20-ID-E ss_cal run: +0.042° vs +0.010°
+one-sided medians, against +0.024 / +0.025° once the constant is removed and one
+wedge of +0.023° from the joint grain-pair fit; `s12_wedge/perpair_like_fwp.log`,
+Lab Notebook §17; PROVISIONAL); it weights by |cos η| where the sensitivity goes as cot η; and
+it reads the wedge-corrected `Omega` column, not `OmeRaw`.
+
+**Do not refine `Wedge` with `grain-tx`.** Its loss is the on-detector (Y, Z)
+distance with the grain poses frozen at the values the reconstruction refined at
+the old wedge; it never compares observed ω, where a wedge acts at first order. A
+single pass therefore recovers only part of a wedge and needs pipeline re-runs to
+converge (synthetic at −0.5, from 0: −0.207, −0.372, −0.462, −0.489;
+[FF_Grain_Geometry_tx.md](../FF_Grain_Geometry_tx.md)). On the 20-ID-E ss_cal run one pass
+returned +0.0119° where the peak-list Friedel pairs give +0.02457° (grain pairs
++0.0233; Lab Notebook §17; PROVISIONAL). Use grain-tx for `tx` only, on ~40 good
+grains (HS: `tx` is well constrained by the on-detector positions).
+
+**OmegaStep:** prefer this to a 360° periodicity estimate. On
+`PUP_AML_bt_20id_sep26b` periodicity gave 0.250514°/frame; Friedel pairs gave
+0.250579 (0.250576-0.250583 in each of 9 windows of the sweep,
+`s12_wedge/omegastep_friedel.log`; 0.250584 from the peak-list fit,
+`s13_friedel_dev/s13d.log`), and the frame timing
+(0.100232 s × 2.5°/s) 0.25058. Periodicity only overlaps the first and last ~5
+frames of a 1442-frame sweep (plausibly the stage accelerating; untested). A
+0.250514 step there is a ±0.047° ω scale error about the middle of the sweep, as
+large as the per-spot ω residual.
+
+#### `tx` from the grains (`grain-tx`)
+
+Both `tx` and the axis act on single-crystal spots followed across ω, which is what a
+grain list is. With the Friedel Wedge in its input file:
 
 ```bash
 midas-joint-ff-calibrate grain-tx \
-  --paramstest <THE MASTER PARAM FILE — the same one you pass to
-                midas-pipeline --params, e.g. Parameters.txt> \
+  --paramstest ps_wedge.txt     # carries the Friedel Wedge \
   --layer-dir  <result>/LayerNr_1 \
-  --refine tx,Wedge --max-grains 100 --max-iter 120 \
-  --out ps_txwedge.txt
+  --refine tx --max-grains 100 --max-iter 120 \
+  --out ps_tx.txt
 ```
 
-> ### HALT: `--paramstest` is the MASTER param file, NEVER `<result>/LayerNr_1/paramstest.txt`
+`midas-pipeline --grain-geometry-run` does both in order (Friedel, then `tx` with
+the Wedge pinned) and writes `paramstest_graintx.txt` in the layer dir.
+
+> ### HALT on older installs: `--paramstest` must give the geometry the run used
+>
+> **Fixed 2026-10-01 (unreleased at the time of writing):** the per-layer
+> `paramstest.txt` now also carries canonical `Lsd`/`BC`/`tx`/`ty`/`tz`/
+> `LatticeConstant`/`ResidualCorrectionMap` (midas-transforms writer);
+> `midas_calibrate.params` maps `LsdFit`/`YBCFit`/`txFit`/`LatticeParameter`
+> on older layer files; `midas_integrate` no longer drops `;`-terminated values
+> (it read `px 150.000000;` as 0); and grain-tx **raises** on 0 matched spots
+> instead of writing `tx 0`. On an install without those fixes, everything
+> below still applies: use the MASTER param file.
 >
 > This is the single easiest way to get a confident wrong answer out of this step,
 > and it fails **silently with `rc=0`**.
@@ -925,7 +1030,16 @@ midas-joint-ff-calibrate grain-tx \
 >    downstream outputs first. The refresh guard in `_param_refresh.py` catches this
 >    and refuses with a list; trust it rather than `--force-param-refresh`.
 
-> **`grain-tx` returns a RESIDUAL, not an absolute. Compose and iterate.**
+> **Version note (2026-10-01): never hand-compose.** Since
+> `midas-joint-ff-calibrate` 0.5.0 (commit 5773de0f, 2026-09-29) a non-zero
+> Wedge in the input file, or `Wedge` in `--refine`, puts grain-tx on the
+> raw-frame path where tx and Wedge are **absolute**; only tx-only on a
+> Wedge-0 file is relative, and the `--out` writer composes that for you.
+> **Feed the `--out` file forward; do not add the printed number to the
+> previous pass** (on 0.5.0 that double-counts). The paragraphs below describe
+> the pre-0.5.0 relative behaviour and are kept as the record.
+>
+> **(pre-0.5.0) `grain-tx` returns a RESIDUAL, not an absolute. Compose and iterate.**
 > It reports the roll left over from whatever `tx` the reconstruction already ran with,
 > so `tx_total = tx_applied + tx_reported`, then re-run from `transforms` and do it
 > again — each pass recovers only part of what remains
@@ -1093,5 +1207,92 @@ lattice and through λ. Breaking that degeneracy needs several detector
 distances with known relative travel (`midas-calibrate-v2 --mode multi
 --lsd-offsets`), which is the only route here that makes λ identifiable rather
 than asserted.
+
+#### Detector readout timing (ω offset fixed to the pixel)
+
+**Status: PROVISIONAL throughout (not yet through /verify). The correction
+improved the ω residual but did not meet its registered thresholds:
+INCONCLUSIVE by pre-registration.**
+
+A frame-integrating panel does not expose every pixel over the same ω window.
+If one region of the panel is read (or reset) earlier than another, every spot
+recorded there carries an ω offset set by **where it lands on the detector**,
+not by the grain. The legacy GE correction (`tGap`/`tInt`, along rows) is one
+such model. A calibrant has no ω and cannot see it; `friedel-wedge` cannot either,
+because a Friedel mate lands at the mirrored η, which keeps the detector column
+and flips the row, so a column pattern cancels in the pair. What does see it is
+the **post-fit per-spot ω residual** of a reconstruction.
+
+**How to measure it on a new detector** (scripts in
+`s14_readout/scripts/` of the analysis folder: `s14c_eta_vs_pixel.py`,
+`s14e_axis_test.py`, `s14f_step_test.py`):
+
+1. Take `Omega − OmegaExpPost` per spot from the post-fit `SpotMatrix.csv`.
+2. Regress it on `cot η` and remove that term, so any leftover wedge pattern
+   (`−2·W·cot η`) is not mistaken for a pixel pattern.
+3. For each ring, take the median residual in bins of detector **column**, of
+   **row**, and of **|η|**. Rings cross a given column at different η, so the
+   variable that carries the effect is the one where the rings collapse onto one
+   curve: compare the ring-to-ring spread of the median at matched bins.
+4. Fit the shape along the winning axis: a centre-out V (`1 − |X − C|/(N/2)`)
+   or a split-halves step (`sign(X − C)`), with a free apex `C`.
+
+Measured (analysis folder, logs in `s14_readout/` on the hosts named in
+Lab Notebook §17):
+
+| detector, data | what collapses the rings | shape | size | log |
+|---|---|---|---|---|
+| 20-ID-E `s20varex2`, ss_cal | **column**: ring spread 0.0021° (column) vs 0.0244° (\|η\|), 0.0307° (row) | centre-out V along columns, apex col 1438.5 ± 6.5 | arms 0.1438 / 0.1433°; GE-form k = −0.136° (−0.54 frame) | `s14c.log`, `s14d.log` |
+| 20-ID-E `s20varex2`, Fe9Cr layers | column | same V | 0.083-0.094° | `s14i_fe9cr.log` |
+| 20-ID-D Varex, layers L4/6/8 and L9 of two 20-ID-D runs | column | split-halves **step** along columns | ±0.023-0.030°; fitting it cut the residual scatter by 14-24 % (in-sample) | `s14f_20idD.log` |
+
+The 20-ID-D step has not been corrected in a reconstruction; only the E V has.
+
+**The correction (midas-transforms, `fit_setup`).** Four parameter-file keys:
+
+| key | meaning |
+|---|---|
+| `OmegaReadoutShift` | degrees; ω −= shift × shape(pixel). 0 = off (default) |
+| `OmegaReadoutAxis` | 0 = rows (Z pixel), 1 = columns (Y pixel), in the frame after `ImTransOpt` |
+| `OmegaReadoutShape` | 0 = centre-out `1 − \|X − C\|/(N/2)` (1 at `C`, 0 at the edges); 1 = split `sign(X − C)` |
+| `OmegaReadoutCentre` | `C` in pixels; 0 means N/2 |
+
+It is applied in `_readout_correction` (`midas_transforms/fit_setup/core.py`),
+**in addition to** the legacy `tGap`/`tInt` GE row correction, not instead of it.
+Suggested 20-ID-E setting, PROVISIONAL: `OmegaReadoutShift -0.156`,
+`OmegaReadoutAxis 1`, `OmegaReadoutShape 0`.
+
+**A/B on ss_cal** (same grains; arm A no correction, arm B −0.136°, run C
+−0.156°; `s14_readout/PREREGISTER.md` and `PREREGISTER_C.md` fixed the criteria
+before each run; reads in `s14h_ab_read.log` and `s14j_C.log` on toro):
+
+| metric (same grains) | A | B (−0.136°) vs A [95 % CI] | C (−0.156°) vs A [95 % CI] | registered |
+|---|---|---|---|---|
+| `DiffOme` post-fit | 0.0553° | 0.0486°, **−12.0 %** [−13.2, −11.3] | **−12.1 %** [−12.9, −11.3]; C vs B no change | −15 % (run 1); C/A ≤ 0.88 and C/B CI excluding 1 (run C) |
+| median \|tangential\| residual | 25.34 µm | 24.24 µm, −4.4 % [−7.0, −0.8] | −3.9 % | −5 % (run 1); C/A ≤ 0.956 (run C) |
+| `RMSErrorStrain` | 561.7 µε | 548.1 µε, −2.4 % [−5.8, +0.3] (n.s.) | n.s. | −5 % (run 1); dropped as a criterion for run C |
+| leftover column V (exploratory) | 0.1446° | 0.0216° | 0.0034° | reported, not judged |
+
+1126 grains common to A (1139) and B (1140); no loss of grains or completeness.
+**Verdict: INCONCLUSIVE by registration, both runs.** Everything moved the right
+way; the ω residual dropped 12 % and the leftover V nearly vanished, but no
+registered threshold was met, and the shift was estimated from the same
+residuals it is judged on. Do not quote the correction as validated.
+
+`RMSErrorStrain` is nearly blind to an ω correction: it is the residual of a
+per-grain strain fit to per-spot d-spacings (the radial channel), while this
+correction acts on ω and the tangential channel. Judge it on `DiffOme` and the
+tangential residual.
+
+**Trying a shift without re-zipping.** The readout keys are read by `transforms`,
+so a new shift needs only the stages from `transforms` on. Update the archive's
+analysis parameters in place with
+`midas_zipper.param_refresh.refresh_analysis_params(zip_path, param_file)`, then
+`midas-pipeline run ... --resume from --from transforms --no-refresh-params`.
+Run C took 1 min 40 s this way against 25 min for the full arm A (Lab Notebook
+§17). This is the fix for the "`tx` lives in the zarr" trap above: the
+refresh puts the new values into the archive, so `transforms` reads them without
+a re-zip. Check that `transforms` actually re-ran (no "already exists; skip" in
+its log) before reading the result.
 
 ---

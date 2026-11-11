@@ -42,10 +42,10 @@ jobs:
       SYNC_BRANCH: auto/midas-capsule-sync
     steps:
       - name: Check out APEXA
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -134,7 +134,12 @@ jobs:
           PY
 
           git commit -m "capsules: sync MIDAS manuals to ${MIDAS_SHA}"
-          git push --force-with-lease origin "$SYNC_BRANCH"
+          # actions/checkout fetches main only, so the bot's branch from an earlier run
+          # has no remote-tracking ref and --force-with-lease refuses with "stale info"
+          # (every scheduled run failed this way from 5 Oct 2026). Fetch it first; the
+          # lease then protects against a concurrent push, and a first run still works.
+          git fetch --no-tags origin "+refs/heads/$SYNC_BRANCH:refs/remotes/origin/$SYNC_BRANCH" || true
+          git push --force-with-lease="$SYNC_BRANCH" origin "$SYNC_BRANCH"
 
           EXISTING=$(gh pr list --head "$SYNC_BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -z "$EXISTING" ]; then

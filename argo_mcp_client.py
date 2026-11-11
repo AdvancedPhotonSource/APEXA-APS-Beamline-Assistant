@@ -1885,7 +1885,8 @@ class APEXAClient:
         # Normalize path-like arguments to absolute paths
         path_arg_names = {"path", "file_path", "image_file", "calibration_file",
                           "parameters_file", "result_folder", "dark_file",
-                          "working_dir", "param_file", "data_file"}
+                          "working_dir", "param_file", "data_file",
+                          "artifact_path", "manifest_path"}
         for key in list(arguments.keys()):
             if key in path_arg_names and isinstance(arguments[key], str):
                 val = arguments[key]

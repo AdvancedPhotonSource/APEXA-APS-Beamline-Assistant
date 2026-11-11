@@ -6875,8 +6875,9 @@ async def midas_auto_calibrate(
             # Pixel size precedence: explicit argument > the template's own `px`
             # line > a detector preset > the shape guess. Never let the guess
             # override a stated value: _detector_shape_and_px maps 2880² to 150 µm
-            # (Varex 2923), but a VarexD at 20-ID is 100 µm, and silently
-            # substituting 150 puts a 50% error straight into Lsd.
+            # (Varex 2923), and a detector with the same frame size but a different
+            # pixel would get a silent Lsd error. (The `100x100` in some 20-ID file
+            # names is the beam size, not the pixel: those VarexD frames are 150 µm.)
             _dk, _dpre = _resolve_detector_preset(detector)
             if not isinstance(_dpre, dict):
                 _dpre = {}               # ditto: a miss yields the known-key list
@@ -6888,10 +6889,9 @@ async def midas_auto_calibrate(
             elif _dpre and _dpre.get("px_um"):
                 _px_use, _px_src = float(_dpre["px_um"]), f"detector preset {_dk!r}"
             else:
-                # Last resort. Dimensions alone do NOT determine pixel size -- a
-                # 2880x2880 frame is 150 um on a Varex 2923 and 100 um on the VarexD
-                # at 20-ID -- so say which presets share these dimensions rather than
-                # presenting a guess as a fact.
+                # Last resort. Dimensions alone do NOT determine pixel size, so say
+                # which presets share these dimensions rather than presenting a guess
+                # as a fact.
                 _same = [k for k, v in _load_detector_presets().items()
                          if (v.get("NrPixelsY"), v.get("NrPixelsZ")) == (_ny2, _nz2)]
                 _px_use = float(_px2)

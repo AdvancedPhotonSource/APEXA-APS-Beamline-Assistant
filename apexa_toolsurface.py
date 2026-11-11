@@ -56,6 +56,7 @@ CORE_TOOLS: tuple[str, ...] = (
     "list_directory",
     "read_file",
     "write_file",
+    "finalize_result",                 # one-call final decision manifest
     "get_file_info",
     "run_command",
     "run_remote_command",

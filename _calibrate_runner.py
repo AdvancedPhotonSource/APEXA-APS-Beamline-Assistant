@@ -390,10 +390,28 @@ def main(argv=None):
         try:
             lsd_for_gate = float(v1.Lsd) if v1.Lsd > 0 else 0.0
             if lsd_for_gate > 0 and v1.Wavelength > 0 and v1.pxY > 0:
+                # Pass the calibrant: the gate defaults to CeO2 (a=5.41153, SG 225),
+                # so a LaB6 run was checked against the wrong ring set.
+                _gate_kw = {}
+                try:
+                    _lat = v1.LatticeConstant
+                    _a = float(_lat[0] if hasattr(_lat, "__len__") else _lat)
+                    if _a > 0:
+                        _gate_kw["lattice_a_A"] = _a
+                    if int(getattr(v1, "SpaceGroup", 0) or 0) > 0:
+                        _gate_kw["space_group"] = int(v1.SpaceGroup)
+                except Exception:
+                    _gate_kw = {}
+                try:   # feature-detect: older builds lack these keywords
+                    import inspect as _inspect
+                    _accepted = _inspect.signature(detector_scope_gate).parameters
+                    _gate_kw = {k: v for k, v in _gate_kw.items() if k in _accepted}
+                except (TypeError, ValueError):
+                    _gate_kw = {}
                 g = detector_scope_gate(
                     wavelength_A=float(v1.Wavelength), Lsd_um=lsd_for_gate,
                     pxY_um=float(v1.pxY), NrPixelsY=v1.NrPixelsY,
-                    NrPixelsZ=v1.NrPixelsZ)
+                    NrPixelsZ=v1.NrPixelsZ, **_gate_kw)
                 scope = {"severity": getattr(g, "severity", None),
                          "message": getattr(g, "message", str(g))}
                 if str(scope["severity"]).lower() in ("halt", "error", "fail"):

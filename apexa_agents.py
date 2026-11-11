@@ -55,6 +55,27 @@ def automatic_procedures_enabled() -> bool:
         "0", "false", "no", "off")
 
 
+def _cap_procedure(text: str, open_hint: str) -> str:
+    """Bound one automatically delivered procedure block.
+
+    Automatic delivery sent ~168 KB of procedure text that every later request carried,
+    which slowed each turn until runs timed out (R5). Long documents are cut with a
+    pointer to the full text, which the agent can still open explicitly.
+    """
+    try:
+        limit = int(os.environ.get("APEXA_AUTO_PROCEDURE_MAX_CHARS", "12000"))
+    except ValueError:
+        limit = 12000
+    if limit <= 0 or len(text) <= limit:
+        return text
+    return (text[:limit].rstrip() + f"\n\n[... truncated for length; {open_hint} for the full text.]")
+
+
+HALT_HEADER = ("\n\nHALT CONDITIONS -- if one applies and the user's confirmed facts do not "
+               "settle it, stop and report it as a rejected or provisional decision. A condition "
+               "settled by a confirmed operator fact is an assumption to state, not a halt:\n")
+
+
 try:
     import capsule_registry as _capsule_registry
 except Exception:  # pragma: no cover - defensive; capsule injection then no-ops
@@ -1812,6 +1833,15 @@ you will not be re-invoked later, so never promise to report something "once it
 finishes" — call the tool now and report the result.
 
 When a tool fails, read the error and adapt. Do not repeat an identical failing call.
+
+Facts the user states as confirmed (energy or wavelength, pixel size, detector geometry,
+image transform, omega start/step and sign, beam and sample size) are authoritative
+inputs. A handbook warning that such a convention cannot be verified from the data is a
+stated assumption in your answer, not a reason to withhold a result. Withhold or reject a
+result only when the data, the parameters or a check you ran contradict each other or fail.
+
+When the task asks for a final decision or result manifest, record it with finalize_result
+(the adopted file, the status and a short summary) before giving your final answer.
 """
 
 _TOOL_PREAMBLE = """⚠️ CRITICAL: YOU HAVE TOOLS — USE THEM.
@@ -2711,6 +2741,7 @@ class AgentRunner:
             injected_skills.add(s)          # mark injected even if body is empty
             body = load_skill_text(s)
             if body:
+                body = _cap_procedure(body, f"read the skill '{s}' explicitly")
                 blocks.append(f"### Canonical procedure: {s}\n{body}")
         if not blocks:
             return None
@@ -2797,8 +2828,8 @@ class AgentRunner:
             return None
         if not body:
             return None
-        halt_block = (f"\n\nHALT CONDITIONS — stop and ask the user if any apply "
-                      f"(do not proceed on assumption):\n{halt}") if halt else ""
+        body = _cap_procedure(body, f"call learn_technique('{tech}') or open_phase")
+        halt_block = (HALT_HEADER + halt) if halt else ""
         return {
             "role": "system",
             "content": (
@@ -3131,14 +3162,28 @@ class AgentRunner:
         # first FF/NF/PF tool fires.
         _injected_techniques: set = set(preloaded_techniques or ())
 
+        # Warn with enough headroom to finish: a multi-step task needs several calls to
+        # validate, record and report. A warning only 3 calls from the end let a run hit
+        # the cap mid-write and lose its decision entirely (FF pilot, Nov 2026).
+        # Small caps keep the original 3-from-the-end warning; long tasks get an
+        # eighth of their budget (at least 4 requests) plus a last-call reminder.
+        _long_turn = max_iterations >= 12
+        _warn_left = max(4, max_iterations // 8) if _long_turn else 3
         for iteration in range(max_iterations):
-            if max_iterations >= 3 and iteration == max_iterations - 3:
+            if max_iterations >= 3 and iteration == max_iterations - _warn_left:
                 messages.append({"role": "system", "content": (
-                    "The turn is nearing its model-request limit. Finish the current "
-                    "workflow: use the recorded checks to write any requested final "
-                    "decision/artifact manifest, including an explicit provisional or "
-                    "rejected decision when warranted. Do not start optional analyses "
-                    "or a new solver run. Then report the result and remaining limits."
+                    f"The turn is nearing its model-request limit: about {_warn_left} requests "
+                    "remain. Finish the current workflow now: use the recorded checks to write "
+                    "any requested final decision/artifact manifest -- the finalize_result tool "
+                    "does this in one call (adopted file, status, summary) -- including an "
+                    "explicit provisional or rejected decision when warranted. Do not start "
+                    "optional analyses or a new solver run. Then report the result and "
+                    "remaining limits."
+                )})
+            if _long_turn and iteration == max_iterations - 2:
+                messages.append({"role": "system", "content": (
+                    "Last request before the limit. If no final decision has been recorded yet, "
+                    "call finalize_result now; otherwise give the final answer."
                 )})
             # Reserve the last request for a grounded final answer. Previously
             # finalization required request N+1 and failed against an N-call gateway.
@@ -4707,10 +4752,13 @@ class OrchestratorAgent:
         # legacy default of 10 leaves no margin for one wrong turn and forces a
         # premature finalize. Give the reasoning loop real headroom; override
         # with APEXA_MAX_ITERATIONS if a task needs more.
+        # 24 was too low for multi-stage science: an FF reconstruction spent its whole
+        # budget validating parameters before the pipeline ran. Benchmarks set this to
+        # their request budget; interactive use gets 80.
         try:
-            _single_cap = int(os.environ.get("APEXA_MAX_ITERATIONS", "24"))
+            _single_cap = int(os.environ.get("APEXA_MAX_ITERATIONS", "80"))
         except ValueError:
-            _single_cap = 24
+            _single_cap = 80
 
         # Learning layer for single mode. The unified agent has tool_names=[],
         # so the runner's own skill preload is empty. Recover it by matching the
@@ -4766,11 +4814,10 @@ class OrchestratorAgent:
                     _tech = _techs[0]
                     _spine = _capsule_registry.spine_context(_tech)
                     if _spine:
+                        _spine = _cap_procedure(_spine, f"call learn_technique('{_tech}') or open_phase")
                         _preloaded_techniques.add(_tech)
                         _halt = _capsule_registry.halt_checklist(_tech)
-                        _halt_block = (
-                            "\n\nHALT CONDITIONS — stop and ask the user if any apply "
-                            f"(do not proceed on assumption):\n{_halt}") if _halt else ""
+                        _halt_block = (HALT_HEADER + _halt) if _halt else ""
                         skill_block += (
                             f"\n\nTECHNIQUE HANDBOOK ({_tech}) — the verified MIDAS "
                             "procedure (scope, step order, hard rules, traps). It is the "

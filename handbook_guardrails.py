@@ -586,11 +586,14 @@ def _curated_relational(params: dict, pipe: str, source_h5: str) -> list:
     if pipe in ("ff", "pf"):
         # §3e — GE/far-field frames carry a leading throwaway frame; SkipFrame 1.
         if not have("skipframe"):
-            add("warning", "SkipFrame",
-                "SkipFrame is not set. GE/far-field data carry a leading throwaway "
-                "frame — set 'SkipFrame 1' (FF §3e). Omitting it shifts every omega "
-                "by one step, mirroring/rotating the microstructure undetectably.",
-                "FF §3e")
+            # GE-specific: only GE panels write a leading throwaway frame. On other
+            # detectors an unset SkipFrame is correct, and a warning here made agents
+            # treat a non-GE scan as unresolved (FF pilot, Nov 2026).
+            add("info", "SkipFrame",
+                "SkipFrame is not set. If the detector is a GE panel, its files carry a "
+                "leading throwaway frame: set 'SkipFrame 1' (FF §3e), otherwise every "
+                "omega shifts by one step. Other detectors, or files whose frame count "
+                "matches the stated omega range, need no skip.", "FF §3e")
         elif str(params["skipframe"][0][0] if params["skipframe"][0] else "") != "1":
             add("info", "SkipFrame",
                 f"SkipFrame={params['skipframe'][0]} (expected 1 for GE/far-field). "
@@ -618,6 +621,22 @@ def _curated_relational(params: dict, pipe: str, source_h5: str) -> list:
                     "Separate Dark file with " + ", ".join(bad) + ". A standalone "
                     "dark .h5 stores its frame at 'exchange/data' — set BOTH darkLoc "
                     "and darkDataset to exchange/data (FF §3d).", "FF §3d")
+
+        # midas-pipeline >= 0.22 locates raw files as RawFolder/FileStem_<Padding digits>Ext
+        # and refuses to start without Padding, or with an Ext lacking its dot.
+        if have("filestem"):
+            if not have("padding"):
+                add("warning", "Padding",
+                    "FileStem is set but Padding is not. midas-pipeline 0.22+ builds the "
+                    "raw file name as FileStem_<number zero-padded to Padding digits><Ext> "
+                    "and refuses to start without Padding (e.g. 'Padding 6' for _000001).",
+                    "midas-pipeline preflight")
+            ext = (params.get("ext", [[""]])[0] or [""])[0]
+            if have("ext") and ext and not ext.startswith("."):
+                add("warning", "Ext",
+                    f"Ext={ext} has no leading dot. midas-pipeline appends Ext directly, so "
+                    f"the file is looked up as ...{ext} without a dot; write 'Ext .{ext}'.",
+                    "midas-pipeline preflight")
 
         # §6c — MinPeakSNR is the spot-quality gate; FitRMSE/NImgs are not proxies.
         if not have("minpeaksnr"):

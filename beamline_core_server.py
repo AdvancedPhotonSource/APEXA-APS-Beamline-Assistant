@@ -14,6 +14,7 @@ Created: 2025 (Unified architecture)
 """
 
 from typing import Any, Optional, List, Dict
+import hashlib
 import json
 import sys
 import os
@@ -1032,6 +1033,58 @@ async def write_file(file_path: str, content: str, encoding: str = "utf-8", appe
 
     except Exception as e:
         return format_result({"error": f"Error writing file: {str(e)}"})
+
+_FINAL_STATUSES = ("accepted", "rejected", "provisional", "abstained")
+
+
+@mcp.tool()
+async def finalize_result(scientific_status: str, summary: str = "", artifact_path: str = "",
+                          manifest_path: str = "result_manifest.json") -> str:
+    """Record the final scientific decision for this task in one call.
+
+    Use this at the end of every analysis that has to commit to an answer. It writes a
+    machine-readable manifest naming the adopted result file, its SHA-256 and the decision,
+    so a result is never lost because the turn ran out of requests.
+
+    Args:
+        scientific_status: accepted, rejected, provisional or abstained.
+        summary: one or two sentences: what was found and what remains uncertain.
+        artifact_path: the final adopted result file (e.g. a Grains.csv or a refined
+            parameter file). Required for 'accepted'; omit when no result is adopted.
+        manifest_path: where to write the manifest (default result_manifest.json in the
+            working directory).
+
+    Returns:
+        JSON with the written manifest, or an error that explains what to fix.
+    """
+    status = (scientific_status or "").strip().lower()
+    if status not in _FINAL_STATUSES:
+        return format_result({"tool": "finalize_result", "status": "error",
+                              "error": f"scientific_status must be one of {list(_FINAL_STATUSES)}"})
+    manifest = Path(manifest_path or "result_manifest.json").expanduser().resolve()
+    record = {"schema_version": 1, "scientific_status": status, "summary": summary,
+              "written_by": "finalize_result"}
+    if artifact_path:
+        art = Path(artifact_path).expanduser().resolve()
+        if not art.is_file():
+            return format_result({"tool": "finalize_result", "status": "error",
+                                  "error": f"artifact_path is not an existing file: {art}"})
+        digest = hashlib.sha256(art.read_bytes()).hexdigest()
+        try:
+            rel = art.relative_to(manifest.parent).as_posix()
+        except ValueError:
+            rel = str(art)
+        record.update(artifact_path=rel, artifact_sha256=digest)
+    elif status == "accepted":
+        return format_result({"tool": "finalize_result", "status": "error",
+                              "error": "an accepted decision must name the adopted artifact_path"})
+    refuse = _data_guard.check_write_target(manifest, what="write the result manifest")
+    if refuse:
+        return format_result({"tool": "finalize_result", "status": "refused", "error": refuse})
+    manifest.write_text(json.dumps(record, indent=2) + "\n")
+    return format_result({"tool": "finalize_result", "status": "success",
+                          "manifest_path": str(manifest), "manifest": record})
+
 
 @mcp.tool()
 async def get_file_info(file_path: str, include_sha256: bool = False) -> str:
