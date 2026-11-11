@@ -90,18 +90,27 @@ def main():
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--cpus", default="32,33,34,35,36,37,38,39")
     parser.add_argument("--wait-for-inputs", action="store_true")
+    parser.add_argument("--attempt", type=int, default=1,
+                        help="Explicit setup retry; every attempt retains separate output")
     args = parser.parse_args()
+    if args.attempt < 1:
+        parser.error("attempt must be positive")
     root = args.root.resolve()
     out = root / "results/reference-ff"
+    if args.attempt > 1:
+        out = out / f"attempt-{args.attempt}"
     if out.exists():
         raise RuntimeError("Reference directory exists; preserve it rather than rerunning")
     state_path = root / "setup/reference-status.json"
     state = {"pid": os.getpid(), "status": "preparing", "started_unix": time.time(),
+             "attempt": args.attempt, "output": str(out),
              "model_calls": 0, "scientific_agent_trials": 0, "source_sha256": sha(__file__)}
 
     def update(**changes):
         state.update(changes, updated_unix=time.time())
         write(state_path, state)
+        if out.is_dir():
+            write(out / "status.json", state)
 
     try:
         cpus = [int(value) for value in args.cpus.split(",")]

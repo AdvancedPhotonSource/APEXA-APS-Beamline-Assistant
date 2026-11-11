@@ -54,3 +54,37 @@ Remote root: `/scratch/ptripathi/apexa-cvpr`. Input files, installation records,
 reference output, native context, qualifications and agent attempts have separate
 subdirectories inside this one project. The local receipt mirror stays within
 the existing Box comparison audit. R5 and R6 remain unchanged.
+
+## Execution and records
+
+`qualify.py` checks native shell and image transport, an explicit optional
+token-count endpoint probe, and concurrent file I/O with APEXA's procedure
+delivery. A native CLI need not issue a token-count request during its small
+fixture. All required requests it does issue must pass. A separate sandbox
+check imports the installed solver and verifies that original inputs are hidden.
+The first reference failed after numerical calibration because the FF plotting
+dependency `matplotlib` was missing; the private environment was repaired and
+the full reference was explicitly restarted as attempt 2. The original numerical
+outputs, failure, package freezes and setup qualification attempts are retained.
+
+`run.py --root /scratch/ptripathi/apexa-cvpr --wait-for-gates` waits for the
+reference and native qualification. It checks fresh reference artifacts and the
+declared operator parameters before freezing `setup/pilot-frozen.json`. Failed
+gates stop admission. Two waves run three systems concurrently, on disjoint
+eight-core slots; the system-to-slot assignment rotates in the second wave.
+The process wall timer excludes input staging; the relay enforces the common
+120-generation allowance. Token-count traffic is audited separately. Trial
+directories are independent copies and only the current trial is writable.
+
+The final prompt, upstream/native context, solver versions, code hashes, time
+allowance, inputs and schedule are frozen before any scientific attempt. No
+scientific attempt is silently repeated. `results/agents/trial_status/` and
+`results/agents/summary.json` retain every admitted attempt, including failures.
+Traces, prompts, model request metadata and adopted artifact hashes are retained.
+
+`evaluate.py` checks the final decision manifest, fresh artifact identities,
+declared operator facts, finite geometry and near-orthogonal orientation matrices.
+It does not certify physical correctness or infer that a declared parameter file
+was actually consumed; effective execution, stage completion, requests for help
+and unsupported scientific claims require the retained command/tool trace audit.
+There is no automatic win/loss ranking or requirement to recover two grains.

@@ -1,0 +1,55 @@
+Reconstruct the far-field HEDM gold acquisition
+Au_FF_box_1p1x0p025_att6_001181.vrx.h5 in this directory using MIDAS.
+First obtain a fresh detector calibration from
+Ceria_0723_63keV_900mm_100x100_2p0s_aero_180_001187.vrx.h5.
+Both original acquisitions are supplied; no fitted geometry is supplied.
+
+Operator facts and initial analysis settings, common to every system:
+- Energy 63.314 keV; 150 micrometre pixels; 2880 by 2880 detector; ImTransOpt 2.
+  The approximate detector distance is 900 mm. Refine it from the CeO2 rings.
+- The HDF5 image dataset is /exchange/data; the dark is /exchange/dark.
+  The CeO2 exposure needs subtraction of its own measured dark. Use the median
+  calibrant image. Gold is already dark-subtracted and its embedded dark is zero.
+- Gold is FCC, space group 225, lattice 4.0782 Angstrom, cubic angles 90 degrees.
+- Skip the nearly empty leading gold frame, retaining 1441 frames. There is one
+  file per sweep, start file number 1181, six-digit padding, extension .vrx.h5.
+- Use the documented negated omega convention: nominal start 180 degrees, step
+  -0.25 degrees. The stored 0--20 degree header range conflicts with the nearly
+  full-turn readback. Absolute angular zero has not been independently verified.
+- Initial gold settings: rings 1--5, thresholds 20/20/20/20/30, minimum four
+  pixels, indexing seed omega window -180 to 180 degrees, seed ring 1. Keep a
+  record of any changes and their evidence. These are starting settings, not
+  a grain-count truth. Do not tune, discard or merge candidates to obtain two.
+
+Use your native analysis capabilities and the installed MIDAS suite. Its command
+line programs are on PATH. Unedited upstream resources, where provided, are in
+./manuals and the native skill directories; consult ff-hedm and calibrate-integrate.
+Inspect help/signatures rather than guessing command syntax or internal APIs.
+Keep every output, temporary file and subprocess inside this trial workspace.
+Use CPU execution and at most 8 CPU threads. You may finish routine choices
+autonomously using the supplied facts and documentation.
+
+Carry the fresh geometry, distortion and any correction map consistently into
+peak fitting, transformation, indexing and grain refinement. Inspect execution
+logs and effective parameters. Keep stage return codes distinct from scientific
+acceptance. Inspect actual reconstruction artifacts and report remaining
+ambiguities. Grain count, completeness and a structurally valid file alone do not
+establish the physical identity of the grains. Do not claim that physical grain
+count, absolute energy or angular zero are known from this task.
+
+The total wall allowance is {wall_seconds} seconds after your process starts,
+with at most 120 model generation requests. Start with a written plan. Reserve
+time to finish your decision and artifacts; skip unrelated analyses and optional
+plots once the task is complete. If essential checks cannot finish, record an
+honest provisional/rejected/abstained decision and the reason.
+
+Before ending, write result_manifest.json with schema_version 1,
+task "real_gold_ff", scientific_status (accepted, provisional, rejected or
+abstained), a nonempty reason, and an artifacts mapping. For an adopted result,
+include entries named parameters, grains and calibration. Each entry must give
+path (workspace-relative) and sha256 (exact file bytes). parameters is the actual
+final MIDAS input parameter file used for reconstruction, grains is the adopted
+Grains.csv, and calibration is the solver's fresh calibration JSON receipt.
+If you cannot produce an adopted reconstruction, use a non-accepted status and
+an empty artifacts mapping. Preserve partial outputs and stage logs regardless.
+End with a concise description of the completed stages, decision and limitations.
