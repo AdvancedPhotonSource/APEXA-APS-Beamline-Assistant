@@ -224,6 +224,12 @@ def _place_input(src: Path, dst: Path) -> str:
       either would let one modify the original raw data.
     """
     import subprocess as _sp
+    if sys.platform.startswith("linux"):
+        try:
+            _sp.run(["cp", "--reflink=always", str(src), str(dst)], check=True, capture_output=True)
+            return "reflink"
+        except (OSError, _sp.CalledProcessError):
+            pass
     try:
         _sp.run(["cp", "-c", str(src), str(dst)], check=True, capture_output=True)
         return "clone"
@@ -896,7 +902,13 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             native_context_manifest: Optional[Path] = None,
             guidance_text: Optional[str] = None, pi_image_input: bool = False,
             opencode_image_input: bool = False, strict_writes: bool = False,
-            task_variant: str = "nominal") -> Run:
+            task_variant: str = "nominal", additional_inputs=(),
+            result_kind: str = "calibration") -> Run:
+    if result_kind not in ("calibration", "execution_only"):
+        raise ValueError("Unknown result kind")
+    input_names = [exposure.name, *[Path(p).name for p in additional_inputs]]
+    if len(set(input_names)) != len(input_names):
+        raise ValueError("Input basenames collide")
     if task_variant not in ("nominal", "pixel_size_100um"):
         raise ValueError("Unknown scientific task variant")
     if task_variant != "nominal" and prompt_override is not None:
@@ -931,6 +943,10 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             r.policy_bundle["context_sha256"] = native_context.sha(native_context_manifest)
         else:
             r.staged = stage(exposure, manuals if arm.manuals else None, ws, knowledge_policy=policy)
+        for source in additional_inputs:
+            source = Path(source)
+            _place_input(source, ws / source.name)
+            r.staged.append(source.name)
         before = workspace_snapshot(ws)
         prompt = prompt_override if prompt_override is not None else PROMPT.format(
             fname=exposure.name, manual_note=("Use your native scientific tools and context.\n\n"
@@ -1103,6 +1119,10 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
                 failed_outcome = "infra_error"
                 r.detail = "model endpoint unreachable; an infrastructure failure, not a harness result"
         prose = final_answer(stdout, arm.harness) if structured_logs else stdout
+        if result_kind == "execution_only":
+            r.outcome = failed_outcome or "execution_completed"
+            r.scientific_outcome = "task_specific_evaluation_required"
+            return r
         evidence = extract_result(ws, prose, t0, before, require_manifest=require_manifest)
         r.reported_tz, r.tz_source = evidence.tz, evidence.source
         r.scientific_status = evidence.scientific_status
@@ -1151,7 +1171,7 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             # through the unsandboxed evaluator. Raw staged input is omitted.
             shutil.copytree(ws, keep, symlinks=True,
                             ignore=lambda directory, names: [name for name in names
-                                if Path(directory) == ws and name == exposure.name])
+                                if Path(directory) == ws and name in input_names])
         except Exception as exc:
             r.detail = (r.detail + f"; workspace archive failed: {exc}").strip("; ")
         shutil.rmtree(trial_root, ignore_errors=True)
