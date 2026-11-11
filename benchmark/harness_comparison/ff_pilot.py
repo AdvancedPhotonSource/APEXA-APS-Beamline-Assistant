@@ -142,7 +142,10 @@ def run_one(arm: rb.Arm, trial: int, a, guidance: str, outdir: Path) -> FFRun:
     ws, profile = trial_root / "workspace", trial_root / "profile"
     ws.mkdir(); profile.mkdir()
     stdout = stderr = ""
-    native = native_context.load(a.context, native_repo=rb.REPO)
+    # APEXA arms verify APEXA's whole frozen knowledge tree; external arms receive only the
+    # MIDAS manuals (the APEXA tree is denied in their sandbox), so they verify only those.
+    # Checking the APEXA tree for them let an unrelated index touch stop the cohort.
+    native = native_context.load(a.context, native_repo=rb.REPO if arm.harness == "apexa" else None)
     try:
         shutil.copyfile(a.data, ws / DATA_NAME)
         r.staged = [DATA_NAME]
