@@ -37,10 +37,15 @@ def environment(root):
     code = ("import sys,json,pathlib;print(json.dumps([sys.prefix,sys.base_prefix,"
             "str(pathlib.Path(sys._base_executable).parent.parent)]))")
     solver = json.loads(subprocess.check_output([str(root / "envs/midas/bin/python"), "-c", code], text=True))
-    env["RB_SOFTWARE_READ_ROOTS"] = json.dumps(list(dict.fromkeys([
+    roots = [
         str(root / "source"), str(root / "runtime/harnesses"), str(root / "runtime/node"),
         str(root / "context/embedding-assets"), str(root / "envs/apexa"),
-        sys.prefix, sys.base_prefix, str(Path(sys._base_executable).parent.parent), *solver])))
+        sys.prefix, sys.base_prefix, str(Path(sys._base_executable).parent.parent), *solver]
+    # A reused virtualenv can be addressed through the revision's symlink while
+    # console-script shebangs and APEXA_MIDAS_BIN name its original location.
+    # Bind both exact prefixes; neither exposes the surrounding data directories.
+    roots += [str(Path(path).resolve()) for path in roots]
+    env["RB_SOFTWARE_READ_ROOTS"] = json.dumps(list(dict.fromkeys(roots)))
     return env
 
 

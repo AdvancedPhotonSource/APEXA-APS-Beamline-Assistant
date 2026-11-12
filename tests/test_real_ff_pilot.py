@@ -13,6 +13,23 @@ from ff_harness_pilot.evaluate import artifact, evaluate, grain_structure, param
 from ff_harness_pilot.run import wall_budget
 
 
+def test_reused_solver_environment_binds_both_alias_and_real_prefix(tmp_path, monkeypatch):
+    from ff_harness_pilot import qualify
+    root = tmp_path / "revision"
+    (root / "setup").mkdir(parents=True)
+    (root / "setup/native-environment.json").write_text("{}")
+    shared = tmp_path / "shared-env"
+    shared.mkdir()
+    (root / "envs").mkdir()
+    alias = root / "envs/midas"
+    alias.symlink_to(shared, target_is_directory=True)
+    monkeypatch.setattr(qualify.subprocess, "check_output",
+                        lambda *a, **k: json.dumps([str(alias), "/usr", "/usr"]))
+    roots = json.loads(qualify.environment(root)["RB_SOFTWARE_READ_ROOTS"])
+    assert str(alias) in roots and str(shared) in roots
+    assert str(tmp_path) not in roots
+
+
 def fixture(workspace, count=3):
     texts = {
         "parameters": "Wavelength 0.19582430178665108\npx 150\nImTransOpt 2\nSpaceGroup 225\n"
