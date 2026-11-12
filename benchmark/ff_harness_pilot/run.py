@@ -21,7 +21,7 @@ from ff_harness_pilot.baseline import INPUTS, checked_inputs, sha, write
 from ff_harness_pilot.evaluate import evaluate, grain_structure, parameter_facts
 from ff_harness_pilot.qualify import environment
 import rotation_benchmark as rb
-from model_audit import ModelAudit
+from model_audit import ModelAudit, require_provider_available
 import native_context
 
 def wall_budget(reference_seconds):
@@ -157,6 +157,7 @@ def main():
     parser.add_argument("--wait-for-gates", action="store_true")
     args = parser.parse_args()
     root = args.root.resolve()
+    os.environ["APEXA_PROVIDER_HOLD_FILE"] = str(root / "setup/provider-hold.json")
     with (root / "setup/pilot.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if (root / "setup/pilot-frozen.json").exists():
@@ -184,6 +185,7 @@ def main():
             frozen = freeze(root)
             rows = []
             for wave, arms in enumerate(frozen["arms_by_wave"]):
+                require_provider_available(root)
                 state.update(status="running", wave=wave, wall_seconds=frozen["wall_seconds"])
                 write(status_path, state)
                 with ProcessPoolExecutor(max_workers=3, mp_context=multiprocessing.get_context("spawn")) as pool:

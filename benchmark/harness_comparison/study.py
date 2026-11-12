@@ -175,6 +175,7 @@ def configured_environment(root, spec):
         env[name] = str(spec["cpu_threads"])
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["APEXA_MAX_ITERATIONS"] = str(spec["max_model_requests"])
+    env["APEXA_PROVIDER_HOLD_FILE"] = str(root / "setup/provider-hold.json")
     native_environment = spec.get("native_environment", {})
     allowed = {"APEXA_EMBED_MODEL", "APEXA_EMBED_REVISION", "APEXA_EMBED_TRUST_REMOTE_CODE",
                "APEXA_EMBED_CODE_REVISION", "HF_HUB_CACHE", "HF_HUB_OFFLINE",

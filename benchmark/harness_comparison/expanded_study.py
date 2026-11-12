@@ -138,6 +138,8 @@ def run_locked(root, spec, cohort):
             unfinished = [e for e in entries if e["schedule_index"] not in completed]
             if not unfinished:
                 continue
+            from model_audit import require_provider_available
+            require_provider_available(root)
             stopped = deadline_reached(spec)
             host = {} if stopped else rb.wait_for_host(spec["model_base_url"])
             if not stopped:

@@ -31,6 +31,15 @@ def upstream():
             if self.path == "/v1/messages/count_tokens":
                 body = json.dumps(self.server.token_count_response).encode()
                 kind = "application/json"
+            elif self.server.generation_override is not None:
+                value = self.server.generation_override
+                if payload.get("stream"):
+                    events = value if isinstance(value, list) else [value]
+                    body = "".join("data: " + json.dumps(e) + "\n\n" for e in events).encode()
+                    kind = "text/event-stream"
+                else:
+                    body = json.dumps(value).encode()
+                    kind = "application/json"
             elif payload.get("stream"):
                 events = [{"type": "message_start", "message": {"model": model, "usage": {"input_tokens": 9}}},
                           {"type": "message_delta", "usage": {"output_tokens": 2}},
@@ -52,6 +61,7 @@ def upstream():
     server.paths = []
     server.token_count_response = {"input_tokens": 37}
     server.model = "claude-opus-5"
+    server.generation_override = None
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield server, f"http://127.0.0.1:{server.server_port}/v1"
@@ -110,6 +120,58 @@ def test_returned_model_mismatch_is_not_a_common_model_result(tmp_path, upstream
                    json={"model": "claudeopus5"})
     assert not audit.summary()["all_response_models_match"]
     assert not audit.summary()["qualified"]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_http_200_provider_denial_holds_relay_and_future_blocks(tmp_path, upstream, monkeypatch, stream):
+    server, url = upstream
+    hold = tmp_path / "setup/provider-hold.json"
+    monkeypatch.setenv("APEXA_PROVIDER_HOLD_FILE", str(hold))
+    server.generation_override = {"id": "chatcmpl-blocked-private-account", "model": server.model,
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0}, "choices": [
+            {"message": {"content": "IMPORTANT USAGE NOTICE FROM ARGO: ACCESS REVOKED"}}]}
+    log = tmp_path / "audit.jsonl"
+    with ma.ModelAudit(url, "secret", "claudeopus5", log) as audit:
+        payload = {"model": "claudeopus5", "stream": stream}
+        headers = {"x-api-key": audit.token}
+        assert httpx.post(audit.base_url + "/messages", headers=headers, json=payload).status_code == 200
+        assert httpx.post(audit.base_url + "/messages", headers=headers, json=payload).status_code == 503
+    assert len(server.requests) == 1
+    assert audit.summary()["provider_access_denied"]
+    assert not audit.summary()["scientific_evaluable"]
+    assert audit.summary()["successful_responses"] == 0
+    assert hold.exists()
+    with pytest.raises(RuntimeError, match="Provider access was denied"):
+        ma.require_provider_available(tmp_path)
+    assert "private-account" not in log.read_text()
+    assert "IMPORTANT USAGE NOTICE" not in log.read_text()
+
+
+def test_split_streaming_notice_is_detected_without_a_special_id(tmp_path, upstream):
+    server, url = upstream
+    server.generation_override = [
+        {"message": {"model": server.model, "usage": {"input_tokens": 0}}},
+        {"delta": {"text": "IMPORTANT USAGE NOTICE FROM "}},
+        {"delta": {"text": "ARGO: ACCESS "}},
+        {"delta": {"text": "REVOKED"}},
+        {"usage": {"output_tokens": 0}},
+    ]
+    with ma.ModelAudit(url, "secret", "claudeopus5", tmp_path / "audit.jsonl") as audit:
+        httpx.post(audit.base_url + "/messages", headers={"x-api-key": audit.token},
+                   json={"model": "claudeopus5", "stream": True})
+    assert audit.summary()["provider_access_denied"]
+
+
+def test_zero_token_http_success_is_not_an_evaluable_generation(tmp_path, upstream):
+    server, url = upstream
+    server.generation_override = {"model": server.model,
+                                  "usage": {"input_tokens": 0, "output_tokens": 0}}
+    with ma.ModelAudit(url, "secret", "claudeopus5", tmp_path / "audit.jsonl") as audit:
+        httpx.post(audit.base_url + "/messages", headers={"x-api-key": audit.token},
+                   json={"model": "claudeopus5"})
+    assert not audit.summary()["qualified"]
+    assert not audit.summary()["scientific_evaluable"]
+    assert not audit.summary()["provider_access_denied"]  # No invented diagnosis.
 
 
 def test_rejected_endpoint_keeps_route_but_not_query_or_opaque_identifiers(tmp_path, upstream):

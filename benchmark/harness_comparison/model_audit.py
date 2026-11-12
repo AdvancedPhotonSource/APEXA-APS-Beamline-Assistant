@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import base64
 import json
+import os
 import re
 import secrets
 import threading
@@ -80,12 +81,42 @@ def response_evidence(payload, record):
         if isinstance(payload.get(key), dict):
             objects.append(payload[key])
     for obj in objects:
+        if str(obj.get("id", "")).startswith(("chatcmpl-blocked-", "msg_blocked_")):
+            record["provider_denial"] = "argo_access_revoked"
         if isinstance(obj.get("model"), str):
             record.setdefault("response_models", [])
             if obj["model"] not in record["response_models"]:
                 record["response_models"].append(obj["model"])
         if isinstance(obj.get("usage"), dict):
             record.setdefault("usage", {}).update({k: v for k, v in obj["usage"].items() if v is not None})
+    # Some ARGO denials arrive as ordinary HTTP-200 JSON/SSE content. Keep only
+    # a short in-memory tail so notices split across streaming events are caught.
+    def response_text(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in ("text", "content") and isinstance(item, str):
+                    yield item
+                elif isinstance(item, (dict, list)):
+                    yield from response_text(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from response_text(item)
+    tail = record.get("_provider_text_tail", "") + "".join(response_text(payload))
+    if "IMPORTANT USAGE NOTICE FROM ARGO" in tail and "ACCESS REVOKED" in tail:
+        record["provider_denial"] = "argo_access_revoked"
+    record["_provider_text_tail"] = tail[-2048:]
+
+
+def has_generation_usage(record):
+    usage = record.get("usage", {})
+    return any(type(usage.get(key)) in (int, float) and usage[key] > 0 for key in
+               ("input_tokens", "output_tokens", "prompt_tokens", "completion_tokens", "total_tokens"))
+
+
+def require_provider_available(root):
+    if (Path(root) / "setup/provider-hold.json").exists():
+        raise RuntimeError("Provider access was denied; no new scientific block admitted. "
+                           "Preserve attempts and verify provider recovery before resuming.")
 
 
 class ModelAudit:
@@ -106,12 +137,26 @@ class ModelAudit:
         self.violations = []
         self.closed = False
         self.procedure_candidates = procedure_candidates
+        self.provider_denied = False
+        self.provider_hold = os.environ.get("APEXA_PROVIDER_HOLD_FILE")
 
     def record(self, entry):
+        entry.pop("_provider_text_tail", None)  # Never persist response text.
         with self.lock:
             if self.closed:
                 return
             self.records.append(entry)
+            if entry.get("provider_denial"):
+                self.provider_denied = True
+                if self.provider_hold:
+                    path = Path(self.provider_hold)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        with path.open("x") as stream:
+                            json.dump({"status": "provider_access_denied", "time_unix": time.time(),
+                                "reason": entry["provider_denial"], "audit": str(self.output)}, stream)
+                    except FileExistsError:
+                        pass
             self.stream.write(json.dumps(entry) + "\n")
             self.stream.flush()
 
@@ -157,6 +202,8 @@ class ModelAudit:
                 auth = self.headers.get("Authorization", "").removeprefix("Bearer ")
                 if owner.token not in (auth, self.headers.get("x-api-key")):
                     return self.error(401, "Trial credential required")
+                if owner.provider_denied:
+                    return self.error(503, "Upstream provider access denied; trial relay held")
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                 except ValueError:
@@ -279,18 +326,21 @@ class ModelAudit:
 
     def summary(self):
         records = [r for r in self.records if r.get("event") == "generation"]
-        success = [r for r in records if r.get("http_status") == 200 and not r.get("transport_error")]
+        success = [r for r in records if r.get("http_status") == 200
+                   and not r.get("transport_error") and not r.get("provider_denial")]
         auxiliary = [r for r in self.records if r.get("event") == "token_count"]
         auxiliary_errors = [r for r in auxiliary if r.get("http_status") != 200
                             or r.get("transport_error") or not r.get("valid_token_count")]
         budget = [v for v in self.violations if v["status"] == 429 and "budget exhausted" in v["reason"]]
         protocol = [v for v in self.violations if v not in budget]
         evaluable = (bool(success) and not protocol and not auxiliary_errors and len(success) == self.requests
-                     and all(r["model_matches"] and r["usage"] for r in success))
+                     and all(r["model_matches"] and has_generation_usage(r) for r in success))
         return {"requests": self.requests, "recorded_requests": len(self.records),
                 "completed_generations": len(records), "violations": list(self.violations),
                 "qualified": bool(success) and not self.violations and not auxiliary_errors and len(success) == self.requests
-                             and all(r["model_matches"] and r["usage"] for r in success),
+                             and all(r["model_matches"] and has_generation_usage(r) for r in success),
+                "provider_access_denied": self.provider_denied,
+                "provider_denials": [r["provider_denial"] for r in records if r.get("provider_denial")],
                 "successful_responses": len(success),
                 "auxiliary_requests": len(auxiliary),
                 "successful_token_counts": len(auxiliary) - len(auxiliary_errors),
@@ -298,12 +348,12 @@ class ModelAudit:
                 "scientific_evaluable": evaluable,
                 "budget_exhausted": bool(budget), "budget_events": budget,
                 "protocol_violations": protocol,
-                "transport_errors": [r.get("transport_error") or f"HTTP {r.get('http_status')}"
+                "transport_errors": [r.get("provider_denial") or r.get("transport_error") or f"HTTP {r.get('http_status')}"
                                      for r in records if r not in success],
                 "automatic_procedure_hashes_delivered": sorted({p["sha256"] for r in records
                         for p in r.get("automatic_procedures_delivered", [])}),
                 "all_response_models_match": bool(success) and all(r["model_matches"] for r in success),
-                "all_successes_have_usage": bool(success) and all(bool(r["usage"]) for r in success),
+                "all_successes_have_usage": bool(success) and all(has_generation_usage(r) for r in success),
                 "response_models": sorted({m for r in success for m in r["response_models"]}),
                 "request_budget": self.max_requests, "per_request_output_ceiling": self.max_output_tokens,
                 "note": "Provider-reported model IDs; this cannot prove the gateway's internal routing."}
