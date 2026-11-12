@@ -69,6 +69,25 @@ def phase_provenance(path):
         "SpaceGroup", "LatticeConstant", "PhaseNr", "NumPhases", "Phase"}]
 
 
+def verify_frozen_distortion(unpacked, frozen):
+    """Require complete, finite evidence for every requested zero coefficient."""
+    import numpy as np
+
+    values = {}
+    for name in frozen:
+        if name not in unpacked:
+            raise ValueError(f"missing fitted coefficient {name}")
+        value = np.asarray(unpacked[name], dtype=float).reshape(-1)
+        if value.size != 1 or not np.isfinite(value).all():
+            raise ValueError(f"fitted coefficient {name} is not one finite scalar")
+        values[name] = float(value[0])
+    moved = {name: value for name, value in values.items() if abs(value) > 1e-12}
+    if moved:
+        raise ValueError(f"coefficients meant to stay frozen moved ({moved})")
+    return {"status": "verified", "expected_value": 0.0, "absolute_tolerance": 1e-12,
+            "checked_values": values}
+
+
 def _parse_codes(raw):
     """'2', '1 3', '1,3' -> (2,) / (1, 3). Drops 0 (the no-op code)."""
     if not raw:
@@ -696,19 +715,18 @@ def main(argv=None):
             f"midas_calibrate_v2 {v2_version} four-stage takes no mask= argument; "
             "sentinels are zeroed in the image but not excluded from the fit.")
 
+    distortion_verification = {"status": "not_applicable", "checked_values": {}}
     try:
         res = autocalibrate_four_stage(v1, img, **run_kw)
         if _frozen_distortion:
             try:
-                _unp = res.stage2.unpacked
-                _moved = {n: float(_unp[n].reshape(-1)[0]) for n in _frozen_distortion
-                          if n in _unp and abs(float(_unp[n].reshape(-1)[0])) > 1e-12}
-            except Exception:
-                _moved = {}
-            if _moved:
-                _fail(f"--refine-distortion {_rd}: coefficients meant to stay frozen moved "
-                      f"({_moved}); the restriction did not hold, so this result is not "
-                      f"the requested model.", capabilities=caps, nothing_was_run=False)
+                distortion_verification = verify_frozen_distortion(
+                    res.stage2.unpacked, _frozen_distortion)
+            except Exception as exc:
+                _fail(f"--refine-distortion {_rd}: restriction verification failed: {exc}",
+                      capabilities=caps, nothing_was_run=False,
+                      distortion_verification={"status": "failed", "error": str(exc),
+                                               "required_coefficients": _frozen_distortion})
             notes.append(f"distortion frozen through Stage 2: {_frozen_distortion}")
     except Exception as e:
         _fail(f"autocalibrate_four_stage failed: {e}",
@@ -845,6 +863,7 @@ def main(argv=None):
         "phases_at_seam": phases_at_seam,
         "refine_distortion": _rd,
         "distortion_frozen": _frozen_distortion,
+        "distortion_verification": distortion_verification,
         "tol_tilts_deg": tilt_tol,
         "scope_gate": scope,
         "gate": gate,

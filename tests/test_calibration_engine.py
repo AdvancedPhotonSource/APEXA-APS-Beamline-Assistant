@@ -208,6 +208,32 @@ def test_runner_parsers():
     assert mod._parse_gaps("1 7 1 7 1") == [1, 7, 1, 7, 1]
 
 
+def test_restriction_verification_requires_every_coefficient():
+    from _calibrate_runner import verify_frozen_distortion
+    with pytest.raises(ValueError, match="missing fitted coefficient"):
+        verify_frozen_distortion({"a2": [0.0]}, ["a2", "a4"])
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), [0.0, 0.0], []])
+def test_restriction_verification_rejects_unusable_evidence(value):
+    from _calibrate_runner import verify_frozen_distortion
+    with pytest.raises(ValueError, match="finite scalar"):
+        verify_frozen_distortion({"a2": value}, ["a2"])
+
+
+def test_restriction_verification_rejects_moved_terms():
+    from _calibrate_runner import verify_frozen_distortion
+    with pytest.raises(ValueError, match="coefficients meant to stay frozen moved"):
+        verify_frozen_distortion({"a2": [0.01]}, ["a2"])
+
+
+def test_restriction_verification_records_complete_zero_evidence():
+    from _calibrate_runner import verify_frozen_distortion
+    result = verify_frozen_distortion({"a2": [0.0], "a4": 0.0}, ["a2", "a4"])
+    assert result["status"] == "verified"
+    assert result["checked_values"] == {"a2": 0.0, "a4": 0.0}
+
+
 def test_the_imtransopt_double_apply_hazard_is_real_and_handled(tmp_path):
     """The trap this guards against, demonstrated against the real upstream API.
 

@@ -55,7 +55,8 @@ def source_hashes():
                                 "_apexa_driver.py", "model_audit.py", "procedure_audit.py", "native_context.py",
                                 "freeze_native_context.py", "main_supervisor.py", "expanded_study.py",
                                 "qualify_guided_adapters.py", "expanded_queue.py", "prepare_references.py",
-                                "analyze_r6.py", "analyze_main.py", "review_pilot.py", "baseline.py", "baseline_worker.py")]
+                                "analyze_r6.py", "analyze_main.py", "review_pilot.py", "baseline.py", "baseline_worker.py",
+                                "verification_study.py")]
     paths += [REPO / n for n in ("apexa_agents.py", "midas_comprehensive_server.py",
                                 "_calibrate_runner.py", "skill_registry.py", "apexa_knowledge_policy.py")]
     paths += list(REPO.glob("*.py"))

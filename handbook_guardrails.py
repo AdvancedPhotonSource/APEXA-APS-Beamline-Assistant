@@ -869,8 +869,9 @@ def verify_ff_outputs(result_folder, layers=None) -> dict:
 
     Returns ``{status: ok|fail|incomplete|error, layers:[{layer, checks:[...]}],
     summary}``. ``fail`` = a present artifact is degenerate (the valuable signal);
-    ``incomplete`` = nothing to check yet; a missing artifact is ``n/a``, not a
-    fail (the stage may simply not have run).
+    ``incomplete`` = no artifacts or a layer has no final Grains.csv; a missing
+    intermediate artifact is ``n/a`` (layouts differ across solver versions).
+    ``ok`` establishes artifact structure, not physical grain accuracy.
     """
     try:
         import numpy as np
@@ -984,6 +985,10 @@ def verify_ff_outputs(result_folder, layers=None) -> dict:
     elif not any_present:
         status = "incomplete"
         summary = "no FF artifacts found yet under " + str(rf)
+    elif any(c["name"] == "Grains" and c["ok"] is None
+             for lr in layer_reports for c in lr["checks"]):
+        status = "incomplete"
+        summary = "present FF artifacts passed, but a final Grains.csv is missing"
     else:
         status = "ok"
         summary = "all present FF artifacts passed the notebook invariants"

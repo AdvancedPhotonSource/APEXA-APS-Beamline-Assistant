@@ -258,6 +258,14 @@ def test_verify_empty_folder_is_incomplete():
     assert r["status"] == "incomplete"
 
 
+def test_verify_seed_only_is_incomplete():
+    with tempfile.TemporaryDirectory() as d:
+        rf = _layer(d, {"SpotsToIndex.csv": "1\n"})
+        result = hg.verify_ff_outputs(rf)
+    assert result["status"] == "incomplete"
+    assert "Grains.csv is missing" in result["summary"]
+
+
 def test_verify_empty_inputall_is_fail():
     with tempfile.TemporaryDirectory() as d:
         rf = _layer(d, {"InputAll.csv": ""})       # 0 bytes
