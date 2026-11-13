@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import base64
 import json
+import math
 import os
 import re
 import secrets
@@ -121,7 +122,8 @@ def require_provider_available(root):
 
 class ModelAudit:
     def __init__(self, upstream, api_key, model, output, *, max_requests=40,
-                 max_output_tokens=16000, timeout=1800, procedure_candidates=None):
+                 max_output_tokens=16000, timeout=1800, procedure_candidates=None,
+                 request_timeout=60):
         parsed = urlsplit(upstream)
         if parsed.scheme not in ("http", "https") or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError("Use a model API URL without embedded credentials or query")
@@ -129,6 +131,11 @@ class ModelAudit:
         self.api_key, self.model = api_key, model
         self.output = Path(output)
         self.max_requests, self.max_output_tokens = max_requests, max_output_tokens
+        if not math.isfinite(request_timeout) or request_timeout <= 0:
+            raise ValueError("request_timeout must be finite and positive")
+        # Keep the historical default for frozen studies. New studies must
+        # explicitly freeze an idle-response timeout appropriate to the provider.
+        self.request_timeout = float(request_timeout)
         self.deadline = time.monotonic() + timeout
         self.token = secrets.token_hex(24)
         self.lock = threading.Lock()
@@ -265,7 +272,8 @@ class ModelAudit:
                 url = owner.upstream + path.removeprefix("/v1")
                 digest = hashlib.sha256()
                 try:
-                    remaining = max(0.1, min(60, owner.deadline - time.monotonic()))
+                    remaining = max(0.1, min(owner.request_timeout, owner.deadline - time.monotonic()))
+                    record["upstream_read_timeout_s"] = remaining
                     with httpx.Client(timeout=httpx.Timeout(remaining, connect=min(20, remaining))) as client:
                         with client.stream("POST" if post else "GET", url, headers=headers,
                                            content=body or None) as response:
@@ -356,6 +364,7 @@ class ModelAudit:
                 "all_successes_have_usage": bool(success) and all(has_generation_usage(r) for r in success),
                 "response_models": sorted({m for r in success for m in r["response_models"]}),
                 "request_budget": self.max_requests, "per_request_output_ceiling": self.max_output_tokens,
+                "upstream_read_timeout_s": self.request_timeout,
                 "note": "Provider-reported model IDs; this cannot prove the gateway's internal routing."}
 
     def __exit__(self, *exc):

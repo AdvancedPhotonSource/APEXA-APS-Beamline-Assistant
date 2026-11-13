@@ -88,6 +88,37 @@ def test_relay_records_actual_identity_usage_and_clamped_budget(tmp_path, upstre
     assert "input_tokens" in evidence if stream else "prompt_tokens" in evidence
 
 
+@pytest.mark.parametrize("wall_seconds,expected_max", [(1000, 300), (5, 5)])
+def test_relay_read_timeout_is_explicit_and_capped_by_wall_budget(tmp_path, upstream, monkeypatch, wall_seconds, expected_max):
+    _, url = upstream
+    observed = []
+    client = ma.httpx.Client
+
+    def capture_timeout(*args, **kwargs):
+        observed.append(kwargs["timeout"].read)
+        return client(*args, **kwargs)
+
+    monkeypatch.setattr(ma.httpx, "Client", capture_timeout)
+    log = tmp_path / "audit.jsonl"
+    with ma.ModelAudit(url, "secret", "claudeopus5", log,
+                       timeout=wall_seconds, request_timeout=300) as audit:
+        response = httpx.post(audit.base_url + "/messages", headers={"x-api-key": audit.token},
+                              json={"model": "claudeopus5"})
+        assert response.status_code == 200
+    assert len(observed) == 1
+    assert expected_max - 2 < observed[0] <= expected_max
+    assert audit.summary()["upstream_read_timeout_s"] == 300
+    record = json.loads(log.read_text().splitlines()[0])
+    assert record["upstream_read_timeout_s"] == observed[0]
+    assert audit.summary()["qualified"]
+
+
+@pytest.mark.parametrize("invalid", [0, -1, float("nan"), float("inf")])
+def test_relay_rejects_invalid_read_timeout(tmp_path, invalid):
+    with pytest.raises(ValueError, match="request_timeout"):
+        ma.ModelAudit("http://localhost/v1", "secret", "claudeopus5", tmp_path / "a.jsonl", request_timeout=invalid)
+
+
 @pytest.mark.parametrize("reason", ["model", "credential", "budget", "tokens", "endpoint"])
 def test_rejected_requests_invalidate_qualification(tmp_path, upstream, reason):
     server, url = upstream
