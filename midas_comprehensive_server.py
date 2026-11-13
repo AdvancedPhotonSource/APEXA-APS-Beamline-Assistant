@@ -2680,93 +2680,70 @@ async def overlay_ff_nf_results(
     ff_grains_file: str,
     nf_mic_file: str,
     output_plot: str = "ff_nf_overlay.png",
-    slice_position: str = "middle"
+    slice_position: str = "middle",
+    space_group: int = 225,
+    min_confidence: float = 0.7,
+    max_misorientation_deg: float = 1.0,
+    phase: int = 1,
 ) -> str:
-    """Overlay FF and NF grain maps for validation.
+    """Compare one FF layer and one NF section using symmetry-aware orientations.
 
-    Creates visualization comparing coarse FF-HEDM grain map with
-    detailed NF-HEDM microstructure reconstruction.
+    Produces headless side-by-side maps, a per-NF-row match table, and a JSON
+    receipt with hashes, exact denominators and ambiguity counts. Many NF rows
+    can match one FF orientation. Seed row numbers are never treated as grain
+    correspondence. Agreement measures consistency, not independent accuracy.
+
+    Establish the same specimen, phase and MIDAS orientation frame first. NF
+    Euler angles must be in radians. No spatial transform or frame search is
+    fitted; positions remain unregistered. Shared reconstruction inputs need a
+    separate provenance audit. Uses the installed midas_stress routines through
+    APEXA_MIDAS_BIN/python (when configured), otherwise MIDAS_PYTHON or the
+    detected MIDAS environment.
 
     Args:
-        ff_grains_file: Path to FF-HEDM Grains.csv
-        nf_mic_file: Path to an NF-HEDM .mic file (e.g. <MicFileText>.mic)
-        output_plot: Output plot file name
-        slice_position: Which slice to show (top, middle, bottom)
-
-    Returns:
-        JSON with comparison statistics and plot file
+        ff_grains_file: MIDAS Grains.csv with named orientation-matrix columns.
+        nf_mic_file: Text MIDAS MIC with named Eul1/Eul2/Eul3 and Confidence columns.
+        output_plot: Fresh .png or .pdf path in an analysis workspace, outside
+            both input directories. Relative paths resolve from the working
+            directory. Also writes .json and .matches.tsv beside this plot.
+        slice_position: Legacy argument; only "middle" is supported. Supply a
+            single FF layer and NF section explicitly; no 3D slicing is done.
+        space_group: Crystal space group for symmetry (225 for FCC).
+        min_confidence: Include NF rows with confidence >= this value.
+        max_misorientation_deg: Angular tolerance for reported correspondence.
+        phase: Phase number selected in both files.
     """
     try:
-        # Validate inputs
-        valid, ff_path = validate_file(ff_grains_file)
-        if not valid:
-            return format_result({"error": ff_path, "status": "failed"})
-
-        valid, nf_path = validate_file(nf_mic_file)
-        if not valid:
-            return format_result({"error": nf_path, "status": "failed"})
-
-        work_dir = Path(ff_path).parent
-        output_path = work_dir / output_plot
-
-        # Build command
-        args = [
-            ff_path,
-            nf_path,
-            "--output", str(output_path),
-            "--slice", slice_position
-        ]
-
-        print(f"Overlaying FF and NF results", file=sys.stderr)
-
-        result = run_python_script("PlotFFNF.py", args, cwd=str(work_dir))
-
-        # Gather comparison statistics
-        comparison = {
-            "ff_grains_file": ff_path,
-            "nf_mic_file": nf_path,
-            "n_ff_grains": 0,
-            "n_nf_voxels": 0,
-            "plot_file": None
-        }
-
-        # Count FF grains
-        try:
-            with open(ff_path, 'r') as f:
-                comparison["n_ff_grains"] = sum(1 for line in f) - 1
-        except:
-            pass
-
-        # Count NF voxels
-        try:
-            with open(nf_path, 'r') as f:
-                comparison["n_nf_voxels"] = sum(1 for line in f if not line.startswith('%'))
-        except:
-            pass
-
-        # Check plot output
-        if output_path.exists():
-            comparison["plot_file"] = str(output_path)
-            comparison["plot_size_kb"] = output_path.stat().st_size / 1024
-
-        return format_result({
-            "tool": "overlay_ff_nf_results",
-            "status": "completed" if result["success"] else "failed",
-            "execution": result,
-            "comparison": comparison,
-            "interpretation": {
-                "ff_spatial_resolution": "~100-500 μm per grain",
-                "nf_spatial_resolution": "~1-10 μm per voxel",
-                "resolution_improvement": f"~{comparison['n_nf_voxels'] / max(comparison['n_ff_grains'], 1):.0f}x"
-            }
-        })
-
+        if slice_position != "middle":
+            raise ValueError("Supply one FF layer and NF section; 3D slice selection is not supported")
+        from _ff_nf_compare import output_paths
+        ff_path = Path(ff_grains_file).expanduser().resolve(strict=True)
+        nf_path = Path(nf_mic_file).expanduser().resolve(strict=True)
+        plot, receipt, table = output_paths(output_plot, (ff_path, nf_path))
+        pinned_bin = os.environ.get("APEXA_MIDAS_BIN", "").strip()
+        solver_python = str(Path(pinned_bin).expanduser() / "python") if pinned_bin else find_midas_python()
+        if not Path(solver_python).is_file():
+            raise ValueError(f"Configured MIDAS Python does not exist: {solver_python}")
+        cmd = [solver_python, str(Path(__file__).with_name("_ff_nf_compare.py")),
+               str(ff_path), str(nf_path), str(plot),
+               "--space-group", str(space_group), "--min-confidence", str(min_confidence),
+               "--max-misorientation-deg", str(max_misorientation_deg), "--phase", str(phase)]
+        result = await asyncio.to_thread(
+            subprocess.run, cmd, capture_output=True, text=True,
+            timeout=600, env=get_midas_env())
+        if result.returncode != 0:
+            return format_result({"tool": "overlay_ff_nf_results", "status": "failed",
+                                  "return_code": result.returncode, "error": result.stderr[-6000:]})
+        if not all(p.is_file() and p.stat().st_size > 0 for p in (plot, receipt, table)):
+            raise RuntimeError("Comparison process returned without all three nonempty output artifacts")
+        comparison = json.loads(receipt.read_text())
+        import hashlib
+        for path in (plot, table):
+            if hashlib.sha256(path.read_bytes()).hexdigest() != comparison["artifacts_sha256"].get(str(path)):
+                raise RuntimeError(f"Output hash mismatch: {path}")
+        return format_result({"tool": "overlay_ff_nf_results", **comparison})
     except Exception as e:
-        return format_result({
-            "tool": "overlay_ff_nf_results",
-            "status": "error",
-            "error": str(e)
-        })
+        return format_result({"tool": "overlay_ff_nf_results", "status": "error", "error": str(e)})
 
 # =============================================================================
 # ADVANCED ANALYSIS TOOLS
