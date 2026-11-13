@@ -27,6 +27,8 @@ def test_finalize_result_writes_hash_verified_manifest(tmp_path):
     assert rec["schema_version"] == 1 and rec["scientific_status"] == "accepted"
     assert rec["artifact_path"] == "LayerNr_1/Grains.csv"          # relative to the manifest
     assert rec["artifact_sha256"] == hashlib.sha256(art.read_bytes()).hexdigest()
+    assert out["manifest_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+    assert out["manifest_sha256"] != rec["artifact_sha256"]
 
 
 def test_finalize_result_refuses_accepted_without_artifact(tmp_path):
@@ -52,6 +54,106 @@ def test_finalize_result_rejects_unknown_status(tmp_path):
 def test_finalize_result_is_on_the_core_surface():
     from apexa_toolsurface import CORE_TOOLS
     assert "finalize_result" in CORE_TOOLS
+
+
+def test_finalize_task_manifest_computes_workspace_relative_hashes(tmp_path):
+    from beamline_core_server import finalize_result
+    artifact = tmp_path / "analysis" / "matches.tsv"
+    artifact.parent.mkdir()
+    artifact.write_text("row\tangle\n1\t0.2\n")
+    manifest = tmp_path / "analysis" / "result_manifest.json"
+    result = _result(_run(finalize_result("accepted", "Orientation consistency only",
+        manifest_path=str(manifest), workspace_root=str(tmp_path),
+        result_details={"task": "ff_nf_consistency", "counts": {"selected": 1}},
+        artifact_paths=["analysis/matches.tsv"])))
+    assert result["status"] == "success", result
+    record = json.loads(manifest.read_text())
+    assert record["task"] == "ff_nf_consistency"
+    assert record["counts"] == {"selected": 1}
+    assert record["artifacts"] == [{"path": "analysis/matches.tsv",
+        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}]
+    assert record["validation"]["scientific_interpretation"] == "not_evaluated_by_hash_checks"
+    assert result["manifest_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("problem", ["wrong_hash", "missing_file", "self_receipt"])
+def test_finalize_rejects_invalid_adopted_manifest_without_overwriting_receipt(tmp_path, problem):
+    from beamline_core_server import finalize_result
+    artifact = tmp_path / "matches.tsv"
+    artifact.write_text("1\t0.2\n")
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text('{"prior_receipt": true}\n')
+    original = receipt.read_bytes()
+    entry = {"path": artifact.name, "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+    if problem == "wrong_hash":
+        entry["sha256"] = "0" * 64
+    elif problem == "missing_file":
+        artifact.unlink()
+    else:
+        entry = {"path": receipt.name, "sha256": hashlib.sha256(original).hexdigest()}
+    adopted = tmp_path / "adopted.json"
+    adopted.write_text(json.dumps({"artifacts": [entry]}))
+    result = _result(_run(finalize_result("accepted", artifact_path=str(adopted),
+        manifest_path=str(receipt), workspace_root=str(tmp_path))))
+    assert result["status"] == "error", result
+    assert receipt.read_bytes() == original
+
+
+@pytest.mark.parametrize("problem", ["same_adopted_file", "self_hash", "escape", "reserved_field"])
+def test_finalize_rejects_unsafe_or_conflicting_task_manifest(tmp_path, problem):
+    from beamline_core_server import finalize_result
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    output = workspace / "manifest.json"
+    output.write_text("original result\n")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside\n")
+    kwargs = {"manifest_path": str(output), "workspace_root": str(workspace)}
+    if problem == "same_adopted_file":
+        kwargs["artifact_path"] = str(output)
+    elif problem == "self_hash":
+        kwargs["artifact_paths"] = [str(output)]
+    elif problem == "escape":
+        kwargs["artifact_paths"] = ["../outside.txt"]
+    else:
+        kwargs["result_details"] = {"scientific_status": "accepted"}
+    result = _result(_run(finalize_result("provisional", **kwargs)))
+    assert result["status"] == "error", result
+    assert output.read_text() == "original result\n"
+
+
+def test_finalize_checks_native_scientific_receipt_artifacts(tmp_path):
+    from beamline_core_server import finalize_result
+    artifact = tmp_path / "plot.png"
+    artifact.write_bytes(b"scientific artifact")
+    receipt = tmp_path / "comparison.json"
+    receipt.write_text(json.dumps({"artifacts": {"plot": str(artifact), "receipt": str(receipt)},
+        "artifacts_sha256": {str(artifact): hashlib.sha256(artifact.read_bytes()).hexdigest()}}))
+    output = tmp_path / "analysis" / "manifest.json"
+    kwargs = dict(manifest_path=str(output), workspace_root=str(tmp_path),
+        result_details={"task": "comparison"}, artifact_paths=[str(artifact), str(receipt)])
+    result = _result(_run(finalize_result("accepted", **kwargs)))
+    assert result["status"] == "success", result
+    original = output.read_bytes()
+    artifact.write_bytes(b"changed scientific artifact")
+    result = _result(_run(finalize_result("accepted", **kwargs)))
+    assert result["status"] == "error" and "hash mismatch" in result["error"]
+    assert output.read_bytes() == original
+
+
+def test_task_manifest_cannot_include_a_receipt_that_hashes_it(tmp_path):
+    from beamline_core_server import finalize_result
+    manifest = tmp_path / "result_manifest.json"
+    manifest.write_text('{"old_result": true}\n')
+    original = manifest.read_bytes()
+    receipt = tmp_path / "decision.json"
+    receipt.write_text(json.dumps({"artifact_path": manifest.name,
+        "artifact_sha256": hashlib.sha256(original).hexdigest()}))
+    result = _result(_run(finalize_result("accepted", manifest_path=str(manifest),
+        workspace_root=str(tmp_path), result_details={"task": "comparison"},
+        artifact_paths=[receipt.name])))
+    assert result["status"] == "error" and "Circular" in result["error"]
+    assert manifest.read_bytes() == original
 
 
 # ── automatic procedure blocks are bounded ────────────────────────────────────

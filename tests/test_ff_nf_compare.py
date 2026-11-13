@@ -50,6 +50,8 @@ def test_matches_symmetry_not_ids_and_counts_exact_threshold(tmp_path, orientati
     }
     assert result["matched_fraction"] == 0.5
     assert "not_established" in result["spatial_registration"]
+    assert result["evidence_scope"]["physical_grain_identity"] == "not_established"
+    assert result["evidence_scope"]["chance_match_rate"] == "not_estimated"
     assert "resolution_improvement" not in json.dumps(result)
     assert out.read_bytes().startswith(b"\x89PNG")
     assert out.with_suffix(".matches.tsv").read_text().splitlines()[1].startswith("1\t0.7\t")
@@ -78,6 +80,24 @@ def test_tree_matches_exhaustive_midas_reference(orientation_backend, sg):
     assert np.array_equal(nearest, reference.argmin(axis=1))
     assert np.allclose(angles, reference.min(axis=1), atol=1e-10)
     assert np.array_equal(counts, (reference <= 10).sum(axis=1))
+
+
+def test_rounded_near_ties_outside_tolerance_use_upstream_minimum(orientation_backend):
+    # Six-decimal archived matrices are not perfectly orthogonal. SciPy's
+    # projection and MIDAS's quaternion conversion can order near ties differently.
+    # Searching only the nearest tree entry previously missed this minimum.
+    rng = np.random.default_rng(1701)
+    nf = Rotation.random(random_state=rng).as_matrix().reshape(1, 9)
+    center = Rotation.random(random_state=rng)
+    ff = np.round((center * Rotation.from_rotvec(
+        rng.normal(0, 1e-6, size=(12, 3)))).as_matrix(), 6).reshape(-1, 9)
+    reference = np.degrees(orientation_backend.misorientation_om_batch(
+        np.repeat(nf, len(ff), axis=0), ff, 225))
+    assert reference.min() > 1
+    nearest, angles, counts = match_orientations(nf, ff, 225, 1)
+    assert nearest[0] == reference.argmin()
+    assert angles[0] == reference.min()
+    assert counts[0] == 0
 
 
 def test_improper_orientation_matrix_is_rejected(tmp_path):

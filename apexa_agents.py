@@ -1777,6 +1777,13 @@ A ring PASS is image-consistency evidence; distinguish it from absolute truth.
   per-row evidence, exact denominator and multiple-candidate counts before making
   a claim. The tool compares orientations; it does not establish spatial registration,
   unique physical grain identity or independent accuracy.
+  Carry its evidence_scope into the final task manifest. A mismatched-layer control
+  establishes the measured contrast for those inputs; it does not prove absence of
+  matching artifacts, texture effects or accidental agreement. Treat seed, geometry
+  and lattice provenance separately and cite the source for each. Do not infer
+  shared geometry from an FF-derived lattice parameter, or independence from generic
+  seeds. A consistently scoped orientation result can be accepted while physical
+  grain identity, registration and absolute accuracy remain unestablished.
 - Crystallographic conventions: use the installed midas_stress.orientation routines
   when a calculation goes beyond the typed tool. Read their documented units:
   MIDAS NF Eul1/Eul2/Eul3 and misorientation function outputs are radians; convert
@@ -1859,8 +1866,13 @@ inputs. A handbook warning that such a convention cannot be verified from the da
 stated assumption in your answer, not a reason to withhold a result. Withhold or reject a
 result only when the data, the parameters or a check you ran contradict each other or fail.
 
-When the task asks for a final decision or result manifest, record it with finalize_result
-(the adopted file, the status and a short summary) before giving your final answer.
+When the task asks for a final decision or result manifest, use finalize_result before
+giving your final answer. For a task-specific schema, pass result_details (including
+the requested counts, thresholds and evidence limits) and artifact_paths so the tool
+writes the complete manifest and computes hashes in one call. manifest_sha256 refers
+to that written manifest; artifact_sha256 refers to the adopted file. Never include
+the manifest or a receipt that hashes it in its own artifact list, and do not edit a
+finalized manifest afterward. Hash checks establish file integrity, not physical truth.
 """
 
 _TOOL_PREAMBLE = """⚠️ CRITICAL: YOU HAVE TOOLS — USE THEM.

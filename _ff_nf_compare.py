@@ -84,7 +84,8 @@ def match_orientations(nf_om, ff_om, space_group, tolerance):
 
     Older MIDAS batch APIs loop over scalar pairs. Avoid an N*M scalar sweep:
     the quaternion tree uses upstream symmetry operators, and MIDAS checks
-    every candidate within a 0.001-degree search margin plus the nearest row.
+    every candidate within a 0.001-degree margin of the tolerance or the nearest
+    tree angle, whichever is larger. This includes near ties outside tolerance.
     The margin accommodates six-decimal FF matrix serialization. It never
     relaxes the reported match threshold. Crystal symmetry acts on the right.
     """
@@ -103,7 +104,8 @@ def match_orientations(nf_om, ff_om, space_group, tolerance):
     tree = cKDTree(np.concatenate([equivalent, -equivalent]))
     labels = np.tile(ff_index, 2)
     chord, nearest_sym = tree.query(nf_quats)
-    radius = 2 * np.sin(np.radians(min(180, tolerance + 0.001)) / 4)
+    tree_angles = np.degrees(4 * np.arcsin(np.clip(chord / 2, 0, 1)))
+    radius = 2 * np.sin(np.radians(np.minimum(180, np.maximum(tolerance, tree_angles) + 0.001)) / 4)
     neighbours = tree.query_ball_point(nf_quats, radius)
     owners, candidates = [], []
     for i, indices in enumerate(neighbours):
@@ -122,7 +124,6 @@ def match_orientations(nf_om, ff_om, space_group, tolerance):
         best = start + exact[start:end].argmin()
         nearest[i], angles[i] = candidates[best], exact[best]
         counts[i] = (exact[start:end] <= tolerance).sum()
-    tree_angles = np.degrees(4 * np.arcsin(np.clip(chord / 2, 0, 1)))
     if np.max(np.abs(tree_angles - angles)) > 0.001:
         raise ValueError("Quaternion search disagrees with MIDAS by >0.001 degrees; check conventions")
     return nearest, angles, counts
@@ -224,11 +225,25 @@ def compare(ff_file, nf_file, output_plot, *, space_group=225,
         "matched_fraction": float(accepted.mean()),
         "misorientation_deg": {"median_all_selected": float(np.median(angles)), "p95_all_selected": float(np.percentile(angles, 95))},
         "spatial_registration": "not_established; no position error or fitted transform computed",
+        "evidence_scope": {
+            "orientation_correspondence": "computed_under_the_stated_selection_and_frame_assumption",
+            "physical_grain_identity": "not_established",
+            "spatial_accuracy": "not_established",
+            "absolute_orientation_accuracy": "not_established",
+            "reconstruction_independence": "not_assessed_by_this_comparison",
+            "chance_match_rate": "not_estimated",
+            "control_scope": "A differently paired layer tests that pair only; it cannot rule out "
+                             "all matching, symmetry, texture or calibration effects.",
+        },
         "limitations": [
             "Agreement is cross-reconstruction consistency, not independent ground truth or accuracy.",
             "Acquisition identity, shared seeds/calibration and coordinate conventions require a separate provenance audit.",
             "NF map rows are not grains; voxel/grain count ratios do not measure spatial resolution.",
             "Nearest orientation matching is many-to-one, without spatial gating; ambiguous candidates are reported.",
+            "A nonmatching control layer does not prove that a matching layer is free of "
+            "algorithmic artifacts or accidental orientation agreement.",
+            "Shared or independent seeds, geometry and lattice parameters are separate "
+            "provenance facts; evidence about one must not be generalized to the others.",
             "Only the supplied FF layer and NF section are compared; no 3D slice selection or frame search is performed.",
         ],
         "artifacts": {"plot": str(plot), "matches": str(matches), "receipt": str(receipt)},

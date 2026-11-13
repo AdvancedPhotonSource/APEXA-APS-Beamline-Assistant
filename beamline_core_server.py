@@ -1039,51 +1039,56 @@ _FINAL_STATUSES = ("accepted", "rejected", "provisional", "abstained")
 
 @mcp.tool()
 async def finalize_result(scientific_status: str, summary: str = "", artifact_path: str = "",
-                          manifest_path: str = "result_manifest.json") -> str:
-    """Record the final scientific decision for this task in one call.
+                          manifest_path: str = "result_manifest.json",
+                          result_details: Optional[Dict[str, Any]] = None,
+                          artifact_paths: Optional[List[str]] = None,
+                          workspace_root: str = "") -> str:
+    """Write the final decision and hash-checked artifacts atomically.
 
-    Use this at the end of every analysis that has to commit to an answer. It writes a
-    machine-readable manifest naming the adopted result file, its SHA-256 and the decision,
-    so a result is never lost because the turn ran out of requests.
+    For a task-specific manifest, pass result_details (task, reason, counts,
+    thresholds, evidence limits, etc.) and artifact_paths. This writes the complete
+    manifest in one call and computes each artifact hash. Do not hand-copy hashes
+    or add the manifest/receipt to its own artifact list. Hashes verify bytes,
+    not scientific interpretation; keep conclusions within the tool evidence.
 
     Args:
         scientific_status: accepted, rejected, provisional or abstained.
-        summary: one or two sentences: what was found and what remains uncertain.
-        artifact_path: the final adopted result file (e.g. a Grains.csv or a refined
-            parameter file). Required for 'accepted'; omit when no result is adopted.
-        manifest_path: where to write the manifest (default result_manifest.json in the
-            working directory).
+        summary: what was found and what remains uncertain.
+        artifact_path: optional single adopted result file. An adopted JSON
+            manifest's listed artifacts are verified before finalization.
+        manifest_path: output path; never the same file as an adopted artifact.
+        result_details: task-specific fields, excluding schema_version,
+            scientific_status, summary, written_by, artifact_path,
+            artifact_sha256, artifacts, validation, manifest_path and
+            manifest_sha256 (these are tool-owned).
+        artifact_paths: files to list with computed hashes, relative to
+            workspace_root or absolute within it. Accepted requires these
+            files or a single artifact_path.
+        workspace_root: root for workspace-relative artifact lists; defaults
+            to the current working directory.
 
     Returns:
-        JSON with the written manifest, or an error that explains what to fix.
+        manifest_path and manifest_sha256 for the written file, plus its content.
+        artifact_sha256 inside that content refers to the adopted file, not
+        this manifest. Do not edit the files after finalization; finalize again
+        when results change.
     """
     status = (scientific_status or "").strip().lower()
     if status not in _FINAL_STATUSES:
         return format_result({"tool": "finalize_result", "status": "error",
                               "error": f"scientific_status must be one of {list(_FINAL_STATUSES)}"})
     manifest = Path(manifest_path or "result_manifest.json").expanduser().resolve()
-    record = {"schema_version": 1, "scientific_status": status, "summary": summary,
-              "written_by": "finalize_result"}
-    if artifact_path:
-        art = Path(artifact_path).expanduser().resolve()
-        if not art.is_file():
-            return format_result({"tool": "finalize_result", "status": "error",
-                                  "error": f"artifact_path is not an existing file: {art}"})
-        digest = hashlib.sha256(art.read_bytes()).hexdigest()
-        try:
-            rel = art.relative_to(manifest.parent).as_posix()
-        except ValueError:
-            rel = str(art)
-        record.update(artifact_path=rel, artifact_sha256=digest)
-    elif status == "accepted":
-        return format_result({"tool": "finalize_result", "status": "error",
-                              "error": "an accepted decision must name the adopted artifact_path"})
     refuse = _data_guard.check_write_target(manifest, what="write the result manifest")
     if refuse:
         return format_result({"tool": "finalize_result", "status": "refused", "error": refuse})
-    manifest.write_text(json.dumps(record, indent=2) + "\n")
-    return format_result({"tool": "finalize_result", "status": "success",
-                          "manifest_path": str(manifest), "manifest": record})
+    try:
+        from _result_manifest import write_result_manifest
+        result = write_result_manifest(status, summary, artifact_path, manifest,
+            result_details=result_details, artifact_paths=artifact_paths,
+            workspace_root=workspace_root)
+        return format_result({"tool": "finalize_result", "status": "success", **result})
+    except (OSError, ValueError, TypeError) as exc:
+        return format_result({"tool": "finalize_result", "status": "error", "error": str(exc)})
 
 
 @mcp.tool()
