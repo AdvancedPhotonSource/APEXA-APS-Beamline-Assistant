@@ -75,9 +75,7 @@ def inherit_server_environment() -> None:
     argo_mcp_client.StdioServerParameters = with_environment
 
 
-async def _go(prompt: str, timeout: int) -> str:
-    knowledge_preflight()
-    solver_environment()
+def configure_response_timeout():
     response_timeout = os.environ.get('APEXA_BENCH_RESPONSE_TIMEOUT')
     if response_timeout is not None:
         # Configure the client for this study's declared response allowance;
@@ -86,12 +84,22 @@ async def _go(prompt: str, timeout: int) -> str:
         seconds = float(response_timeout)
         if not math.isfinite(seconds) or seconds <= 0:
             raise ValueError('Invalid benchmark response timeout')
-        import apexa_provider_openai
-        original_client = apexa_provider_openai.AsyncOpenAI
-        def configured_client(*args, **kwargs):
-            kwargs['timeout'] = seconds
-            return original_client(*args, **kwargs)
-        apexa_provider_openai.AsyncOpenAI = configured_client
+        # The production provider imports AsyncOpenAI inside its constructor,
+        # so configure the SDK export it actually imports, not an absent module
+        # attribute on apexa_provider_openai.
+        import openai
+        original_client = openai.AsyncOpenAI
+        class ConfiguredAsyncOpenAI(original_client):
+            def __init__(self, *args, **kwargs):
+                kwargs['timeout'] = seconds
+                super().__init__(*args, **kwargs)
+        openai.AsyncOpenAI = ConfiguredAsyncOpenAI
+
+
+async def _go(prompt: str, timeout: int) -> str:
+    knowledge_preflight()
+    solver_environment()
+    configure_response_timeout()
     if os.environ.get("APEXA_PROCEDURE_AUDIT"):
         import apexa_agents
         from procedure_audit import install

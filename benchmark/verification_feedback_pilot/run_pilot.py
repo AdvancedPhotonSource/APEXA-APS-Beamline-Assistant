@@ -24,22 +24,23 @@ from prepare_fixtures import physical_cpu_sets, sha, write_json
 
 def configure(root):
     spec=json.loads((root/'setup/study.json').read_text())
-    source=root/'runtime/apexa';adapter=root/'runtime/adapters'
+    source=Path(spec.get('source_root',root/'runtime/apexa'));adapter=root/'runtime/adapters'
+    shared=Path(spec.get('shared_project_root',root.parent))
     sys.path[:0]=[str(adapter),str(source)]
     import rotation_benchmark as rb
     import run_comparison as rc
     rb.REPO=rc.REPO=source
     env=json.loads((root/'setup/native_environment.json').read_text())
     os.environ.update(env)
-    os.environ.update(APEXA_MIDAS_BIN=str(root.parent/'envs/midas/bin'),
+    os.environ.update(APEXA_MIDAS_BIN=str(shared/'envs/midas/bin'),
         APEXA_MAX_ITERATIONS=str(spec['max_model_requests']),PYTHON_DOTENV_DISABLED='1',
         APEXA_BENCH_RESPONSE_TIMEOUT=str(spec['request_timeout_seconds']),
         PYTHONDONTWRITEBYTECODE='1',CUDA_VISIBLE_DEVICES='',APEXA_LLM_TOKEN_CMD='',
         APEXA_LLM_API_KEY='',APEXA_PROVIDER_HOLD_FILE=str(root/'setup/provider-hold.json'))
     for name in ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS','NUMEXPR_NUM_THREADS'):
         os.environ[name]=str(spec['cpu_threads'])
-    os.environ['PATH']=os.pathsep.join([str(root.parent/'runtime/harnesses/node_modules/.bin'),
-        str(root.parent/'runtime/node/bin'),str(root.parent/'envs/midas/bin'),os.environ.get('PATH','')])
+    os.environ['PATH']=os.pathsep.join([str(shared/'runtime/harnesses/node_modules/.bin'),
+        str(shared/'runtime/node/bin'),str(shared/'envs/midas/bin'),os.environ.get('PATH','')])
     roots=json.loads((root/'setup/software_roots.json').read_text())
     os.environ['RB_SOFTWARE_READ_ROOTS']=json.dumps([str(source),*roots])
     rb.HARNESSES['pi'].argv=['pi','-p','--provider','argo','--model','{model}','--thinking','medium','{prompt}']
@@ -60,6 +61,19 @@ def schedule(spec):
                 rows.append({'index':len(rows)+1,'wave':wave,'slot':slot,
                     'arm':arm,'fixture':pair['fixture'],'condition':condition})
     return rows
+
+
+def qualification_fingerprint(root):
+    """Any executable/configuration change requires a fresh native qualification."""
+    spec=json.loads((root/'setup/study.json').read_text())
+    source=Path(spec.get('source_root',root/'runtime/apexa'))
+    files={str(p.relative_to(root)):sha(p) for folder in ('setup','runtime/adapters')
+           for p in (root/folder).rglob('*.py') if '__pycache__' not in p.parts}
+    for name in ('study.json','native-context.json','native_environment.json','software_roots.json','PROMPT.md'):
+        files['setup/'+name]=sha(root/'setup'/name)
+    files.update({'source/'+str(p.relative_to(source)):sha(p) for p in source.rglob('*.py')
+                  if '__pycache__' not in p.parts})
+    return files
 
 
 def model_usage(root):
@@ -163,7 +177,8 @@ def qualify(root):
     spec,_=configure(root)
     (root/'qualification').mkdir(exist_ok=True)
     (root/'work').mkdir(exist_ok=True)
-    subprocess.run([sys.executable,'-m','unittest','discover','-s',str(root/'setup'),'-p','test_assessment.py'],check=True)
+    subprocess.run([sys.executable,'-m','unittest','discover','-s',str(root/'setup'),'-p','test_*.py'],check=True)
+    fingerprint=qualification_fingerprint(root)
     if not (root/'qualification/sandbox.json').exists():sandbox_qualification(root)
     elif not json.loads((root/'qualification/sandbox.json').read_text())['passed']:
         raise RuntimeError('Previous sandbox qualification failed')
@@ -192,7 +207,8 @@ def qualify(root):
             break
     result={'passed':len(records)==2 and all(x['assessment']['passed'] for x in records),
             'native_records':[str(Path('qualification')/('native_'+x['entry']['arm'])/'record.json') for x in records],
-            'time_unix':time.time()}
+            'time_unix':time.time(),'qualified_files_sha256':fingerprint}
+    if fingerprint!=qualification_fingerprint(root):raise RuntimeError('Source changed during qualification')
     write_json(root/'setup/agent_qualification_final.json',result,exclusive=True)
     if not result['passed']:raise RuntimeError('Native qualification failed; no scientific admission')
 
@@ -201,6 +217,9 @@ def freeze(root):
     spec,_=configure(root)
     for name in ('agent_qualification_final.json','native-retrieval.json'):
         if not json.loads((root/'setup'/name).read_text())['passed']:raise ValueError('Qualification incomplete')
+    qualification=json.loads((root/'setup/agent_qualification_final.json').read_text())
+    if qualification.get('qualified_files_sha256')!=qualification_fingerprint(root):
+        raise ValueError('Executable/configuration changed after native qualification')
     handoffs=json.loads((root/'setup/handoff_manifest.json').read_text())
     for case in handoffs['cases']:
         for name,digest in case['files_sha256'].items():
@@ -213,14 +232,13 @@ def freeze(root):
     files={str(p.relative_to(root)):sha(p) for directory in ('setup','runtime/adapters')
            for p in (root/directory).rglob('*') if p.is_file() and p.suffix in ('.py','.md','.json')
            and not p.name.endswith('-status.json') and '__pycache__' not in p.parts}
-    files.update({str(p.relative_to(root)):sha(p) for p in (root/'runtime/apexa').rglob('*.py')
-                  if p.is_file() and '__pycache__' not in p.parts})
     files.update({str(p.relative_to(root)):sha(p) for p in (root/'public').rglob('*') if p.is_file()})
-    frozen={'revision':'matched-harness-pilot-r1','files_sha256':files,'schedule':schedule(spec),
+    frozen={'revision':spec.get('run_revision','matched-harness-pilot-r1'),
+        'files_sha256':files,'qualified_files_sha256':qualification['qualified_files_sha256'],'schedule':schedule(spec),
         'source_commit':spec['apexa_source_commit'],'model':spec['model'],
         'effective_sampling':{'temperature':1.0,'reasoning_effort':'medium','max_output_tokens':8192},
         'model_context_tokens':65536,'time_unix':time.time(),'scientific_attempts':16,
-        'qualification_configuration_note':'Full native sessions passed; the APEXA adapter subsequently raises its client response timeout from 120 to the common 300 second ceiling. Production code, native tools and context are unchanged.',
+        'qualification_configuration_note':'Exact executable/configuration hashes must match the fresh native qualifications, including the 300 second client timeout.',
         'no_automatic_expansion':True}
     write_json(root/'setup/trial_freeze.json',frozen,exclusive=True)
 
@@ -229,6 +247,8 @@ def run(root):
     spec,_=configure(root)
     frozen=json.loads((root/'setup/trial_freeze.json').read_text())
     def verify():
+        if frozen['qualified_files_sha256']!=qualification_fingerprint(root):
+            raise RuntimeError('Qualified implementation changed')
         for relative,digest in frozen['files_sha256'].items():
             if sha(root/relative)!=digest:raise RuntimeError('Frozen setup changed: '+relative)
     verify()
@@ -238,7 +258,7 @@ def run(root):
     def update(state,**kw):
         write_json(status,{'status':state,'pid':os.getpid(),'updated_unix':time.time(),
             'completed':len(completed),'scheduled':16,'usage':model_usage(root),**kw})
-    with (root.parent/'scientific-run.lock').open('a') as lock:
+    with (Path(spec.get('shared_project_root',root.parent))/'scientific-run.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         try:
             with ProcessPoolExecutor(max_workers=2,mp_context=multiprocessing.get_context('spawn')) as pool:
@@ -255,6 +275,7 @@ def run(root):
                                    {**entry,'started_unix':time.time()},exclusive=True)
                     update('running',active=wave)
                     futures={pool.submit(work,root,e,cpus[i]):e for i,e in enumerate(wave)}
+                    wave_records=[]
                     for f in as_completed(futures):
                         e=futures[f]
                         try:record=f.result()
@@ -265,7 +286,10 @@ def run(root):
                             out.write(json.dumps(record,allow_nan=False)+'\n')
                         from report import report
                         report(root)
+                        wave_records.append(record)
                         completed.append(e['index']);update('running',active=[x for x in wave if x['index'] not in completed])
+                    if any(r.get('model_audit',{}).get('requests',0)==0 for r in wave_records):
+                        update('startup_failure_stopped_admission');return
             update('execution_complete_pending_trace_audit')
         except BaseException as exc:
             update('stopped',error=type(exc).__name__+': '+str(exc));raise
