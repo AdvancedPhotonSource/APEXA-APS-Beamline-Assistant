@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "study": "calibration_handoff_verification_feedback",
+  "revision": "pilot-r1",
+  "apexa_source_commit": "f22ee24f9bc6fb5523dab194258abfb568876d0a",
+  "solver_version": "0.26.0",
+  "model": "openai/gpt-oss-120b",
+  "model_base_url": "https://inference-api.alcf.anl.gov/resource_server/sophia/vllm/v1",
+  "reasoning_effort": "medium",
+  "max_model_requests": 120,
+  "wall_seconds": 3600,
+  "request_timeout_seconds": 300,
+  "max_output_tokens": 8192,
+  "context_window_tokens": 65536,
+  "cpu_threads": 4,
+  "parallel_slots": 2,
+  "energy_kev": 63.314,
+  "documented_pixel_pitch_um": 150,
+  "readback_path": "measurement/instrument/Detector/detY",
+  "distance_discrepancy_fraction": 0.05,
+  "zero_coefficient_tolerance": 1e-12,
+  "usage_review_input_tokens": 8000000,
+  "usage_review_output_tokens": 500000,
+  "fixtures": [
+    {"id": "scale_valid", "family": "scale", "scan": 328, "calibrant": "CeO2", "lattice_angstrom": 5.411651, "pipeline": "tilted", "pixel_pitch_um": 150, "model": "full", "legacy_thaw": false},
+    {"id": "scale_fault", "family": "scale", "scan": 328, "calibrant": "CeO2", "lattice_angstrom": 5.411651, "pipeline": "tilted", "pixel_pitch_um": 120, "model": "full", "legacy_thaw": false},
+    {"id": "restriction_valid", "family": "restriction", "scan": 369, "calibrant": "LaB6", "lattice_angstrom": 4.15689, "pipeline": "four-stage", "pixel_pitch_um": 150, "model": "none", "legacy_thaw": false},
+    {"id": "restriction_fault", "family": "restriction", "scan": 369, "calibrant": "LaB6", "lattice_angstrom": 4.15689, "pipeline": "four-stage", "pixel_pitch_um": 150, "model": "none", "legacy_thaw": true}
+  ],
+  "pilot_pairs": [
+    {"fixture": "scale_valid", "conditions": ["automatic", "on_demand"]},
+    {"fixture": "restriction_fault", "conditions": ["on_demand", "automatic"]},
+    {"fixture": "scale_fault", "conditions": ["automatic", "on_demand"]},
+    {"fixture": "restriction_valid", "conditions": ["on_demand", "automatic"]}
+  ],
+  "reserved_scale_scans": [312, 336],
+  "reserved_restriction_scans": [353, 377],
+  "automatic_expansion": false
+}
