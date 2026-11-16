@@ -224,8 +224,22 @@ def prepare(root):
             "pid": os.getpid(), "started_unix": time.time(), "model_calls": 0,
             "plan_sha256": sha(setup / "PLAN.md"), "spec_sha256": sha(setup / "study.json"),
             "generator_sha256": sha(__file__),
+            "implementation_sources": {name: sha(root / "source" / name) for name in
+                                       ("_calibrate_runner.py", "apexa_calibration_tilted.py")},
         }
         write_json(manifest_path, manifest, exclusive=True)
+        import midas_calibrate_v2
+        package_root = Path(midas_calibrate_v2.__file__).parent
+        source_hash = hashlib.sha256()
+        for path in sorted(package_root.rglob("*.py")):
+            source_hash.update(path.relative_to(package_root).as_posix().encode())
+            source_hash.update(path.read_bytes())
+        manifest["environment"] = {"python": sys.version, "midas_calibrate_v2_source_sha256": source_hash.hexdigest()}
+        for name in ("midas-calibrate-v2", "midas-params", "numpy", "scipy", "torch", "h5py", "scikit-image"):
+            try:
+                manifest["environment"][name] = importlib.metadata.version(name)
+            except importlib.metadata.PackageNotFoundError:
+                manifest["environment"][name] = "distribution metadata unavailable"
         inputs = {}
         for entry in spec["fixtures"]:
             if str(entry["scan"]) in inputs:
@@ -310,6 +324,9 @@ def prepare(root):
                     active.remove(entry["id"])
                     state("preparing_fixtures")
             if not all(r["passed"] for r in completed):
+                manifest["qualification"] = {"passed": False, "results": completed,
+                                             "scientific_agent_admission": False, "model_calls": 0}
+                write_json(manifest_path, manifest)
                 state("fixture_qualification_failed")
                 return 1
         manifest["qualification"] = {
