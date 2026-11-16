@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Admit the frozen pilot after numerical qualification, never an expansion."""
 import argparse
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,9 @@ def main(root):
             time.sleep(15)
         state('validating_setup')
         spec=json.loads((root/'setup/study.json').read_text())
+        for name in spec.get('preflight_receipts',[]):
+            if json.loads((root/'setup'/name).read_text()).get('passed') is not True:
+                raise RuntimeError('Preflight did not pass: '+name)
         source=Path(spec.get('source_root',root/'runtime/apexa'))
         env=dict(os.environ,PYTHONDONTWRITEBYTECODE='1',PYTHON_DOTENV_DISABLED='1')
         phases=[('assessment_tests',[sys.executable,'-m','unittest','discover','-s',str(root/'setup'),'-p','test_*.py'])]
@@ -39,6 +43,21 @@ def main(root):
             ('freeze',[sys.executable,str(root/'setup/run_pilot.py'),'freeze','--root',str(root)]),
             ('pilot',[sys.executable,str(root/'setup/run_pilot.py'),'run','--root',str(root)])]
         for phase,command in phases:
+            if phase=='pilot' and spec.get('prerequisite_root'):
+                prior=Path(spec['prerequisite_root'])
+                limit=time.monotonic()+8*3600
+                while True:
+                    predecessor=json.loads((prior/'setup/trial-status.json').read_text())
+                    if predecessor.get('usage',{}).get('provider_denials'):
+                        raise RuntimeError('Predecessor provider denial requires review before new admission')
+                    with (Path(spec['shared_project_root'])/'scientific-run.lock').open('a') as probe:
+                        try:
+                            fcntl.flock(probe,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                            if predecessor['status']!='running':break
+                        except BlockingIOError:pass
+                    if time.monotonic()>limit:raise RuntimeError('Predecessor wait deadline exceeded')
+                    state('running',phase='waiting_for_prior_run',prior_completed=predecessor['completed'])
+                    time.sleep(15)
             state('running',phase=phase)
             with (root/'setup'/f'{phase}.log').open('x') as log:
                 child=subprocess.Popen(command,cwd=source,env=env,stdout=log,stderr=subprocess.STDOUT)
