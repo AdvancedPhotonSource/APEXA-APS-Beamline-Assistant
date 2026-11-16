@@ -84,6 +84,8 @@ def worker(root, spec, entry):
     template.write_text(params.to_text())
     original = fs.autocalibrate_pv
     calls = 0
+    execution = {"stages": []}
+    execution_path = out / "execution.json"
 
     def scalars(value):
         a = np.asarray(value).reshape(-1)
@@ -99,12 +101,12 @@ def worker(root, spec, entry):
             "before_refine_flags": {name: bool(current.parameters[name].refined)
                                     for name in P_COEF_NAMES if name in current.parameters},
         }
-        path = out / f"stage_{index}.json"
-        write_json(path, record)
+        execution["stages"].append(record)
+        write_json(execution_path, execution)
         result = original(*args, **kwargs)
         record.update(finished_unix=time.time(),
                       unpacked={name: scalars(value) for name, value in result.unpacked.items()})
-        write_json(path, record)
+        write_json(execution_path, execution)
         return result
 
     fs.autocalibrate_pv = record_pv
@@ -128,17 +130,19 @@ def worker(root, spec, entry):
             result = namespace["verify_frozen_distortion"](unpacked, frozen)
         except ValueError as exc:
             result = {"status": "failed", "error": str(exc), "required_coefficients": frozen}
-        write_json(out / "post_fit_verification.json", result)
+        execution["post_fit_verification"] = result
+        write_json(execution_path, execution)
         return result
 
     namespace["fixture_verify"] = fixture_verify
-    write_json(out / "generation_identity.json", {
+    execution["identity"] = {
         "fixture": entry, "generator_sha256": sha(__file__),
         "runner_source_sha256": sha(source),
         "executed_runner_sha256": hashlib.sha256(text.encode()).hexdigest(),
         "template_sha256": sha(template), "legacy_thaw": entry["legacy_thaw"],
         "generation_only_candidate_export": True, "model_calls": 0,
-    }, exclusive=True)
+    }
+    write_json(execution_path, execution, exclusive=True)
     sys.argv = [str(source), "--image", str(source_image(root, entry)),
                 "--template", str(template), "--output-dir", str(out / "fit"),
                 "--pipeline", entry["pipeline"], "--calibrant", entry["calibrant"],
@@ -171,13 +175,15 @@ def qualify(root, spec, entry, receipt, inputs):
         effective = payload["phase_provenance"]["effective_px_um"]
         checks["effective_pixel_pitch"] = effective == entry["pixel_pitch_um"]
     else:
-        stage = json.loads((out / "stage_2.json").read_text())
+        execution = json.loads((out / "execution.json").read_text())
+        stages = {s["call"]: s for s in execution["stages"]}
+        stage = stages[2]
         flags = stage["before_refine_flags"]
         moved = {k: v for k, v in values.items() if k.startswith("p") and abs(v) > 1e-12}
         checks["complete_flags_and_coefficients"] = len(flags) == 15 and len(values) == 16
         checks["expected_flags"] = sum(flags.values()) == (15 if entry["legacy_thaw"] else 0)
         checks["expected_coefficients"] = bool(moved) == entry["legacy_thaw"]
-        verdict = json.loads((out / "post_fit_verification.json").read_text())["status"]
+        verdict = execution["post_fit_verification"]["status"]
         checks["original_verifier_agrees"] = verdict == ("failed" if entry["legacy_thaw"] else "verified")
         details.update(stage2_free_parameters=sum(flags.values()), moved_exported_coefficients=moved)
     files = {str(p.relative_to(out)): sha(p) for p in sorted(out.rglob("*"))
@@ -213,11 +219,13 @@ def prepare(root):
     setup = root / "setup"
     with (root.parent / "scientific-run.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        write_json(setup / "preparation-started.json", {
+        manifest_path = setup / "preparation_manifest.json"
+        manifest = {
             "pid": os.getpid(), "started_unix": time.time(), "model_calls": 0,
             "plan_sha256": sha(setup / "PLAN.md"), "spec_sha256": sha(setup / "study.json"),
             "generator_sha256": sha(__file__),
-        }, exclusive=True)
+        }
+        write_json(manifest_path, manifest, exclusive=True)
         inputs = {}
         for entry in spec["fixtures"]:
             if str(entry["scan"]) in inputs:
@@ -238,11 +246,12 @@ def prepare(root):
             inputs[str(entry["scan"])] = {"path": str(image), "sha256": sha(image),
                 "bytes": image.stat().st_size, "readback_path": spec["readback_path"],
                 "distance_readback_mm": distance, "units": units}
-        write_json(setup / "input_identity.json", inputs, exclusive=True)
         cpus = physical_cpu_sets(spec["parallel_slots"], spec["cpu_threads"])
-        write_json(setup / "compute.json", {"cpu_sets": cpus, "solver_python": sys.executable,
+        manifest["inputs"] = inputs
+        manifest["compute"] = {"cpu_sets": cpus, "solver_python": sys.executable,
             "solver_version": spec["solver_version"], "cuda_visible_devices": "",
-            "source_commit": spec["apexa_source_commit"]}, exclusive=True)
+            "source_commit": spec["apexa_source_commit"]}
+        write_json(manifest_path, manifest)
         completed, active = [], []
 
         def state(status):
@@ -275,7 +284,10 @@ def prepare(root):
                     return_code = 124
             receipt = {"pid": process.pid, "return_code": return_code, "started_unix": started,
                        "finished_unix": time.time(), "cpu_affinity": cpu_set, "command": command}
-            write_json(out / "exit.json", receipt)
+            execution_path = out / "execution.json"
+            execution = json.loads(execution_path.read_text()) if execution_path.exists() else {}
+            execution["process"] = receipt
+            write_json(execution_path, execution)
             return qualify(root, spec, entry, receipt, inputs)
 
         state("preparing_fixtures")
@@ -300,12 +312,13 @@ def prepare(root):
             if not all(r["passed"] for r in completed):
                 state("fixture_qualification_failed")
                 return 1
-        write_json(setup / "fixture_qualification.json", {
+        manifest["qualification"] = {
             "passed": all(r["passed"] for r in completed), "results": completed,
             "model_calls": 0, "scientific_agent_admission": False,
             "remaining_gates": ["public handoff construction", "checker/scorer validation",
                                 "native-agent and sandbox qualification", "immutable trial freeze"],
-        }, exclusive=True)
+        }
+        write_json(manifest_path, manifest)
         state("fixtures_qualified_agent_setup_required")
         return 0
 
