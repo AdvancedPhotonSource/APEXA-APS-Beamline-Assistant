@@ -903,7 +903,7 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
             guidance_text: Optional[str] = None, pi_image_input: bool = False,
             opencode_image_input: bool = False, strict_writes: bool = False,
             task_variant: str = "nominal", additional_inputs=(),
-            result_kind: str = "calibration") -> Run:
+            result_kind: str = "calibration", read_only_inputs: bool = False) -> Run:
     if result_kind not in ("calibration", "execution_only"):
         raise ValueError("Unknown result kind")
     input_names = [exposure.name, *[Path(p).name for p in additional_inputs]]
@@ -1082,7 +1082,8 @@ def run_one(arm: Arm, exposure: Path, scan: int, trial: int, truth: Dict,
                     argv[2:2] = ["--format", "json"]
                 elif arm.harness == "pi":
                     argv[1:1] = ["--mode", "json", "--no-session", "--no-extensions", "--no-mcp"]
-        argv = sandboxed(argv, deny, read_only=[profile / "knowledge-manifest.json", profile / "native-context.json", trial_root / "runtime"],
+        protected_inputs = [ws / name for name in input_names] if read_only_inputs else []
+        argv = sandboxed(argv, deny, read_only=[profile / "knowledge-manifest.json", profile / "native-context.json", trial_root / "runtime", *protected_inputs],
                          writable=[trial_root],
                          strict_writes=strict_writes,
                          private_apexa_home=profile / "apexa" if arm.harness == "apexa" else None,

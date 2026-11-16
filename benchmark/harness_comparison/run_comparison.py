@@ -326,7 +326,8 @@ def write_opencode_config(path: Path, base_url: str, api_key: str, model: str,
 
 def ensure_pi_provider(base_url: str, api_key: str, model: str,
                        max_tokens: int = MAX_TOKENS, *, config_path: Optional[Path] = None,
-                       image_input: bool = False) -> Path:
+                       image_input: bool = False, context_window: int = 200000,
+                       reasoning_effort: bool = False) -> Path:
     """Write the Argo provider, preferably in an isolated PI_CODING_AGENT_DIR.
 
     The optional path keeps trial configuration out of the user's global state.
@@ -348,9 +349,14 @@ def ensure_pi_provider(base_url: str, api_key: str, model: str,
     prov.update({"baseUrl": base_url, "api": "openai-completions", "apiKey": api_key})
     prov.setdefault("compat", {"supportsDeveloperRole": False,
                                "supportsReasoningEffort": False})
+    if reasoning_effort:
+        prov['compat']['supportsReasoningEffort'] = True
     models = [m for m in prov.get("models", []) if m.get("id") != model]
     models.append({"id": model, "name": f"{model} (Argo)",
-                   "contextWindow": 200000, "maxTokens": max_tokens})
+                   "contextWindow": context_window, "maxTokens": max_tokens})
+    if reasoning_effort:
+        models[-1]['reasoning'] = True
+        models[-1]['input'] = ['text']
     # Opt in only in a separately qualified revision. Historical provider
     # configuration and the frozen R5 cohort keep their original behavior.
     if image_input:
