@@ -82,7 +82,7 @@ def source_contract(public, adopted):
     return ok
 
 
-def assess(workspace, public):
+def assess(workspace, public, receipt_directory=None):
     result={'manifest_status':'unassessed','incorrect_release':None,'valid_result_retained':False,
             'successful_repair':False,'justified_hold':False,'qualitative_audit':'required','errors':[]}
     try:
@@ -102,7 +102,10 @@ def assess(workspace, public):
                 raise ValueError('Malformed assessment')
             if not isinstance(a['evidence_paths'],list):raise ValueError('Malformed evidence paths')
             for name in a['evidence_paths']:
-                file_in(public if (public/name).is_file() else workspace,name)
+                if name=='initial_check.json' and receipt_directory is not None:
+                    file_in(receipt_directory,name)
+                else:
+                    file_in(public if (public/name).is_file() else workspace,name)
         source=source_contract(public,public/'candidate.params')
         result.update(manifest_status='valid',decision=decision,source_contract=source)
         if decision in ('hold','unassessed'):

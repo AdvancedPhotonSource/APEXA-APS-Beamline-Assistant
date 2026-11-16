@@ -128,7 +128,7 @@ def work(root,entry,cpus,qualification=False):
         except Exception as exc:
             assessment={'passed':False,'error':type(exc).__name__+': '+str(exc)}
     else:
-        assessment=assess(workspace,public)
+        assessment=assess(workspace,public,public/entry['condition'])
     record={'entry':entry,'started_unix':started,'finished_unix':time.time(),'cpu_affinity':cpus,
             'execution':asdict(result),'model_audit':summary,'assessment':assessment}
     write_json(output/'record.json',record,exclusive=True)
