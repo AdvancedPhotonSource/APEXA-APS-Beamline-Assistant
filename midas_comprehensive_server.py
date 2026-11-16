@@ -5793,6 +5793,18 @@ def _find_dark_for_image(image_path: Path):
 _CALIB_T0: "contextvars.ContextVar[float]" = contextvars.ContextVar("_CALIB_T0", default=0.0)
 
 
+def _calibration_phase_metadata(payload: dict, seed_calibrant: str) -> dict:
+    """Do not present a ring-pattern seed label as the phase used in the fit."""
+    phase = payload.get("phase_provenance") or {}
+    fitted = phase.get("effective_calibrant")
+    if not fitted:
+        fitted = "template-defined" if phase.get("fit_phase_source") == "template" else "see phase_provenance"
+    return {"calibrant": fitted,
+            "seed_calibrant": phase.get("seed_calibrant") or seed_calibrant,
+            "calibrant_note": "calibrant describes the fitted phase; seed_calibrant only labels the ring-pattern seeder. "
+                              "For a template-defined phase, inspect phase_provenance and the exported SpaceGroup/LatticeConstant."}
+
+
 def _write_calibration_outcome(out_dir, payload: dict):
     """Drop a uniform machine-readable per-run outcome manifest
     (``APEXA_calibration.json``) into the calibration output directory.
@@ -7023,7 +7035,7 @@ async def midas_auto_calibrate(
                                        f"canonical-v2:{_eng['v2_version']}"),
                 "engine_reason": _eng["reason"],
                 "recipe": _payload.get("recipe"),
-                "calibrant": _calib_v2,
+                **_calibration_phase_metadata(_payload, _calib_v2),
                 "image_file": str(image_path),
                 "dark_file": _dark_abs or None,
                 "input_parameters_file": _tmpl,
@@ -7088,7 +7100,8 @@ async def midas_auto_calibrate(
                     "was found — do not cite these numbers as this run's result")
             if _out["status"] == "success":
                 _out["message"] = (
-                    f"Canonical v2 calibration complete (calibrant {_calib_v2}, "
+                    f"Canonical v2 calibration complete (fitted phase {_out['calibrant']}; "
+                    f"seed pattern {_out['seed_calibrant']}, "
                     f"{_eng['v2_version']}). Held-out strain "
                     f"{_gate.get('stage4_strain_uE_test')} µε "
                     f"(gate {_gate.get('threshold_uE')} µε). "

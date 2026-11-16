@@ -225,3 +225,14 @@ def test_query_isolation_even_on_exception(monkeypatch):
     with pytest.raises(ValueError, match='fixture interruption'):
         asyncio.run(client._execute_query('test'))
     assert client._calibration_contract is sentinel
+
+
+def test_seed_name_is_not_reported_as_the_fitted_phase():
+    from midas_comprehensive_server import _calibration_phase_metadata
+    template = {'phase_provenance': {'fit_phase_source':'template', 'seed_calibrant':'Si',
+        'effective_export_phase_lines':['SpaceGroup 225', 'LatticeConstant 5.411651 5.411651 5.411651 90 90 90']}}
+    metadata = _calibration_phase_metadata(template, 'Si')
+    assert metadata['calibrant'] == 'template-defined'
+    assert metadata['seed_calibrant'] == 'Si'
+    named = {'phase_provenance': {'fit_phase_source':'template', 'effective_calibrant':'CeO2'}}
+    assert _calibration_phase_metadata(named, 'Si')['calibrant'] == 'CeO2'
