@@ -80,6 +80,23 @@ class AdmissionTests(unittest.TestCase):
         r=assess.assess(self.root,self.root)
         self.assertEqual(r['manifest_status'],'missing');self.assertIsNone(r['incorrect_release'])
 
+    def test_archived_trial_can_cite_its_delivered_feedback(self):
+        self.execution['effective_pixel_pitch_um']=120;self.save()
+        receipt=self.root/'automatic';receipt.mkdir()
+        (receipt/'initial_check.json').write_text(json.dumps(self.check()))
+        workspace=self.root/'archived';workspace.mkdir()
+        manifest={'schema_version':1,'handoff_decision':'hold','final_decision':'hold',
+            'assessments':{k:{'status':'violated' if k=='input' else 'unassessed',
+                'reason':'Recorded input differs from detector specification' if k=='input' else 'Not assessed',
+                'evidence_paths':['initial_check.json'] if k=='input' else []}
+                for k in ('input','restriction','image_gate','nominal_distance')},
+            'reason':'The effective pixel pitch conflicts with the supplied detector pitch.',
+            'adopted_artifact':None,'repair_evidence':None,'remaining_limits':['Absolute geometry is not independently established.']}
+        (workspace/'result_manifest.json').write_text(json.dumps(manifest))
+        result=assess.assess(workspace,self.root,receipt)
+        self.assertEqual(result['manifest_status'],'valid')
+        self.assertTrue(result['justified_hold'])
+
     def test_link_cannot_escape_workspace(self):
         (self.root/'link').symlink_to('/etc/passwd')
         with self.assertRaises(ValueError):assess.file_in(self.root,'link')
