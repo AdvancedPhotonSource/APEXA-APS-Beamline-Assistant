@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import tiktoken
 
 from check_contract import check
 
@@ -27,6 +28,7 @@ def build(root):
     if prep.get('qualification', {}).get('passed') is not True:
         raise ValueError('Four qualified fixtures required')
     receipts = []
+    tokenizer=tiktoken.get_encoding('o200k_harmony')
     for number, entry in enumerate(spec['fixtures'], 1):
         private = root/'fixtures_private'/entry['id']
         qual = json.loads((private/'qualification.json').read_text())
@@ -82,8 +84,9 @@ def build(root):
         receipts.append({'fixture':entry['id'], 'public_case':out.name, 'files_sha256':hashes,
             'feedback':{c:sha(out/c/'initial_check.json') for c in ('automatic','on_demand')},
             'automatic_report_characters':len(compact),
-            'automatic_report_tokens':None,
-            'token_count_note':'Measured with the served model tokenizer at trial freeze, if locally available; never label a character estimate as tokens.',
+            'receipt_content_tokens':{c:len(tokenizer.encode((out/c/'initial_check.json').read_text()))
+                                     for c in ('automatic','on_demand')},
+            'token_count_note':'GPT-OSS o200k_harmony content tokens, excluding chat-message wrapper tokens.',
             'fixed_checker_decision':'release_conditionally' if report['all_declared_checks_satisfied'] else 'hold'})
     dump(setup/'handoff_manifest.json', {'cases':receipts,'paired_source_inputs_identical':True,
         'public_generator_labels_removed':True,'model_calls':0})

@@ -33,6 +33,7 @@ def configure(root):
     os.environ.update(env)
     os.environ.update(APEXA_MIDAS_BIN=str(root.parent/'envs/midas/bin'),
         APEXA_MAX_ITERATIONS=str(spec['max_model_requests']),PYTHON_DOTENV_DISABLED='1',
+        APEXA_BENCH_RESPONSE_TIMEOUT=str(spec['request_timeout_seconds']),
         PYTHONDONTWRITEBYTECODE='1',CUDA_VISIBLE_DEVICES='',APEXA_LLM_TOKEN_CMD='',
         APEXA_LLM_API_KEY='',APEXA_PROVIDER_HOLD_FILE=str(root/'setup/provider-hold.json'))
     for name in ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS','NUMEXPR_NUM_THREADS'):
@@ -204,13 +205,22 @@ def freeze(root):
     for case in handoffs['cases']:
         for name,digest in case['files_sha256'].items():
             if sha(root/'public'/case['public_case']/name)!=digest:raise ValueError('Public input changed')
+        from assess import source_contract
+        public=root/'public'/case['public_case']
+        independent=source_contract(public,public/'candidate.params')
+        decision='release_conditionally' if all(independent.values()) else 'hold'
+        if decision!=case['fixed_checker_decision']:raise ValueError('Checker and independent assessment disagree')
     files={str(p.relative_to(root)):sha(p) for directory in ('setup','runtime/adapters')
            for p in (root/directory).rglob('*') if p.is_file() and p.suffix in ('.py','.md','.json')
-           and p.name not in ('preparation-status.json',) and '__pycache__' not in p.parts}
+           and not p.name.endswith('-status.json') and '__pycache__' not in p.parts}
+    files.update({str(p.relative_to(root)):sha(p) for p in (root/'runtime/apexa').rglob('*.py')
+                  if p.is_file() and '__pycache__' not in p.parts})
+    files.update({str(p.relative_to(root)):sha(p) for p in (root/'public').rglob('*') if p.is_file()})
     frozen={'revision':'matched-harness-pilot-r1','files_sha256':files,'schedule':schedule(spec),
         'source_commit':spec['apexa_source_commit'],'model':spec['model'],
         'effective_sampling':{'temperature':1.0,'reasoning_effort':'medium','max_output_tokens':8192},
         'model_context_tokens':65536,'time_unix':time.time(),'scientific_attempts':16,
+        'qualification_configuration_note':'Full native sessions passed; the APEXA adapter subsequently raises its client response timeout from 120 to the common 300 second ceiling. Production code, native tools and context are unchanged.',
         'no_automatic_expansion':True}
     write_json(root/'setup/trial_freeze.json',frozen,exclusive=True)
 

@@ -74,7 +74,8 @@ def source_contract(public, adopted):
             raise ValueError('Incomplete restriction evidence')
         for s in evidence['stages']:
             flags=s['before_refine_flags']
-            if len(flags)!=15 or any(type(v) is not bool for v in flags.values()):
+            names={'iso_R2','iso_R4','iso_R6'} | {prefix+str(i) for prefix in ('a','phi') for i in range(1,7)}
+            if set(flags)!=names or any(type(v) is not bool for v in flags.values()):
                 raise ValueError('Incomplete refine flags')
             ok['restriction'] &= not any(flags.values())
         ok['restriction'] &= all(abs(param[f'p{i}'])<=facts['zero_tolerance'] for i in range(15))

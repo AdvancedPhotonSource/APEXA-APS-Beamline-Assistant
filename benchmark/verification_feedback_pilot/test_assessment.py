@@ -16,7 +16,8 @@ class AdmissionTests(unittest.TestCase):
                    'distance_policy_fraction':0.05}
         self.run={'gate':{'passed':True,'threshold_uE':100,'stage4_strain_uE_test':2}}
         self.execution={'effective_pixel_pitch_um':150,'stages':[{'call':2,
-                         'before_refine_flags':{f'p{i}':False for i in range(15)}}]}
+                         'before_refine_flags':{k:False for k in ['iso_R2','iso_R4','iso_R6',
+                             *[f'a{i}' for i in range(1,7)],*[f'phi{i}' for i in range(1,7)]]}}]}
         self.param='Lsd 900000\npx 150.000000\npx 150.00\n'+''.join(f'p{i} 0\n' for i in range(15))
         self.save()
 
@@ -41,12 +42,17 @@ class AdmissionTests(unittest.TestCase):
         self.assertFalse(assess.source_contract(self.root,self.root/'candidate.params')['nominal_distance'])
 
     def test_free_flags_detected_even_with_zero_exports(self):
-        self.execution['stages'][0]['before_refine_flags']['p3']=True;self.save()
+        self.execution['stages'][0]['before_refine_flags']['a3']=True;self.save()
         self.assertFalse(self.check()['checks']['restriction']['satisfied'])
         self.assertFalse(assess.source_contract(self.root,self.root/'candidate.params')['restriction'])
 
     def test_missing_coefficient_is_not_zero(self):
         self.param=self.param.replace('p14 0\n','');self.save()
+        self.assertFalse(self.check()['evidence_complete'])
+        with self.assertRaises(ValueError):assess.source_contract(self.root,self.root/'candidate.params')
+
+    def test_wrong_coefficient_names_are_not_complete_evidence(self):
+        self.execution['stages'][0]['before_refine_flags']={f'unknown{i}':False for i in range(15)};self.save()
         self.assertFalse(self.check()['evidence_complete'])
         with self.assertRaises(ValueError):assess.source_contract(self.root,self.root/'candidate.params')
 

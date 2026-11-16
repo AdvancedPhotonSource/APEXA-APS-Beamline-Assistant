@@ -78,6 +78,20 @@ def inherit_server_environment() -> None:
 async def _go(prompt: str, timeout: int) -> str:
     knowledge_preflight()
     solver_environment()
+    response_timeout = os.environ.get('APEXA_BENCH_RESPONSE_TIMEOUT')
+    if response_timeout is not None:
+        # Configure the client for this study's declared response allowance;
+        # production providers and historical studies retain their defaults.
+        import math
+        seconds = float(response_timeout)
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError('Invalid benchmark response timeout')
+        import apexa_provider_openai
+        original_client = apexa_provider_openai.AsyncOpenAI
+        def configured_client(*args, **kwargs):
+            kwargs['timeout'] = seconds
+            return original_client(*args, **kwargs)
+        apexa_provider_openai.AsyncOpenAI = configured_client
     if os.environ.get("APEXA_PROCEDURE_AUDIT"):
         import apexa_agents
         from procedure_audit import install

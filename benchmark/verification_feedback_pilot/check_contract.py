@@ -13,6 +13,8 @@ import json
 import math
 from pathlib import Path
 
+COEFFICIENT_NAMES = {'iso_R2','iso_R4','iso_R6',*(f'a{i}' for i in range(1,7)),*(f'phi{i}' for i in range(1,7))}
+
 
 def read_json(path):
     def invalid(value):
@@ -99,7 +101,7 @@ def check(task_path, parameter_path, run_path, execution_path):
             free = []
             for stage in stages:
                 flags = stage['before_refine_flags']
-                if len(flags) != 15 or any(type(v) is not bool for v in flags.values()):
+                if set(flags) != COEFFICIENT_NAMES or any(type(v) is not bool for v in flags.values()):
                     raise ValueError('Incomplete stage refine flags')
                 free.extend(f"stage{stage['call']}:{k}" for k,v in flags.items() if v)
             moved = {k:par[k] for k in sorted(required) if abs(par[k]) > task['zero_tolerance']}
