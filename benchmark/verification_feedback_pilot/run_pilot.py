@@ -263,6 +263,8 @@ def run(root):
                                     'detail':type(exc).__name__+': '+str(exc)}}
                         with (root/'results/attempts.jsonl').open('a') as out:
                             out.write(json.dumps(record,allow_nan=False)+'\n')
+                        from report import report
+                        report(root)
                         completed.append(e['index']);update('running',active=[x for x in wave if x['index'] not in completed])
             update('execution_complete_pending_trace_audit')
         except BaseException as exc:
