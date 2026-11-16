@@ -7063,6 +7063,8 @@ async def midas_auto_calibrate(
                 "lsd": _payload.get("lsd"),
                 "at_bounds": _payload.get("at_bounds"),
                 "refine_distortion": _payload.get("refine_distortion"),
+                "distortion_verification": _payload.get("distortion_verification"),
+                "constraint_execution": _payload.get("constraint_execution"),
                 "tol_tilts_deg": _payload.get("tol_tilts_deg"),
                 "gate": _gate,
                 "capabilities": _payload.get("capabilities"),

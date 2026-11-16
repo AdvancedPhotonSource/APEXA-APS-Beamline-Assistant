@@ -1038,6 +1038,36 @@ _FINAL_STATUSES = ("accepted", "rejected", "provisional", "abstained")
 
 
 @mcp.tool()
+async def load_calibration_contract(contract_path: str, image_file: str,
+                                    template_param_file: str,
+                                    candidate_parameters_file: str = "",
+                                    candidate_run_file: str = "",
+                                    candidate_execution_file: str = "") -> str:
+    """Pin supplied calibration facts for this query before review or repair.
+
+    Read a schema_version=1 JSON contract with facts (pixel_pitch_um,
+    nominal_distance_mm, energy_kev, lattice_angstrom, space_group, data_loc,
+    frames, frame_reduction, image_transform), requested_model (full/radial/none),
+    pipeline, distance_policy_fraction and zero_tolerance. Currently supports a
+    single cubic phase, contiguous frames and no separate dark. Supply the exact
+    original image and phase template. For an existing handoff, supply all three
+    candidate files. Loaded facts are declarations, not independent physical truth.
+
+    The APEXA client binds subsequent midas_auto_calibrate calls to these facts,
+    records corrections and live execution receipts, and checks finalize_result.
+    Shell-written results still require an external provenance audit. Reload the
+    same contract in each new query; changing it within a query is refused.
+    """
+    try:
+        from apexa_calibration_contract import load_contract
+        bundle = load_contract(contract_path, image_file, template_param_file,
+                               candidate_parameters_file, candidate_run_file, candidate_execution_file)
+        return format_result({"tool": "load_calibration_contract", "status": "success", **bundle})
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return format_result({"tool": "load_calibration_contract", "status": "error", "error": str(exc)})
+
+
+@mcp.tool()
 async def finalize_result(scientific_status: str, summary: str = "", artifact_path: str = "",
                           manifest_path: str = "result_manifest.json",
                           result_details: Optional[Dict[str, Any]] = None,

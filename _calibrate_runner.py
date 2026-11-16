@@ -651,6 +651,7 @@ def main(argv=None):
     # Re-freeze exactly what the spec left unrefined, after the thaw. The frozen set
     # is read from the spec itself, so v1->v2 key translation is never duplicated.
     _frozen_distortion: list = []
+    _constraint_execution: list = []
     if _keep != set(_ALL_PKEYS):
         try:
             from midas_calibrate_v2.pipelines import four_stage as _fs
@@ -673,6 +674,10 @@ def main(argv=None):
             for _n in _frozen_distortion:
                 if _n in spec_.parameters:
                     spec_.parameters[_n].refined = False
+            _constraint_execution.append({
+                "event": "stage2_after_thaw",
+                "after_thaw_refine_flags": {n: bool(spec_.parameters[n].refined)
+                                           for n in _PCN if n in spec_.parameters}})
 
         _fs._thaw_distortion = _thaw_respecting_request
 
@@ -864,6 +869,7 @@ def main(argv=None):
         "refine_distortion": _rd,
         "distortion_frozen": _frozen_distortion,
         "distortion_verification": distortion_verification,
+        "constraint_execution": _constraint_execution,
         "tol_tilts_deg": tilt_tol,
         "scope_gate": scope,
         "gate": gate,

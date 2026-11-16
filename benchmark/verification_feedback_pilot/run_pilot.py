@@ -53,6 +53,16 @@ def configure(root):
 
 
 def schedule(spec):
+    if 'trial_schedule' in spec:
+        rows=spec['trial_schedule']
+        fixtures={item['id'] for item in spec['fixtures']}
+        for index,row in enumerate(rows,1):
+            if (row['index']!=index or row['wave']!=(index-1)//2+1 or row['slot']!=(index-1)%2
+                    or row['arm'] not in ('A1','A5') or row['fixture'] not in fixtures
+                    or row['condition'] not in ('automatic','on_demand')):
+                raise ValueError('Invalid predeclared trial schedule')
+        if not rows:raise ValueError('Empty trial schedule')
+        return rows
     rows=[]
     for i,pair in enumerate(spec['pilot_pairs']):
         for arm in (['A1','A5'] if i%2==0 else ['A5','A1']):
@@ -106,6 +116,12 @@ def work(root,entry,cpus,qualification=False):
             "with fields nonce, sum, documentation_path and solver_version. Check that the installed "
             "midas-calibrate-v2 version is 0.26.0 and include solver_version. End after saving this file.")
         inputs=[];scan=0;attempt=1;timeout=600;max_requests=20
+        if spec.get('qualify_contract_loader'):
+            inputs=[root/'setup/qualification_contract.json',root/'setup/qualification_template.txt']
+            prompt += (' Also call load_calibration_contract with qualification_contract.json, '
+                'qualification_000000.txt as image_file and qualification_template.txt as template_param_file. '
+                'This tests the declared-contract loader only; never calibrate this synthetic text fixture. '
+                'Include contract_active in your answer, true only when client_contract_active is returned true.')
     else:
         handoffs=json.loads((root/'setup/handoff_manifest.json').read_text())['cases']
         public=root/'public'/next(x['public_case'] for x in handoffs if x['fixture']==entry['fixture'])
@@ -139,6 +155,22 @@ def work(root,entry,cpus,qualification=False):
                     and answer['solver_version']=='0.26.0' and bool(answer['documentation_path'])
                     and result.return_code==0 and summary['qualified'])
             assessment={'passed':passed,'answer':answer}
+            if spec.get('qualify_contract_loader'):
+                tool_receipts=[]
+                for trace in output.rglob('*.jsonl'):
+                    if trace.name=='model_calls.jsonl':continue
+                    for line in trace.read_text(errors='replace').splitlines():
+                        try:row=json.loads(line)
+                        except ValueError:continue
+                        if row.get('tool')=='load_calibration_contract':
+                            value=row.get('result',{})
+                            if isinstance(value,str):
+                                try:value=json.loads(value)
+                                except ValueError:continue
+                            if isinstance(value,dict) and value.get('client_contract_active') is True:
+                                tool_receipts.append(str(trace.relative_to(output)))
+                assessment.update(contract_loader_receipts=tool_receipts,
+                    passed=passed and answer.get('contract_active') is True and bool(tool_receipts))
         except Exception as exc:
             assessment={'passed':False,'error':type(exc).__name__+': '+str(exc)}
     else:
@@ -186,14 +218,15 @@ def qualify(root):
         write_json(root/'setup/qualification_000000.txt',{'nonce':'native-session-2026-11-15','values':[17,31,53]},exclusive=True)
     cpus=physical_cpu_sets(2,4)
     records=[]
-    for i,arm in enumerate(('A1','A5')):
+    arms=list(dict.fromkeys(row['arm'] for row in schedule(spec)))
+    for i,arm in enumerate(arms):
         prior=root/'qualification'/('native_'+arm)/'record.json'
         record=json.loads(prior.read_text()) if prior.exists() else work(root,{'arm':arm},cpus[i],True)
         # The initial qualification prompt requested a documentation path but
         # did not name its JSON field. Retain the original failed scorer record;
         # review that naming mismatch without spending another model attempt.
         answer_path=prior.parent/'workspaces'/f'{arm}_0_1'/'qualification_answer.json'
-        if not record['assessment']['passed'] and answer_path.exists():
+        if not spec.get('qualify_contract_loader') and not record['assessment']['passed'] and answer_path.exists():
             answer=json.loads(answer_path.read_text())
             if (answer.get('nonce')=='native-session-2026-11-15' and answer.get('sum')==101
                     and answer.get('solver_version')=='0.26.0' and answer.get('doc_path')
@@ -205,7 +238,7 @@ def qualify(root):
         records.append(record)
         if not records[-1]['assessment']['passed']:
             break
-    result={'passed':len(records)==2 and all(x['assessment']['passed'] for x in records),
+    result={'passed':len(records)==len(arms) and all(x['assessment']['passed'] for x in records),
             'native_records':[str(Path('qualification')/('native_'+x['entry']['arm'])/'record.json') for x in records],
             'time_unix':time.time(),'qualified_files_sha256':fingerprint}
     if fingerprint!=qualification_fingerprint(root):raise RuntimeError('Source changed during qualification')
@@ -237,7 +270,7 @@ def freeze(root):
         'files_sha256':files,'qualified_files_sha256':qualification['qualified_files_sha256'],'schedule':schedule(spec),
         'source_commit':spec['apexa_source_commit'],'model':spec['model'],
         'effective_sampling':{'temperature':1.0,'reasoning_effort':'medium','max_output_tokens':8192},
-        'model_context_tokens':65536,'time_unix':time.time(),'scientific_attempts':16,
+        'model_context_tokens':65536,'time_unix':time.time(),'scientific_attempts':len(schedule(spec)),
         'qualification_configuration_note':'Exact executable/configuration hashes must match the fresh native qualifications, including the 300 second client timeout.',
         'no_automatic_expansion':True}
     write_json(root/'setup/trial_freeze.json',frozen,exclusive=True)
@@ -257,12 +290,12 @@ def run(root):
     status=root/'setup/trial-status.json'
     def update(state,**kw):
         write_json(status,{'status':state,'pid':os.getpid(),'updated_unix':time.time(),
-            'completed':len(completed),'scheduled':16,'usage':model_usage(root),**kw})
+            'completed':len(completed),'scheduled':len(frozen['schedule']),'usage':model_usage(root),**kw})
     with (Path(spec.get('shared_project_root',root.parent))/'scientific-run.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         try:
             with ProcessPoolExecutor(max_workers=2,mp_context=multiprocessing.get_context('spawn')) as pool:
-                for offset in range(0,16,2):
+                for offset in range(0,len(frozen['schedule']),2):
                     verify()
                     usage=model_usage(root)
                     if (root/'setup/provider-hold.json').exists() or usage['provider_denials']:

@@ -1749,6 +1749,12 @@ memory. Reason over it, then act.
   MIDAS exclusively (calibration output is refined_MIDAS_params*.txt).
 
 ## Calibration
+When supplied a structured calibration contract, first load it with
+load_calibration_contract, the original image, the phase template and any existing
+handoff files. The client pins these facts for this query, binds native repair
+settings and records execution receipts. Use finalize_result with result_details
+for the final decision. A full model does not require zero distortion. Contract
+checks describe supplied-fact consistency, not independent physical validation.
 Use midas_auto_calibrate on the original calibrant file with the requested output
 path. Pass the operator's exact energy_kev, px_um, image_transform, data_loc,
 skip_frame, frame_count and frame_reduce. Do not write an averaging script when

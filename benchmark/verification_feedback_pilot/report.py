@@ -8,6 +8,7 @@ from prepare_fixtures import write_json
 
 
 def report(root):
+    spec=json.loads((root/'setup/study.json').read_text())
     record_file=root/'results/attempts.jsonl'
     records=[json.loads(line) for line in record_file.read_text().splitlines()] if record_file.exists() else []
     rows=[]
@@ -33,7 +34,7 @@ def report(root):
                 'evaluable_transport':sum(x['scientific_evaluable'] for x in group),
                 'decisions':dict(Counter(str(x['decision']) for x in group))})
     write_json(root/'results/summary.json',{'assessment_status':'deterministic_checks_with_trace_and_claim_audit_pending',
-        'attempted':len(rows),'scheduled':16,'groups':groups,'attempts':rows,
+        'attempted':len(rows),'scheduled':len(spec.get('trial_schedule',range(16))),'groups':groups,'attempts':rows,
         'scope':'Exploratory review-and-repair pilot on two acquisitions; no general harness ranking.'})
     if rows:
         target=root/'results/attempts.csv';temp=target.with_suffix('.csv.tmp')

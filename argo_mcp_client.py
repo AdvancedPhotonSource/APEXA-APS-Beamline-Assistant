@@ -1820,7 +1820,9 @@ class APEXAClient:
 
     @traced_tool
     async def execute_tool_call(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-
+        # Keep the model's original proposal intact in its trace. Contract bindings
+        # are separately reported with the effective native dispatch arguments.
+        arguments = dict(arguments)
         if tool_name in WORKFLOW_TOOL_NAMES:
             from apexa_workflow_client import handle_tool
             try:
@@ -1886,7 +1888,9 @@ class APEXAClient:
         path_arg_names = {"path", "file_path", "image_file", "calibration_file",
                           "parameters_file", "result_folder", "dark_file",
                           "working_dir", "param_file", "data_file",
-                          "artifact_path", "manifest_path"}
+                          "artifact_path", "manifest_path", "contract_path",
+                          "template_param_file", "candidate_parameters_file",
+                          "candidate_run_file", "candidate_execution_file"}
         for key in list(arguments.keys()):
             if key in path_arg_names and isinstance(arguments[key], str):
                 val = arguments[key]
@@ -1895,6 +1899,25 @@ class APEXAClient:
                     if resolved != val:
                         print(f"  Path resolved: {val} -> {resolved}", file=sys.stderr)
                     arguments[key] = resolved
+
+        contract = getattr(self, "_calibration_contract", None)
+        contract_binding = None
+        try:
+            if contract is not None:
+                if tool_name == "midas_auto_calibrate":
+                    arguments, contract_binding = contract.bind(arguments)
+                elif tool_name == "finalize_result":
+                    arguments = contract.finalize(arguments)
+                elif tool_name == "load_calibration_contract":
+                    # Loading again cannot erase pinned receipts or change facts.
+                    from apexa_calibration_contract import load_contract
+                    candidate = load_contract(**arguments)
+                    if candidate != {k: v for k, v in contract.bundle.items()
+                                     if k not in ("tool", "status")}:
+                        raise ValueError("A different calibration contract requires a new query")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return json.dumps({"status": "refused", "nothing_was_run": True,
+                               "error": str(exc), "gate": "calibration_contract"})
 
         # ===== DELETION PERMISSION GATE =====
         # rm/rmdir/unlink are irreversible on beamline scratch (no recycle bin).
@@ -2025,6 +2048,24 @@ class APEXAClient:
             from apexa_outcomes import normalize_mcp_result, classify_result
             result_text = normalize_mcp_result(result)
 
+            if tool_name == "load_calibration_contract" or contract_binding is not None:
+                try:
+                    payload = json.loads(result_text)
+                    if tool_name == "load_calibration_contract" and payload.get("status") == "success":
+                        if contract is None:
+                            from apexa_calibration_contract import CalibrationContract
+                            self._calibration_contract = CalibrationContract(payload)
+                        payload["client_contract_active"] = True
+                    elif contract_binding is not None:
+                        payload["contract_execution"] = contract.capture(payload, contract_binding)
+                    result_text = json.dumps(payload, allow_nan=False)
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    # A completed solver call remains visible even when its receipt
+                    # cannot be admitted. Never relabel a post-run failure "not run".
+                    result_text = json.dumps({"status": "error", "gate": "calibration_contract",
+                        "error": str(exc), "native_result": result_text,
+                        "nothing_was_run": False})
+
             # Cache result if applicable
             if tool_name in cacheable_operations and classify_result(result_text).successful:
                 self.cache.set(tool_name, arguments, result_text)
@@ -2152,6 +2193,8 @@ class APEXAClient:
         # a tool starts (not only when it finishes). Set/restored like the perm cb.
         _prev_start_cb = getattr(self, "tool_start_callback", None)
         self.tool_start_callback = on_tool_start
+        _prev_contract = getattr(self, "_calibration_contract", None)
+        self._calibration_contract = None
         try:
             with query_scope(query=query) as _qctx:
                 result = await self.orchestrator.process(
@@ -2170,6 +2213,7 @@ class APEXAClient:
         finally:
             self.permission_callback = _prev_perm_cb
             self.tool_start_callback = _prev_start_cb
+            self._calibration_contract = _prev_contract
 
     def _autosave_session(self):
         """Save the active shared session without overwriting a newer revision.

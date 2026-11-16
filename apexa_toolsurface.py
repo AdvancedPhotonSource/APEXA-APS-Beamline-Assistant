@@ -57,6 +57,7 @@ CORE_TOOLS: tuple[str, ...] = (
     "read_file",
     "write_file",
     "finalize_result",                 # one-call final decision manifest
+    "load_calibration_contract",       # pin acquisition/model facts for this query
     "get_file_info",
     "run_command",
     "run_remote_command",
