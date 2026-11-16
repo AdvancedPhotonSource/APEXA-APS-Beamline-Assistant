@@ -118,10 +118,14 @@ def work(root,entry,cpus,qualification=False):
         inputs=[];scan=0;attempt=1;timeout=600;max_requests=20
         if spec.get('qualify_contract_loader'):
             inputs=[root/'setup/qualification_contract.json',root/'setup/qualification_template.txt']
-            prompt += (' Also call load_calibration_contract with qualification_contract.json, '
-                'qualification_000000.txt as image_file and qualification_template.txt as template_param_file. '
-                'This tests the declared-contract loader only; never calibrate this synthetic text fixture. '
-                'Include contract_active in your answer, true only when client_contract_active is returned true.')
+            if spec.get('application_contract'):
+                prompt += (' The application activates the supplied calibration contract before the model runs. '
+                    'This is a loader check only; never calibrate this synthetic text fixture.')
+            else:
+                prompt += (' Also call load_calibration_contract with qualification_contract.json, '
+                    'qualification_000000.txt as image_file and qualification_template.txt as template_param_file. '
+                    'This tests the declared-contract loader only; never calibrate this synthetic text fixture. '
+                    'Include contract_active in your answer, true only when client_contract_active is returned true.')
     else:
         handoffs=json.loads((root/'setup/handoff_manifest.json').read_text())['cases']
         public=root/'public'/next(x['public_case'] for x in handoffs if x['fixture']==entry['fixture'])
@@ -131,6 +135,14 @@ def work(root,entry,cpus,qualification=False):
         prompt=(root/'setup/PROMPT.md').read_text()
         scan=next(x['scan'] for x in spec['fixtures'] if x['id']==entry['fixture'])
         attempt=entry['index'];timeout=spec['wall_seconds'];max_requests=spec['max_model_requests']
+    os.environ.pop('APEXA_BENCH_CALIBRATION_CONTRACT',None)
+    if spec.get('application_contract') and entry['arm']=='A1':
+        contract = (dict(contract_path='qualification_contract.json', image_file='qualification_000000.txt',
+                         template_param_file='qualification_template.txt') if qualification else
+                    dict(contract_path='task.json',image_file='acquisition.h5',template_param_file='effective_template.txt',
+                         candidate_parameters_file='candidate.params',candidate_run_file='candidate_run.json',
+                         candidate_execution_file='execution_evidence.json'))
+        os.environ['APEXA_BENCH_CALIBRATION_CONTRACT']=json.dumps(contract)
     started=time.time()
     with ModelAudit(secret['base_url'],secret['relay_key'],spec['model'],output/'model_calls.jsonl',
              max_requests=max_requests,max_output_tokens=spec['max_output_tokens'],timeout=timeout,
@@ -168,9 +180,10 @@ def work(root,entry,cpus,qualification=False):
                                 try:value=json.loads(value)
                                 except ValueError:continue
                             if isinstance(value,dict) and value.get('client_contract_active') is True:
-                                tool_receipts.append(str(trace.relative_to(output)))
+                                if not spec.get('application_contract') or value.get('activation_source')=='application_request_before_model':
+                                    tool_receipts.append(str(trace.relative_to(output)))
                 assessment.update(contract_loader_receipts=tool_receipts,
-                    passed=passed and answer.get('contract_active') is True and bool(tool_receipts))
+                    passed=passed and (spec.get('application_contract') or answer.get('contract_active') is True) and bool(tool_receipts))
         except Exception as exc:
             assessment={'passed':False,'error':type(exc).__name__+': '+str(exc)}
     else:

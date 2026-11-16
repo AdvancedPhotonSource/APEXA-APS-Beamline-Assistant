@@ -39,7 +39,7 @@ def case(tmp_path):
 def final_args(case, path='candidate.params', decision='release_conditionally'):
     return dict(scientific_status='provisional', workspace_root=str(case.root),
         manifest_path=str(case.root/'result_manifest.json'),
-        result_details=dict(final_decision=decision, reason='Recorded evidence checked',
+        result_details=dict(handoff_decision='release_conditionally', final_decision=decision, reason='Recorded evidence checked',
             adopted_artifact=dict(path=path), remaining_limits=[]))
 
 
@@ -236,3 +236,94 @@ def test_seed_name_is_not_reported_as_the_fitted_phase():
     assert metadata['seed_calibrant'] == 'Si'
     named = {'phase_provenance': {'fit_phase_source':'template', 'effective_calibrant':'CeO2'}}
     assert _calibration_phase_metadata(named, 'Si')['calibrant'] == 'CeO2'
+
+
+def test_original_handoff_decision_is_required(case):
+    args = final_args(case)
+    del args['result_details']['handoff_decision']
+    with pytest.raises(ValueError, match='ORIGINAL artifact'):
+        case.state.finalize(args)
+
+
+def test_repair_does_not_retroactively_release_faulty_handoff(case):
+    original = case.root/'candidate.params'
+    original.write_text(original.read_text().replace('p0 0\n', 'p0 0.0001\n'))
+    case.state = CalibrationContract(load_contract(**case.args))
+    args, binding = case.state.bind(dict(output_dir=str(case.root/'repair')))
+    native = native_result(case, args)
+    repaired = Path(native['artifact_path'])
+    repaired.write_text(repaired.read_text().replace('p0 0.0001\n', 'p0 0\n'))
+    native['artifact_sha256'] = sha(repaired)
+    assert case.state.capture(native, binding)['checks']['all_satisfied']
+    final = final_args(case, 'repair/refined.params')
+    with pytest.raises(ValueError, match='original handoff cannot be released'):
+        case.state.finalize(final)
+    final['result_details']['handoff_decision'] = 'hold'
+    result = case.state.finalize(final)['result_details']
+    assert result['handoff_decision'] == 'hold'
+    assert result['final_decision'] == 'repaired_and_release_conditionally'
+    assert not result['contract_verification']['original_handoff_checks']['checks']['restriction']
+
+
+def test_authoritative_report_uses_values_and_correct_gate_not_agent_prose(case):
+    doc = deepcopy(case.doc)
+    doc['requested_model'] = 'full'
+    (case.root/'contract.json').write_text(json.dumps(doc))
+    path = case.root/'candidate.params'
+    text = path.read_text()
+    for i in range(15):text = text.replace(f'p{i} 0\n', f'p{i} 0.0001\n')
+    path.write_text(text)
+    case.state = CalibrationContract(load_contract(**case.args))
+    args = final_args(case)
+    args['summary'] = 'Ring overlay passed; all distortion coefficients zero.'
+    args['result_details'].update(reason=args['summary'], remaining_limits=['All coefficients stayed at zero.'],
+        assessments={'image_gate': {'status':'satisfied','reason':'Ring overlay passed','evidence_paths':['incorrect.json']}})
+    finalized = case.state.finalize(args)
+    details = finalized['result_details']
+    assert '15/15 exported distortion coefficients are nonzero' in finalized['summary']
+    assert 'Held-out strain' in finalized['summary']
+    assert 'Ring overlay' not in finalized['summary']
+    assert details['assessments']['image_gate']['evidence_paths'] == ['candidate.params','run.json','execution.json']
+    assert 'All coefficients stayed at zero.' not in details['remaining_limits']
+    assert details['agent_proposed_result']['reason'] == args['summary']
+    assert details['contract_verification']['agent_proposed_summary'] == args['summary']
+
+
+@pytest.mark.parametrize('valid_input', [True, False])
+def test_application_activates_contract_before_model_and_aborts_failed_load(case, monkeypatch, valid_input):
+    import argo_mcp_client as module
+    from beamline_core_server import load_calibration_contract
+    order, records = [], []
+    client = module.APEXAClient.__new__(module.APEXAClient)
+    client._tool_registry = {'load_calibration_contract':'core'}
+    client._available_tools = []
+    client.context = SimpleNamespace(add_analysis=lambda *a:None)
+    client.permission_callback = None
+    client.anl_username, client.selected_model = '', 'test'
+    async def call_tool(name, arguments):
+        order.append('load')
+        result = await load_calibration_contract(**arguments)
+        return SimpleNamespace(content=[{'type':'text','text':result}])
+    client.sessions = {'core':SimpleNamespace(call_tool=call_tool)}
+    def provider(*args):
+        order.append('provider')
+        return object()
+    monkeypatch.setattr(module, 'select_provider', provider)
+    async def process(query, *args, **kwargs):
+        order.append('model')
+        assert client._calibration_contract.activation_source == 'application_request_before_model'
+        assert 'already active for this query' in query
+        return 'Model did not invoke the loader.'
+    async def recorded(tool, arguments, result):records.append(json.loads(result))
+    client.orchestrator = SimpleNamespace(process=process)
+    contract = dict(case.args)
+    if not valid_input:contract['contract_path'] = str(case.root/'absent.json')
+    result = asyncio.run(client._execute_query('Review this calibration.',
+        calibration_contract=contract, on_tool_result=recorded))
+    assert records[0]['activation_source'] == 'application_request_before_model'
+    assert client._calibration_contract is None
+    if valid_input:
+        assert order == ['load','provider','model']
+    else:
+        assert order == ['load']
+        assert json.loads(result)['status'] == 'error'

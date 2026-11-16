@@ -289,10 +289,20 @@ class CalibrationContract:
         decision = details.get('final_decision')
         if decision not in ('release_conditionally', 'repaired_and_release_conditionally', 'hold', 'unassessed'):
             raise ValueError('Declare final_decision: release_conditionally, repaired_and_release_conditionally, hold or unassessed')
+        handoff = self.bundle.get('handoff_checks')
+        if handoff is not None:
+            initial_decision = details.get('handoff_decision')
+            if initial_decision not in ('release_conditionally', 'hold', 'unassessed'):
+                raise ValueError('Declare handoff_decision for the ORIGINAL artifact separately: release_conditionally, hold or unassessed')
+            if initial_decision == 'release_conditionally' and not handoff['all_satisfied']:
+                raise ValueError(f'The original handoff cannot be released; its evidence is {handoff}. A successful repair does not change its original status.')
         root = Path(args.get('workspace_root') or Path.cwd()).resolve()
         def relative(path):
             return Path(path).resolve().relative_to(root).as_posix()
-        verification = {'contract_sha256': self.bundle['sha256']['contract'], 'scope_limits': LIMITS}
+        verification = {'contract_sha256': self.bundle['sha256']['contract'], 'scope_limits': LIMITS,
+                        'activation_source': getattr(self, 'activation_source', 'model_tool_call'),
+                        'original_handoff_checks': handoff,
+                        'agent_proposed_summary': args.get('summary', '')}
         if decision in ('hold', 'unassessed'):
             if args.get('scientific_status') == 'accepted' or args.get('artifact_path') or details.get('adopted_artifact'):
                 raise ValueError('A hold/unassessed decision cannot adopt an artifact or be accepted')
@@ -335,11 +345,64 @@ class CalibrationContract:
             args['artifact_path'] = path
             details['adopted_artifact'] = {'path': relative(path), 'sha256': sha(path)}
             verification['checks'] = checks
+            if record:
+                run = record['native_result']
+                evidence_paths = [relative(path), relative(record['receipt_path'])]
+            else:
+                run = read_json(self.bundle['paths']['run'])
+                evidence_paths = [relative(self.bundle['paths'][k]) for k in ('candidate', 'run', 'execution')]
+            report = self.report(path, run, evidence_paths)
+            # These fields describe the adopted evidence. The complete original
+            # agent proposal remains below for audit, including unsupported prose.
+            details['assessments'] = report['assessments']
+            details['reason'] = report['summary']
+            args['summary'] = report['summary']
+            verification['reported_values'] = report['values']
+            verification['reporting_scope'] = 'Generated from the adopted artifact and recorded gate; agent prose and proposed extra fields are not certified.'
         limits = details.get('remaining_limits') or []
         if not isinstance(limits, list) or any(not isinstance(x, str) for x in limits):
             raise ValueError('remaining_limits must be an array of strings')
-        details['remaining_limits'] = list(dict.fromkeys([*limits, *LIMITS]))
+        # Agent-added limits can themselves assert false facts (e.g. "coefficients
+        # stayed zero" on a full-model fit). Preserve them in agent_proposed_result,
+        # while the authoritative scope field contains only the enforced limits.
+        details['remaining_limits'] = list(LIMITS)
         details['contract_verification'] = verification
         details['agent_proposed_result'] = proposed
         args.update(result_details=details, workspace_root=str(root))
         return args
+
+    def report(self, artifact_path, run, evidence_paths):
+        """A factual report for an already-verified conditional release."""
+        par, facts = parameters(artifact_path), self.doc['facts']
+        frame, gate = run['frame_selection'], run['gate']
+        distance = par['Lsd']/1000
+        discrepancy = abs(distance-facts['nominal_distance_mm'])/facts['nominal_distance_mm']
+        nonzero = sum(abs(par[f'p{i}']) > self.doc['zero_tolerance'] for i in range(15))
+        if self.doc['pipeline'] == 'four-stage':
+            gate_text = (f"Held-out strain {gate['stage4_strain_uE_test']:.6g} microstrain "
+                         f"is below {gate['threshold_uE']:.6g} microstrain.")
+            gate_kind = 'held_out_strain'
+        else:
+            gate_text = (f"Ring-position gate {gate['verdict']}: median residual {gate['median_px']:.6g} pixels, "
+                         f"{gate['n_fits']}/{gate['n_cells']} fitted cells.")
+            gate_kind = 'ring_position'
+        model_text = (f"Requested model: {self.doc['requested_model']}; {nonzero}/15 exported distortion coefficients are nonzero.")
+        if self.doc['requested_model'] == 'full':
+            model_text += ' No zero-distortion restriction was requested.'
+        else:
+            model_text += ' The recorded constraint checks passed.'
+        input_text = (f"Frames {frame['frame_indices'][0]}–{frame['frame_indices'][-1]}, "
+                      f"{frame['frame_reduce']} reduction, transform {run['im_trans_applied']}; "
+                      f"pixel pitch {facts['pixel_pitch_um']:.6g} um and the fitted phase match the supplied facts.")
+        distance_text = (f"Fitted distance {distance:.9g} mm versus nominal {facts['nominal_distance_mm']:.9g} mm; "
+                         f"relative discrepancy {100*discrepancy:.6g}% is within the {100*self.doc['distance_policy_fraction']:.6g}% policy.")
+        texts = {'input': input_text, 'restriction': model_text,
+                 'image_gate': gate_text, 'nominal_distance': distance_text}
+        return {'summary': 'Conditional use supported by the declared checks. ' + ' '.join(texts.values()) +
+                          ' Absolute geometry accuracy is not established.',
+                'assessments': {k: {'status': 'satisfied', 'reason': text,
+                                    'evidence_paths': list(evidence_paths)} for k, text in texts.items()},
+                'values': {'fitted_distance_mm': distance, 'nominal_distance_mm': facts['nominal_distance_mm'],
+                           'relative_distance_discrepancy': discrepancy, 'requested_model': self.doc['requested_model'],
+                           'nonzero_distortion_exports': nonzero, 'image_gate_kind': gate_kind,
+                           'frame_indices': list(frame['frame_indices']), 'frame_reduction': frame['frame_reduce']}}

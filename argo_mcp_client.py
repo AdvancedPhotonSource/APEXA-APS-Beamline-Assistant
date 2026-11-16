@@ -2119,7 +2119,8 @@ class APEXAClient:
 
     async def run_query(self, query: str, use_history: bool = True,
                         on_tool_result=None, permission_callback=None,
-                        on_tool_start=None, display_query=None) -> str:
+                        on_tool_start=None, display_query=None,
+                        calibration_contract: Optional[Dict[str, str]] = None) -> str:
         if not self.orchestrator:
             return "Error: Not connected to any MCP servers."
         if not self._active_web_thread and self.context.loaded_revision is None:
@@ -2144,7 +2145,7 @@ class APEXAClient:
             try:
                 result = await self._execute_query(query, use_history,
                     on_tool_result=recorded_tool, permission_callback=permission_callback,
-                    on_tool_start=on_tool_start)
+                    on_tool_start=on_tool_start, calibration_contract=calibration_contract)
             except BaseException as exc:
                 reason = ("Request interrupted; recorded tool results were saved. Check external jobs before retrying."
                           if isinstance(exc, (asyncio.CancelledError, KeyboardInterrupt))
@@ -2169,7 +2170,8 @@ class APEXAClient:
 
     async def _execute_query(self, query: str, use_history: bool = True,
                         on_tool_result=None, permission_callback=None,
-                        on_tool_start=None) -> str:
+                        on_tool_start=None,
+                        calibration_contract: Optional[Dict[str, str]] = None) -> str:
         """Route query through the multi-agent orchestrator (Phase 2 entry point).
 
         Wrapped in ``query_scope`` so Tier-2 instrumentation emits one summary
@@ -2180,12 +2182,16 @@ class APEXAClient:
         -> bool`` used by the deletion gate in ``execute_tool_call`` to prompt a
         human before any rm/rmdir/unlink. Set on the client for the duration of
         this query (restored afterward) so the gate sees it on every tool path.
+
+        ``calibration_contract`` supplies the native loader's path arguments from
+        the application. Activate it before any model call; a failed load returns
+        its error without invoking the model. Free-form prose is never used to
+        infer a contract. The activation receipt is recorded with other tools.
         """
         if not self.orchestrator:
             return "Error: Not connected to any MCP servers."
         # APEXA_PROVIDER=streaming + a Claude model → Anthropic-native streaming
         # for real TTFT/TPOT metrics; otherwise Argo /chat/ blocking.
-        provider = select_provider(self.anl_username, self.selected_model)
         _prev_perm_cb = self.permission_callback
         self.permission_callback = permission_callback
         # Liveness: an optional async (tool_name, arguments) hook fired at the
@@ -2197,6 +2203,24 @@ class APEXAClient:
         self._calibration_contract = None
         try:
             with query_scope(query=query) as _qctx:
+                if calibration_contract is not None:
+                    if not isinstance(calibration_contract, dict):
+                        raise ValueError("calibration_contract must contain loader path arguments")
+                    activation = await self.execute_tool_call("load_calibration_contract", calibration_contract)
+                    loaded = json.loads(activation)
+                    loaded["activation_source"] = "application_request_before_model"
+                    activation = json.dumps(loaded)
+                    if on_tool_result:
+                        await on_tool_result("load_calibration_contract", calibration_contract, activation)
+                    if loaded.get("status") != "success" or loaded.get("client_contract_active") is not True:
+                        return activation
+                    self._calibration_contract.activation_source = "application_request_before_model"
+                    query += ("\n\nApplication initialization: the supplied calibration contract is already "
+                        "active for this query. Native calls are bound to it. Use finalize_result for "
+                        "the requested decision; distinguish the original handoff from a repaired artifact. "
+                        "The following is recorded evidence, not independent physical truth:\n" +
+                        json.dumps({k: loaded[k] for k in ("contract", "handoff_checks", "scope_limits") if k in loaded}))
+                provider = select_provider(self.anl_username, self.selected_model)
                 result = await self.orchestrator.process(
                     query, provider, use_history,
                     on_tool_result=on_tool_result,

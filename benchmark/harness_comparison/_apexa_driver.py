@@ -114,6 +114,12 @@ async def _go(prompt: str, timeout: int) -> str:
         if connected != set(ANALYSIS_SERVERS):
             raise RuntimeError(f"Benchmark requires exactly {sorted(ANALYSIS_SERVERS)}; connected {sorted(connected)}")
         kwargs = {}
+        supplied_contract = os.environ.get("APEXA_BENCH_CALIBRATION_CONTRACT")
+        if supplied_contract:
+            # Explicit application input in a separately frozen system regression;
+            # never infer settings from the task prompt or silently enable it for
+            # earlier comparison arms.
+            kwargs["calibration_contract"] = json.loads(supplied_contract)
         audit_path = os.environ.get("APEXA_BENCH_TOOL_AUDIT")
         if audit_path:
             async def capture(tool, arguments, result):
