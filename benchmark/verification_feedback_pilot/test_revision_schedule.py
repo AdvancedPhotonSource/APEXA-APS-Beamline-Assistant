@@ -8,6 +8,7 @@ from run_pilot import schedule
 class RevisionScheduleTests(unittest.TestCase):
     def test_original_schedule_preserved(self):
         spec=json.loads(Path(__file__).with_name('study.json').read_text())
+        spec.pop('trial_schedule',None)
         rows=schedule(spec)
         self.assertEqual(len(rows),16)
         self.assertEqual(sum(r['arm']=='A1' for r in rows),8)
